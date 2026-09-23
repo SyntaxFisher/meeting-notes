@@ -1,126 +1,197 @@
 import AVFoundation
 import Foundation
+import ScreenCaptureKit
 
 @main
 struct Smoke {
+  @MainActor
   static func main() async throws {
-    let temporary = FileManager.default.temporaryDirectory
-      .appendingPathComponent("meeting-notes-test-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false)
-    defer { try? FileManager.default.removeItem(at: temporary) }
-
-    let audioDirectory = temporary.appendingPathComponent("audios")
-    let transcriptDirectory = temporary.appendingPathComponent("transcripts")
-    try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: false)
-    try FileManager.default.createDirectory(
-      at: transcriptDirectory, withIntermediateDirectories: false)
+    let readyForScreen = PermissionSnapshot(
+      microphone: true, screenRecording: false, accessibility: true)
+    var continuation = ScreenPermissionContinuation()
+    precondition(!continuation.consumeRequest(for: readyForScreen))
+    continuation.waitingForAccessibility = true
+    precondition(
+      !continuation.consumeRequest(
+        for: PermissionSnapshot(
+          microphone: true, screenRecording: false, accessibility: false)))
+    precondition(
+      !continuation.consumeRequest(
+        for: PermissionSnapshot(
+          microphone: false, screenRecording: false, accessibility: true)))
+    precondition(continuation.consumeRequest(for: readyForScreen))
+    precondition(!continuation.consumeRequest(for: readyForScreen))
+    continuation.waitingForAccessibility = true
+    precondition(
+      !continuation.consumeRequest(
+        for: PermissionSnapshot(
+          microphone: true, screenRecording: true, accessibility: true)))
+    precondition(!continuation.consumeRequest(for: readyForScreen))
+    print("Screen permission continuation: waits for prerequisites and requests only once: OK")
+    precondition(
+      PermissionSnapshot(microphone: false, screenRecording: false, accessibility: false).missing
+        == [.microphone, .accessibility, .screenRecording])
+    for microphone in [false, true] {
+      for screen in [false, true] {
+        for accessibility in [false, true] {
+          let permissions = PermissionSnapshot(
+            microphone: microphone, screenRecording: screen, accessibility: accessibility)
+          precondition(permissions.recordingGranted == (microphone && screen && accessibility))
+          precondition(permissions.missing.contains(.microphone) == !microphone)
+          precondition(permissions.missing.contains(.screenRecording) == !screen)
+          precondition(permissions.missing.contains(.accessibility) == !accessibility)
+        }
+      }
+    }
+    precondition(
+      PermissionAccess.deniedPermission(for: PermissionRequired(permission: .microphone))
+        == .microphone)
+    precondition(
+      PermissionAccess.deniedPermission(
+        for: NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.userDeclined.rawValue))
+        == .screenRecording)
+    precondition(
+      PermissionAccess.deniedPermission(
+        for: NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.internalError.rawValue))
+        == nil)
+    precondition(
+      PermissionAccess.deniedPermission(for: MeetingError("Disk full")) == nil)
+    print("All permission combinations and permission-only error classification: OK")
+    let manager = FileManager.default
+    let root = manager.temporaryDirectory.appendingPathComponent(
+      "meeting-tests-\(UUID().uuidString)")
+    try manager.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? manager.removeItem(at: root) }
+    let stateDirectory = root.appendingPathComponent("state")
+    let state = try StateStore(directory: stateDirectory)
     let date = Date(timeIntervalSince1970: 0)
-    let stem = MeetingFiles.stem(
-      for: date, in: audioDirectory, transcriptDirectory: transcriptDirectory)
-    precondition(stem == "19700101T000000Z")
-    let existing = audioDirectory.appendingPathComponent(stem + ".mp3")
-    FileManager.default.createFile(atPath: existing.path, contents: Data([1]))
-    precondition(
-      MeetingFiles.stem(
-        for: date, in: audioDirectory,
-        transcriptDirectory: transcriptDirectory) == stem + "-2")
-
-    let store = try StateStore(directory: temporary)
-    let diagnosticDirectory = temporary.appendingPathComponent("logs")
-    let logger = AppLog(directory: diagnosticDirectory, maxBytes: 1)
-    logger.record("first", "multiline\ndetail")
-    logger.record("second")
-    let previousLog = try Data(
-      contentsOf: diagnosticDirectory.appendingPathComponent("meeting-notes.previous.log"))
-    let previousEntry = try JSONSerialization.jsonObject(with: previousLog) as! [String: String]
-    precondition(previousEntry["event"] == "first")
-    precondition(previousEntry["detail"] == "multiline\ndetail")
-    try await MeetingFiles.waitForMP3(existing, attempts: 2, interval: 0)
-    let delayed = temporary.appendingPathComponent("delayed.mp3")
-    FileManager.default.createFile(atPath: delayed.path, contents: Data())
-    let writer = Task {
-      try await Task.sleep(nanoseconds: 20_000_000)
-      try Data([1, 2, 3]).write(to: delayed)
+    try state.update { $0.session = MeetingSession(startedAt: date, stem: "19700101T000000Z") }
+    let recovered = try StateStore(directory: stateDirectory)
+    precondition(recovered.state.session?.stem == "19700101T000000Z")
+    try recovered.update {
+      $0.session = nil
+      $0.pendingAudio = "test.m4a"
     }
-    try await MeetingFiles.waitForMP3(delayed, attempts: 100, interval: 5_000_000)
-    try await writer.value
-    let empty = temporary.appendingPathComponent("empty.mp3")
-    FileManager.default.createFile(atPath: empty.path, contents: Data())
+    let retried = try StateStore(directory: stateDirectory)
+    precondition(retried.state.pendingAudio == "test.m4a")
+    let audios = root.appendingPathComponent("audios")
+    let transcripts = root.appendingPathComponent("transcripts")
+    try manager.createDirectory(at: audios, withIntermediateDirectories: true)
+    try manager.createDirectory(at: transcripts, withIntermediateDirectories: true)
+    for stem in ["19700101T000000Z", "19700101T000001Z", "19700101T000002Z"] {
+      try Data(repeating: 1, count: 20).write(to: audios.appendingPathComponent(stem + ".m4a"))
+      try Data(repeating: 1, count: 10).write(to: transcripts.appendingPathComponent(stem + ".txt"))
+    }
+    let unrelated = audios.appendingPathComponent("keep-me.m4a")
+    try Data(repeating: 1, count: 200).write(to: unrelated)
+    precondition(
+      MeetingFiles.stem(for: date, in: audios, transcriptDirectory: transcripts)
+        == "19700101T000000Z-2")
+    try RecordingRetention.enforce(root: root, protectedStem: "19700101T000000Z", budget: 60)
+    precondition(
+      manager.fileExists(atPath: audios.appendingPathComponent("19700101T000000Z.m4a").path))
+    precondition(
+      !manager.fileExists(atPath: transcripts.appendingPathComponent("19700101T000001Z.txt").path))
+    precondition(
+      !manager.fileExists(atPath: audios.appendingPathComponent("19700101T000001Z.m4a").path))
+    try RecordingRetention.enforce(root: root, budget: 30)
+    precondition(
+      !manager.fileExists(atPath: audios.appendingPathComponent("19700101T000000Z.m4a").path))
+    precondition(manager.fileExists(atPath: unrelated.path))
+    precondition(TeamsMuteState.muted.microphoneMuted)
+    precondition(!TeamsMuteState.unmuted.microphoneMuted)
+    for reason: TeamsMuteState.Reason in [
+      .accessibilityPermission, .teamsClosed, .noMeeting, .noControl, .ambiguous,
+      .accessibilityError,
+    ] {
+      precondition(!TeamsMuteState.unavailable(reason).microphoneMuted)
+    }
+    for count in 0...2 {
+      let configuration = NativeRecorder.configuration(teamsApplicationCount: count)
+      precondition(configuration.capturesAudio == (count > 0))
+      precondition(configuration.captureMicrophone)
+    }
+    precondition(
+      TeamsMuteClassifier.classify([TeamsWindowSnapshot(buttons: [["Leave"], ["Unmute mic"]])])
+        == .muted)
+    precondition(
+      TeamsMuteClassifier.classify([TeamsWindowSnapshot(buttons: [["Leave"], ["Mute mic"]])])
+        == .unmuted)
+
+    let capture = root.appendingPathComponent("capture")
+    try manager.createDirectory(at: capture, withIntermediateDirectories: true)
+    try writeTrack(at: capture.appendingPathComponent("system.caf"), muted: false)
+    try writeTrack(at: capture.appendingPathComponent("microphone.caf"), muted: true)
+    try JSONEncoder().encode(CaptureManifest(systemStart: 100, microphoneStart: 100.5)).write(
+      to: capture.appendingPathComponent("capture.json"))
+    let mixed = root.appendingPathComponent("mixed.m4a")
+    try NativeRecorder.mix(directory: capture, destination: mixed)
+    let file = try AVAudioFile(forReading: mixed)
+    precondition(abs(Double(file.length) / file.processingFormat.sampleRate - 1.5) < 0.1)
+    let buffer = AVAudioPCMBuffer(
+      pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length))!
+    try file.read(into: buffer)
+    let samples = buffer.floatChannelData![0]
+    let earlyEnergy = (5_000..<30_000).reduce(Float(0)) { $0 + abs(samples[$1]) }
+    let tailEnergy = (55_000..<65_000).reduce(Float(0)) { $0 + abs(samples[$1]) }
+    precondition(earlyEnergy > 100 && tailEnergy < 1)
     do {
-      try await MeetingFiles.waitForMP3(empty, attempts: 2, interval: 0)
-      preconditionFailure("Empty MP3 must fail validation")
-    } catch let error as MeetingError {
-      precondition(error.message.contains("size=0 bytes"))
-    }
-    try store.update { $0.pendingAudio = existing.path }
-    let reloaded = try StateStore(directory: temporary)
-    precondition(reloaded.state.pendingAudio == existing.path)
-
-    let input = temporary.appendingPathComponent("silence.wav")
-    try makeSilence(at: input, seconds: 301)
-    let chunker = try AudioChunker(file: input)
-    precondition(chunker.chunkCount == 2)
-    let first = try chunker.chunk(at: 0, original: input, in: temporary)
-    let second = try chunker.chunk(at: 1, original: input, in: temporary)
-    let firstFile = try AVAudioFile(forReading: first)
-    let secondFile = try AVAudioFile(forReading: second)
-    precondition(Int(Double(firstFile.length) / 16_000) == 290)
-    precondition(Int(Double(secondFile.length) / 16_000) == 11)
-    let meeting = { (mic: [String]) in
-      TeamsWindowSnapshot(buttons: [["Leave"], mic])
-    }
-    precondition(TeamsMuteClassifier.classify([meeting(["Unmute mic"])]) == .muted)
-    precondition(TeamsMuteClassifier.classify([meeting(["Mute mic (⇧ ⌘ M)"])]) == .unmuted)
+      try NativeRecorder.mix(directory: capture, destination: mixed)
+      preconditionFailure("Must refuse to overwrite audio")
+    } catch {}
+    let microphoneOnly = root.appendingPathComponent("microphone-only")
+    try manager.createDirectory(at: microphoneOnly, withIntermediateDirectories: true)
+    try writeTrack(at: microphoneOnly.appendingPathComponent("microphone.caf"), muted: false)
+    try JSONEncoder().encode(CaptureManifest(microphoneStart: 100)).write(
+      to: microphoneOnly.appendingPathComponent("capture.json"))
+    let microphoneOutput = root.appendingPathComponent("microphone-only.m4a")
+    try NativeRecorder.mix(directory: microphoneOnly, destination: microphoneOutput)
+    let microphoneFile = try AVAudioFile(forReading: microphoneOutput)
     precondition(
-      TeamsMuteClassifier.classify([meeting(["Mute mic", "Unmute mic"])])
-        == .unavailable(.ambiguous))
-    precondition(
-      TeamsMuteClassifier.classify([TeamsWindowSnapshot(buttons: [["Unmute mic"]])])
-        == .unavailable(.noMeeting))
-    precondition(
-      TeamsMuteClassifier.classify([meeting(["Unmute mic"]), meeting(["Mute mic"])])
-        == .unavailable(.ambiguous))
-    precondition(TeamsMuteState.unavailable(.teamsClosed).obsMicrophoneMuted == false)
-    var statusChecks = 0
-    let stoppingStates = [true, true, false, true, false, false]
-    try await OBSClient.waitUntilStopped(attempts: stoppingStates.count, interval: 0) {
-      defer { statusChecks += 1 }
-      return stoppingStates[statusChecks]
+      abs(Double(microphoneFile.length) / microphoneFile.processingFormat.sampleRate - 1) < 0.1)
+    let microphoneBuffer = AVAudioPCMBuffer(
+      pcmFormat: microphoneFile.processingFormat,
+      frameCapacity: AVAudioFrameCount(microphoneFile.length))!
+    try microphoneFile.read(into: microphoneBuffer)
+    let microphoneEnergy = (5_000..<30_000).reduce(Float(0)) {
+      $0 + abs(microphoneBuffer.floatChannelData![0][$1])
     }
-    precondition(statusChecks == stoppingStates.count)
-    do {
-      try await OBSClient.waitUntilStopped(attempts: 3, interval: 0) { true }
-      preconditionFailure("An active recording must not be treated as a finished MP3")
-    } catch let error as MeetingError {
-      precondition(error.message.contains("still finishing"))
-    }
-    print("Local state, UTC names, audio chunking, and Teams mute classification: OK")
-
-    if CommandLine.arguments.contains("--live") {
-      let obs = try await OBSClient.connect()
-      let recording = try await obs.isRecording()
-      let streaming = try await obs.isStreaming()
-      obs.close()
-      try await FluidVoiceClient().health()
-      print("OBS read-only status: recording=\(recording), streaming=\(streaming)")
-      print("FluidVoice health: OK")
+    precondition(microphoneEnergy > 100)
+    print("Optional Teams capture, missing mute detection, and microphone-only mixing: OK")
+    print("Native AAC conversion, mute, mixing, timestamps, retention, recovery, and filenames: OK")
+    if [4, 5].contains(CommandLine.arguments.count) && CommandLine.arguments[1] == "--transcribe" {
+      let text = try await NativeTranscriber().transcribe(
+        file: URL(fileURLWithPath: CommandLine.arguments[2]),
+        executable: URL(fileURLWithPath: CommandLine.arguments[3]))
+      precondition(text.contains("Speaker 1:"))
+      if CommandLine.arguments.count == 5 {
+        let expected = Int(CommandLine.arguments[4])!
+        let labels = Set(
+          text.split(separator: "\n").compactMap { line -> String? in
+            guard let start = line.range(of: "Speaker "),
+              let end = line[start.upperBound...].firstIndex(of: ":")
+            else { return nil }
+            return String(line[start.upperBound..<end])
+          })
+        precondition(
+          labels == Set((1...expected).map(String.init)), "Unexpected speaker count: \(labels)")
+        print("Expected speaker count \(expected): OK")
+      }
+      print("Native transcription with timestamps and speaker labels: OK")
     }
   }
 
-  private static func makeSilence(at url: URL, seconds: Int) throws {
-    let settings: [String: Any] = [
-      AVFormatIDKey: kAudioFormatLinearPCM,
-      AVSampleRateKey: 16_000,
-      AVNumberOfChannelsKey: 1,
-      AVLinearPCMBitDepthKey: 16,
-      AVLinearPCMIsFloatKey: false,
-    ]
-    let file = try AVAudioFile(forWriting: url, settings: settings)
-    guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 16_000)
-    else {
-      throw MeetingError("Could not make silent test audio.")
+  private static func writeTrack(at url: URL, muted: Bool) throws {
+    let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+    let track = try CaptureTrack(url: url, start: 100)
+    for block in 0..<10 {
+      let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_410)!
+      buffer.frameLength = 4_410
+      for index in 0..<4_410 {
+        buffer.floatChannelData![0][index] =
+          0.1 * sin(Float(index + block * 4_410) * 2 * .pi * 440 / 44_100)
+      }
+      try track.append(buffer, timestamp: 100 + Double(block) / 10, muted: muted)
     }
-    buffer.frameLength = 16_000
-    for _ in 0..<seconds { try file.write(from: buffer) }
   }
 }

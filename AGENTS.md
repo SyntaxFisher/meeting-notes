@@ -1,6 +1,6 @@
 # Agent instructions
 
-- This is a small native Swift macOS menu-bar app. Keep it Makefile-based, with no Xcode project, package manager, or runtime dependency on Codex or Node.
-- Do not start OBS recording or join a call during automated tests. An end-to-end recording test requires the user's separate approval.
-- Preserve existing MP3s and transcripts; never overwrite a completed file.
+- This is a native Swift macOS menu-bar app. Keep the Makefile; Swift Package Manager builds the bundled FluidAudio helper. No OBS, FluidVoice, Codex, or Node runtime dependency.
+- Do not record microphone or system audio or join a call during automated tests. A live recording test requires separate user approval. Existing files and generated fixtures may be processed locally.
+- Never overwrite a completed recording or transcript. Retention removes the oldest saved pairs above 1 GB, protecting pending work.
 - Run `make lint` before any commit.
