@@ -2,13 +2,20 @@ APP_NAME = Meeting Notes
 EXECUTABLE = MeetingNotes
 BUNDLE_ID = com.jona.meeting-notes
 DEST ?= /Applications
-SOURCES = main.swift AppDelegate.swift AppServices.swift OBSClient.swift AudioChunker.swift State.swift TeamsMuteReader.swift TeamsMuteMirror.swift AppLog.swift
+SOURCES = main.swift AppDelegate.swift State.swift Permissions.swift TeamsMuteReader.swift TeamsMuteMirror.swift AppLog.swift NativeTranscriber.swift NativeRecorder.swift RecordingRetention.swift
 BUNDLE = build/MeetingNotes.app
 SWIFT_FLAGS ?=
 
-.PHONY: build install lint test live-check
+.PHONY: build install lint test native
 
-build: $(BUNDLE)/Contents/MacOS/$(EXECUTABLE)
+native:
+	swift build --package-path NativeTranscription -c release --product MeetingTranscriber --force-resolved-versions
+
+build: native $(BUNDLE)/Contents/MacOS/$(EXECUTABLE)
+	cp NativeTranscription/.build/release/MeetingTranscriber "$(BUNDLE)/Contents/MacOS/MeetingTranscriber"
+	cp -R NativeTranscription/.build/release/FluidAudio_FluidAudio.bundle "$(BUNDLE)/Contents/Resources/"
+	codesign --force --sign - "$(BUNDLE)/Contents/MacOS/MeetingTranscriber"
+	codesign --force --sign - --identifier $(BUNDLE_ID) "$(BUNDLE)"
 
 $(BUNDLE)/Contents/MacOS/$(EXECUTABLE): $(SOURCES) Info.plist GenerateIcon.swift
 	mkdir -p "$(BUNDLE)/Contents/MacOS" "$(BUNDLE)/Contents/Resources"
@@ -21,15 +28,12 @@ $(BUNDLE)/Contents/MacOS/$(EXECUTABLE): $(SOURCES) Info.plist GenerateIcon.swift
 	codesign --force --sign - --identifier $(BUNDLE_ID) "$(BUNDLE)"
 
 lint:
-	swift-format lint --strict $(SOURCES) GenerateIcon.swift Tests/Smoke.swift
+	swift-format lint --strict $(SOURCES) GenerateIcon.swift Tests/Smoke.swift NativeTranscription/Package.swift NativeTranscription/Sources/MeetingTranscriber/*.swift
 
 test:
 	mkdir -p build
-	swiftc $(SWIFT_FLAGS) -O -parse-as-library -target arm64-apple-macos15.0 -o build/MeetingNotesSmoke Tests/Smoke.swift AppServices.swift OBSClient.swift AudioChunker.swift State.swift TeamsMuteReader.swift AppLog.swift
+	swiftc $(SWIFT_FLAGS) -O -parse-as-library -target arm64-apple-macos15.0 -o build/MeetingNotesSmoke Tests/Smoke.swift State.swift Permissions.swift TeamsMuteReader.swift AppLog.swift NativeRecorder.swift RecordingRetention.swift NativeTranscriber.swift
 	build/MeetingNotesSmoke
-
-live-check: test
-	build/MeetingNotesSmoke --live
 
 install: build
 	ditto "$(BUNDLE)" "$(DEST)/$(APP_NAME).app"

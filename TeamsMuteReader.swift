@@ -26,7 +26,7 @@ enum TeamsMuteState: Hashable {
     }
   }
 
-  var obsMicrophoneMuted: Bool { self == .muted }
+  var microphoneMuted: Bool { self == .muted }
 }
 
 struct TeamsWindowSnapshot {
