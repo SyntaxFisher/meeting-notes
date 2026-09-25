@@ -10,7 +10,8 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   private enum Phase { case idle, preparing, recording, transcribing, success, error }
   private let store: StateStore
   private let menu = NSMenu()
-  private let teamsMutedItem = NSMenuItem(title: "Muted in Teams", action: nil, keyEquivalent: "")
+  private let teamsStatusItem = NSMenuItem(
+    title: "Detecting Teams meeting…", action: nil, keyEquivalent: "")
   private var statusItem: NSStatusItem!
   private var phase: Phase = .idle
   private var message: String?
@@ -95,9 +96,9 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   func menuNeedsUpdate(_ menu: NSMenu) {
     Task { await refreshPermissions() }
     menu.removeAllItems()
-    teamsMutedItem.isEnabled = false
-    updateTeamsMutedItem()
-    menu.addItem(teamsMutedItem)
+    teamsStatusItem.isEnabled = false
+    updateTeamsStatusItem()
+    menu.addItem(teamsStatusItem)
     if phase == .recording {
       add("Stop & Transcribe", action: #selector(stopClicked))
     } else if !permissions.recordingGranted {
@@ -108,7 +109,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       add(
         "Start Recording", action: #selector(startClicked),
         enabled: !requestingPermissions && !isBusy
-          && store.state.session == nil && store.state.pendingAudio == nil)
+          && store.state.session == nil)
     }
     if phase == .error && (store.state.pendingAudio != nil || store.state.session != nil) {
       add("Retry Transcription", action: #selector(retryClicked))
@@ -230,7 +231,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       permissions = current
       AppLog.event(
         "permissions.changed", "missing=\(current.missing.map(\.rawValue).joined(separator: ","))")
-      updateTeamsMutedItem()
+      updateTeamsStatusItem()
       updateIcon()
     }
     if !requestingPermissions && screenPermissionContinuation.consumeRequest(for: current) {
@@ -241,7 +242,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   private func setPhase(_ value: Phase, message: String? = nil) {
     AppLog.event("phase", "\(phase) -> \(value); \(message ?? "")")
     phase = value
-    updateTeamsMutedItem()
+    updateTeamsStatusItem()
     self.message = message
     successUntil = value == .success ? Date().addingTimeInterval(10) : nil
     if value == .success || value == .recording {
@@ -251,9 +252,16 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     }
     updateIcon()
   }
-  private func updateTeamsMutedItem() {
-    teamsMutedItem.isHidden =
-      !permissions.accessibility || phase != .recording || teamsMirror?.currentState != .muted
+  private func updateTeamsStatusItem() {
+    teamsStatusItem.isHidden = phase != .recording || teamsMirror == nil
+    switch teamsMirror?.currentState {
+    case .some(.muted): teamsStatusItem.title = "Muted in Teams"
+    case .some(.unmuted): teamsStatusItem.title = "Not muted in Teams"
+    case .some(.unavailable(.noMeeting)), .some(.unavailable(.teamsClosed)):
+      teamsStatusItem.title = "No Teams meeting detected"
+    case .some(.unavailable(_)): teamsStatusItem.title = "Teams mute status unavailable"
+    case .none: teamsStatusItem.title = "Detecting Teams meeting…"
+    }
   }
   private func updateIcon() {
     guard let button = statusItem?.button else { return }
@@ -275,13 +283,26 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     }
     let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold).applying(
       NSImage.SymbolConfiguration(paletteColors: [color]))
+    let teamsMuted = phase == .recording && detectTeamsMute && teamsMirror?.currentState == .muted
+    let symbolName: String
+    let accessibilityDescription: String
+    if phase == .error {
+      symbolName = "exclamationmark.circle.fill"
+      accessibilityDescription = "Meeting Notes: Error"
+    } else if teamsMuted {
+      symbolName = "mic.slash.fill"
+      accessibilityDescription = "Meeting Notes: Muted in Teams"
+    } else {
+      symbolName = "waveform"
+      accessibilityDescription = "Meeting Notes"
+    }
     let image = NSImage(
-      systemSymbolName: phase == .error ? "exclamationmark.circle.fill" : "waveform",
-      accessibilityDescription: phase == .error ? "Meeting Notes: Error" : "Meeting Notes")?
+      systemSymbolName: symbolName,
+      accessibilityDescription: accessibilityDescription)?
       .withSymbolConfiguration(config)
     image?.isTemplate = false
     button.image = image
-    button.toolTip = message ?? "Meeting Notes"
+    button.toolTip = teamsMuted ? "Meeting Notes: Muted in Teams" : message ?? "Meeting Notes"
   }
   private func presentError(_ text: String) {
     AppLog.event("error", text)
@@ -298,11 +319,9 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   }
 
   private func startRecording() async {
-    guard !isBusy, recorder == nil, store.state.session == nil, store.state.pendingAudio == nil
-    else { return }
+    guard !isBusy, recorder == nil, store.state.session == nil else { return }
     await refreshPermissions()
-    guard permissions.recordingGranted, !isBusy, recorder == nil, store.state.session == nil,
-      store.state.pendingAudio == nil
+    guard permissions.recordingGranted, !isBusy, recorder == nil, store.state.session == nil
     else { return }
     setPhase(.preparing)
     do {
@@ -321,12 +340,18 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       }
       if detectTeamsMute {
         let mirror = TeamsMuteMirror(recorder: capture)
-        mirror.onStateChanged = { [weak self] in self?.updateTeamsMutedItem() }
+        mirror.onStateChanged = { [weak self] in
+          self?.updateTeamsStatusItem()
+          self?.updateIcon()
+        }
         teamsMirror = mirror
         mirror.start()
       }
       try await capture.start()
       try Task.checkCancellation()
+      if store.state.pendingAudio != nil {
+        try store.update { $0.pendingAudio = nil }
+      }
       setPhase(.recording)
     } catch {
       teamsMirror?.stop()

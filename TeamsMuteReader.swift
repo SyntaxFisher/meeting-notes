@@ -91,6 +91,9 @@ enum TeamsMuteReader {
     }
     let application = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(application, 0.5)
+    // Teams' web view exposes its controls in the background when enhanced accessibility is on.
+    _ = AXUIElementSetAttributeValue(
+      application, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
     guard let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) else {
       return .unavailable(.accessibilityError)
     }
