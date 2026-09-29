@@ -87,16 +87,23 @@ struct Smoke {
     precondition(
       MeetingFiles.stem(for: date, in: audios, transcriptDirectory: transcripts)
         == "19700101T000000Z-2")
-    try RecordingRetention.enforce(root: root, protectedStem: "19700101T000000Z", budget: 60)
-    precondition(
-      manager.fileExists(atPath: audios.appendingPathComponent("19700101T000000Z.m4a").path))
-    precondition(
-      !manager.fileExists(atPath: transcripts.appendingPathComponent("19700101T000001Z.txt").path))
-    precondition(
-      !manager.fileExists(atPath: audios.appendingPathComponent("19700101T000001Z.m4a").path))
-    try RecordingRetention.enforce(root: root, budget: 30)
-    precondition(
-      !manager.fileExists(atPath: audios.appendingPathComponent("19700101T000000Z.m4a").path))
+    func exists(_ folder: URL, _ name: String) -> Bool {
+      manager.fileExists(atPath: folder.appendingPathComponent(name).path)
+    }
+    try RecordingRetention.enforce(
+      root: root, protectedStem: "19700101T000000Z", audioBudget: 40, transcriptBudget: 1_000)
+    precondition(exists(audios, "19700101T000000Z.m4a"))
+    precondition(!exists(audios, "19700101T000001Z.m4a"))
+    precondition(exists(audios, "19700101T000002Z.m4a"))
+    for stem in ["19700101T000000Z", "19700101T000001Z", "19700101T000002Z"] {
+      precondition(exists(transcripts, stem + ".txt"))
+    }
+    try RecordingRetention.enforce(root: root, audioBudget: 10, transcriptBudget: 15)
+    precondition(!exists(audios, "19700101T000000Z.m4a"))
+    precondition(exists(audios, "19700101T000002Z.m4a"))
+    precondition(!exists(transcripts, "19700101T000000Z.txt"))
+    precondition(!exists(transcripts, "19700101T000001Z.txt"))
+    precondition(exists(transcripts, "19700101T000002Z.txt"))
     precondition(manager.fileExists(atPath: unrelated.path))
     precondition(TeamsMuteState.muted.microphoneMuted)
     precondition(!TeamsMuteState.unmuted.microphoneMuted)
