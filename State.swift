@@ -9,6 +9,9 @@ struct MeetingError: LocalizedError {
 struct MeetingSession: Codable {
   let startedAt: Date
   let stem: String
+  var title: String? = nil
+
+  var fileStem: String { title.map { "\(stem) \($0)" } ?? stem }
 }
 
 struct MeetingState: Codable {
@@ -49,28 +52,59 @@ enum MeetingFiles {
     try FileManager.default.createDirectory(at: transcripts, withIntermediateDirectories: true)
   }
   static func stem(
-    for date: Date, in audioDirectory: URL = audios, transcriptDirectory: URL = transcripts
+    for date: Date, in audioDirectory: URL = audios, transcriptDirectory: URL = transcripts,
+    timeZone: TimeZone = .current
   ) -> String {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = TimeZone(secondsFromGMT: 0)
-    formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
-    let base = formatter.string(from: date)
+    let base = formatter("yyyy-MM-dd HH.mm", timeZone).string(from: date)
+    let names = [audioDirectory, transcriptDirectory].flatMap {
+      (try? FileManager.default.contentsOfDirectory(atPath: $0.path)) ?? []
+    }
+    func isTaken(_ candidate: String) -> Bool {
+      names.contains {
+        $0 == ".\(candidate).recording" || $0.hasPrefix(candidate + ".")
+          || $0.hasPrefix(candidate + " ")
+      }
+    }
     var candidate = base
     var suffix = 2
-    while ["m4a", "mp3"].contains(where: {
-      FileManager.default.fileExists(
-        atPath: audioDirectory.appendingPathComponent(candidate + "." + $0).path)
-    })
-      || FileManager.default.fileExists(
-        atPath: transcriptDirectory.appendingPathComponent(candidate + ".txt").path)
-      || FileManager.default.fileExists(
-        atPath: audioDirectory.appendingPathComponent("." + candidate + ".recording").path)
-    {
+    while isTaken(candidate) {
       candidate = "\(base)-\(suffix)"
       suffix += 1
     }
     return candidate
+  }
+
+  /// Parses the start time from a local `yyyy-MM-dd HH.mm` stem with optional collision suffix
+  /// and title, or from a legacy UTC `yyyyMMdd'T'HHmmss'Z'` stem.
+  static func date(fromStem stem: String, timeZone: TimeZone = .current) -> Date? {
+    if let match = stem.firstMatch(of: #/^(\d{4}-\d{2}-\d{2} \d{2}\.\d{2})(?:-\d+)?(?: .+)?$/#) {
+      return formatter("yyyy-MM-dd HH.mm", timeZone).date(from: String(match.1))
+    }
+    if let match = stem.firstMatch(of: #/^(\d{8}T\d{6}Z)(?:-\d+)?$/#) {
+      return formatter("yyyyMMdd'T'HHmmss'Z'", TimeZone(secondsFromGMT: 0)!).date(
+        from: String(match.1))
+    }
+    return nil
+  }
+
+  static func titleComponent(_ title: String?) -> String? {
+    guard let title else { return nil }
+    let separators = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
+    var cleaned = title.components(separatedBy: separators).joined(separator: "-")
+      .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    while cleaned.hasPrefix(".") { cleaned.removeFirst() }
+    cleaned = String(cleaned.prefix(80))
+    while cleaned.utf8.count > 150 { cleaned.removeLast() }
+    cleaned = cleaned.trimmingCharacters(in: .whitespaces)
+    return cleaned.isEmpty ? nil : cleaned
+  }
+
+  private static func formatter(_ format: String, _ timeZone: TimeZone) -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = timeZone
+    formatter.dateFormat = format
+    return formatter
   }
   static func audio(for stem: String) -> URL { audios.appendingPathComponent(stem + ".m4a") }
   static func transcript(for stem: String) -> URL {

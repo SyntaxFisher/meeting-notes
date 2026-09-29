@@ -30,14 +30,22 @@ enum TeamsMuteState: Hashable {
 }
 
 struct TeamsWindowSnapshot {
+  var title: String? = nil
   let buttons: [[String]]
 }
 
+struct TeamsReading: Equatable {
+  let state: TeamsMuteState
+  var meetingTitle: String? = nil
+}
+
 enum TeamsMuteClassifier {
+  private static let genericTitles: Set<String> = [
+    "", "microsoft teams", "meeting", "calendar", "chat", "activity", "teams", "calls",
+  ]
+
   static func classify(_ windows: [TeamsWindowSnapshot]) -> TeamsMuteState {
-    let meetingWindows = windows.filter { window in
-      window.buttons.contains { labels in labels.contains(where: isLeaveButton) }
-    }
+    let meetingWindows = windows.filter(isMeetingWindow)
     guard meetingWindows.count == 1 else {
       return .unavailable(meetingWindows.isEmpty ? .noMeeting : .ambiguous)
     }
@@ -46,6 +54,20 @@ enum TeamsMuteClassifier {
       return .unavailable(states.isEmpty ? .noControl : .ambiguous)
     }
     return states[0]
+  }
+
+  static func meetingTitle(_ windows: [TeamsWindowSnapshot]) -> String? {
+    let meetingWindows = windows.filter(isMeetingWindow)
+    guard meetingWindows.count == 1, var title = meetingWindows[0].title else { return nil }
+    for suffix in [" | Microsoft Teams", " - Microsoft Teams"] where title.hasSuffix(suffix) {
+      title.removeLast(suffix.count)
+    }
+    title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    return genericTitles.contains(title.lowercased()) ? nil : title
+  }
+
+  private static func isMeetingWindow(_ window: TeamsWindowSnapshot) -> Bool {
+    window.buttons.contains { labels in labels.contains(where: isLeaveButton) }
   }
 
   private static func isLeaveButton(_ label: String) -> Bool {
@@ -82,12 +104,14 @@ enum TeamsMuteReader {
     _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
   }
 
-  static func read() -> TeamsMuteState {
-    guard hasAccessibilityAccess else { return .unavailable(.accessibilityPermission) }
+  static func read() -> TeamsReading {
+    guard hasAccessibilityAccess else {
+      return TeamsReading(state: .unavailable(.accessibilityPermission))
+    }
     let apps = NSRunningApplication.runningApplications(
       withBundleIdentifier: "com.microsoft.teams2")
     guard apps.count == 1, let app = apps.first else {
-      return .unavailable(apps.isEmpty ? .teamsClosed : .ambiguous)
+      return TeamsReading(state: .unavailable(apps.isEmpty ? .teamsClosed : .ambiguous))
     }
     let application = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(application, 0.5)
@@ -95,14 +119,18 @@ enum TeamsMuteReader {
     _ = AXUIElementSetAttributeValue(
       application, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
     guard let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) else {
-      return .unavailable(.accessibilityError)
+      return TeamsReading(state: .unavailable(.accessibilityError))
     }
     var snapshots: [TeamsWindowSnapshot] = []
     for window in windows {
-      guard let snapshot = scan(window) else { return .unavailable(.accessibilityError) }
+      guard let snapshot = scan(window) else {
+        return TeamsReading(state: .unavailable(.accessibilityError))
+      }
       snapshots.append(snapshot)
     }
-    return TeamsMuteClassifier.classify(snapshots)
+    return TeamsReading(
+      state: TeamsMuteClassifier.classify(snapshots),
+      meetingTitle: TeamsMuteClassifier.meetingTitle(snapshots))
   }
 
   private static func scan(_ window: AXUIElement) -> TeamsWindowSnapshot? {
@@ -121,7 +149,7 @@ enum TeamsMuteReader {
         pending.append(contentsOf: children)
       }
     }
-    return TeamsWindowSnapshot(buttons: buttons)
+    return TeamsWindowSnapshot(title: attribute(window, kAXTitleAttribute), buttons: buttons)
   }
 
   private static func attribute<T>(_ element: AXUIElement, _ name: String) -> T? {

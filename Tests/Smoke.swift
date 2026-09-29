@@ -84,9 +84,8 @@ struct Smoke {
     }
     let unrelated = audios.appendingPathComponent("keep-me.m4a")
     try Data(repeating: 1, count: 200).write(to: unrelated)
-    precondition(
-      MeetingFiles.stem(for: date, in: audios, transcriptDirectory: transcripts)
-        == "19700101T000000Z-2")
+    try testNaming(root: root.appendingPathComponent("naming"))
+    print("Local-time filenames, meeting titles, and mixed-format retention order: OK")
     func exists(_ folder: URL, _ name: String) -> Bool {
       manager.fileExists(atPath: folder.appendingPathComponent(name).path)
     }
@@ -200,6 +199,72 @@ struct Smoke {
       }
       print("Native transcription with timestamps and speaker labels: OK")
     }
+  }
+
+  private static func testNaming(root: URL) throws {
+    let manager = FileManager.default
+    let audios = root.appendingPathComponent("audios")
+    let transcripts = root.appendingPathComponent("transcripts")
+    try manager.createDirectory(at: audios, withIntermediateDirectories: true)
+    try manager.createDirectory(at: transcripts, withIntermediateDirectories: true)
+    let utc = TimeZone(secondsFromGMT: 0)!
+    let epoch = Date(timeIntervalSince1970: 0)
+    func stem() -> String {
+      MeetingFiles.stem(for: epoch, in: audios, transcriptDirectory: transcripts, timeZone: utc)
+    }
+    precondition(stem() == "1970-01-01 00.00")
+    try Data().write(to: transcripts.appendingPathComponent("1970-01-01 00.00 Weekly Sync.txt"))
+    precondition(stem() == "1970-01-01 00.00-2")
+    try manager.createDirectory(
+      at: audios.appendingPathComponent(".1970-01-01 00.00-2.recording"),
+      withIntermediateDirectories: true)
+    precondition(stem() == "1970-01-01 00.00-3")
+
+    precondition(
+      MeetingFiles.date(fromStem: "1970-01-01 00.00-2 Weekly Sync", timeZone: utc) == epoch)
+    precondition(MeetingFiles.date(fromStem: "19700101T000000Z-2") == epoch)
+    precondition(MeetingFiles.date(fromStem: "1970-01-01 00.00Weekly") == nil)
+    precondition(MeetingFiles.date(fromStem: "keep-me") == nil)
+
+    precondition(MeetingFiles.titleComponent("  Sync 1:1 / Team  ") == "Sync 1-1 - Team")
+    precondition(MeetingFiles.titleComponent("A\nB") == "A-B")
+    precondition(MeetingFiles.titleComponent("..hidden") == "hidden")
+    precondition(MeetingFiles.titleComponent("   ") == nil)
+    precondition(MeetingFiles.titleComponent(String(repeating: "a", count: 200))?.count == 80)
+    precondition(
+      MeetingSession(startedAt: epoch, stem: "1970-01-01 00.00", title: "Weekly Sync").fileStem
+        == "1970-01-01 00.00 Weekly Sync")
+    let legacyState = #"{"session":{"startedAt":0,"stem":"19700101T000000Z"}}"#
+    let decoded = try JSONDecoder().decode(MeetingState.self, from: Data(legacyState.utf8))
+    precondition(decoded.session?.title == nil && decoded.session?.fileStem == "19700101T000000Z")
+
+    let calendar = TeamsWindowSnapshot(title: "Calendar | Microsoft Teams", buttons: [["Chat"]])
+    let meeting = TeamsWindowSnapshot(
+      title: "Weekly Sync | Microsoft Teams", buttons: [["Leave"], ["Mute mic"]])
+    precondition(TeamsMuteClassifier.meetingTitle([calendar, meeting]) == "Weekly Sync")
+    precondition(TeamsMuteClassifier.meetingTitle([calendar]) == nil)
+    precondition(
+      TeamsMuteClassifier.meetingTitle([
+        TeamsWindowSnapshot(title: "Calendar | Microsoft Teams", buttons: [["Leave"]])
+      ]) == nil)
+
+    let retention = root.appendingPathComponent("retention")
+    let retainedAudios = retention.appendingPathComponent("audios")
+    try manager.createDirectory(at: retainedAudios, withIntermediateDirectories: true)
+    for name in ["20260928T073121Z", "2026-09-29 14.42 A", "2026-09-30 09.00 B"] {
+      try Data(repeating: 1, count: 20).write(
+        to: retainedAudios.appendingPathComponent(name + ".m4a"))
+    }
+    try RecordingRetention.enforce(root: retention, audioBudget: 45)
+    precondition(
+      !manager.fileExists(
+        atPath: retainedAudios.appendingPathComponent("20260928T073121Z.m4a").path))
+    precondition(
+      manager.fileExists(
+        atPath: retainedAudios.appendingPathComponent("2026-09-29 14.42 A.m4a").path))
+    precondition(
+      manager.fileExists(
+        atPath: retainedAudios.appendingPathComponent("2026-09-30 09.00 B.m4a").path))
   }
 
   private static func testAutoRecordPolicy() {

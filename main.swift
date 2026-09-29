@@ -1,9 +1,10 @@
 import AppKit
 
 if CommandLine.arguments.contains("--check-teams-mute") {
-  let state = TeamsMuteReader.read()
+  let reading = TeamsMuteReader.read()
   let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "unknown"
-  switch state {
+  print("Teams meeting title: \(reading.meetingTitle ?? "none")")
+  switch reading.state {
   case .muted: print("Teams mic: muted; frontmost app: \(frontmost)")
   case .unmuted: print("Teams mic: unmuted; frontmost app: \(frontmost)")
   case .unavailable(let reason):

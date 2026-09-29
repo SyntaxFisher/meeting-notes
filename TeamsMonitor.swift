@@ -4,6 +4,7 @@ import Foundation
 final class TeamsMonitor {
   private var task: Task<Void, Never>?
   private(set) var currentState: TeamsMuteState?
+  private(set) var meetingTitle: String?
   /// Receives the detected Teams mute state on every reading while set.
   var mirroredRecorder: NativeRecorder? {
     didSet { if isRunning, mirroredRecorder != nil { update() } }
@@ -28,10 +29,16 @@ final class TeamsMonitor {
     task?.cancel()
     task = nil
     currentState = nil
+    meetingTitle = nil
   }
   private func update() {
-    let state = TeamsMuteReader.read()
+    let reading = TeamsMuteReader.read()
+    let state = reading.state
     mirroredRecorder?.setMicrophoneMuted(state.microphoneMuted)
+    if reading.meetingTitle != meetingTitle {
+      AppLog.event("teams.meetingTitle", reading.meetingTitle ?? "none")
+      meetingTitle = reading.meetingTitle
+    }
     if state != currentState {
       AppLog.event("teams.detection", String(describing: state))
       currentState = state
