@@ -24,6 +24,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   private var requestingPermissions = false
   private var screenPermissionContinuation = ScreenPermissionContinuation()
   private var work: Task<Void, Never>?
+  private var failedWorkToDiscard: (audio: String?, stem: String?)?
   private var recorder: NativeRecorder?
   private let teamsMonitor = TeamsMonitor()
   private var autoRecord = TeamsAutoRecordPolicy()
@@ -42,7 +43,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   private lazy var permissionWarningImage = Self.alertImage(
     fill: .systemOrange, mark: .black, description: "Meeting Notes: Permissions required")
   private lazy var errorImage = Self.alertImage(
-    fill: .systemRed, mark: .white, description: "Meeting Notes: Error")
+    fill: .systemRed, mark: .black, description: "Meeting Notes: Error")
 
   private static func alertImage(fill: NSColor, mark: NSColor, description: String) -> NSImage {
     let image = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { rect in
@@ -114,7 +115,6 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
 
   func menuNeedsUpdate(_ menu: NSMenu) {
     Task { await refreshPermissions() }
-    if phase == .error { setPhase(.idle) }
     menu.removeAllItems()
     teamsStatusItem.isEnabled = false
     updateTeamsStatusItem()
@@ -128,9 +128,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     } else {
       add("Start Recording", action: #selector(startClicked), enabled: canStartRecording)
     }
-    if !isBusy && phase != .recording
-      && (store.state.pendingAudio != nil || store.state.session != nil)
-    {
+    if phase == .error && (store.state.pendingAudio != nil || store.state.session != nil) {
       add("Retry Transcription", action: #selector(retryClicked))
     }
     menu.addItem(.separator())
@@ -149,6 +147,17 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     let login = add("Launch at Login", action: #selector(toggleLoginClicked))
     login.state = SMAppService.mainApp.status == .enabled ? .on : .off
     add("Quit", action: #selector(quitClicked))
+  }
+
+  func menuDidClose(_ menu: NSMenu) {
+    guard phase == .error else { return }
+    failedWorkToDiscard = (store.state.pendingAudio, store.state.session?.stem)
+    setPhase(.idle)
+    // AppKit sends the chosen item's action after this returns and before the default run loop
+    // mode resumes, so Retry Transcription can cancel the discard.
+    RunLoop.main.perform(inModes: [.default]) { [weak self] in
+      MainActor.assumeIsolated { self?.discardFailedWork() }
+    }
   }
 
   @discardableResult
@@ -192,7 +201,10 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
 
   @objc private func startClicked() { work = Task { await startRecording(automatically: false) } }
   @objc private func stopClicked() { work = Task { await stopRecording() } }
-  @objc private func retryClicked() { work = Task { await retry() } }
+  @objc private func retryClicked() {
+    failedWorkToDiscard = nil
+    work = Task { await retry() }
+  }
   @objc private func quitClicked() { NSApp.terminate(nil) }
   @objc private func grantPermissionsClicked() {
     guard !requestingPermissions else { return }
@@ -545,6 +557,25 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       try store.update { $0.pendingAudio = nil }
       try FileManager.default.removeItem(at: audio)
       setPhase(.idle)
+    } catch { presentError(error.localizedDescription) }
+  }
+
+  private func discardFailedWork() {
+    guard let failed = failedWorkToDiscard else { return }
+    failedWorkToDiscard = nil
+    var files = failed.audio.map { [URL(fileURLWithPath: $0)] } ?? []
+    if let stem = failed.stem {
+      files += [MeetingFiles.capture(for: stem), MeetingFiles.audio(for: stem)]
+    }
+    do {
+      try store.update {
+        if $0.pendingAudio == failed.audio { $0.pendingAudio = nil }
+        if $0.session?.stem == failed.stem { $0.session = nil }
+      }
+      for file in files where FileManager.default.fileExists(atPath: file.path) {
+        try FileManager.default.removeItem(at: file)
+        AppLog.event("failedWork.discarded", file.path)
+      }
     } catch { presentError(error.localizedDescription) }
   }
 
