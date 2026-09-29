@@ -141,6 +141,14 @@ struct Smoke {
     try NativeRecorder.mix(directory: capture, destination: mixed)
     let file = try AVAudioFile(forReading: mixed)
     precondition(abs(Double(file.length) / file.processingFormat.sampleRate - 1.5) < 0.1)
+    let mixedDuration = try NativeTranscriber.duration(of: mixed)
+    precondition(abs(mixedDuration - 1.5) < 0.1)
+    precondition(
+      NativeTranscriber.failure(status: ["stage": "Failed", "noSpeech": "true"], code: 1)
+        is NoSpeechDetected)
+    precondition(
+      !(NativeTranscriber.failure(status: ["stage": "Failed", "error": "Disk full"], code: 1)
+        is NoSpeechDetected))
     let buffer = AVAudioPCMBuffer(
       pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length))!
     try file.read(into: buffer)

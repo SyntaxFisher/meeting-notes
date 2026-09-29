@@ -519,7 +519,23 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       }
       try enforceRetention()
       setPhase(.success)
+    } catch is NoSpeechDetected where isShortRecording(audio) {
+      discardSilentRecording(audio)
     } catch { if !Task.isCancelled { presentError(error.localizedDescription) } }
+  }
+
+  private func isShortRecording(_ audio: URL) -> Bool {
+    guard let duration = try? NativeTranscriber.duration(of: audio) else { return false }
+    return duration < 60
+  }
+
+  private func discardSilentRecording(_ audio: URL) {
+    AppLog.event("transcription.discarded", "\(audio.path); no speech in recording under 1 minute")
+    do {
+      try store.update { $0.pendingAudio = nil }
+      try FileManager.default.removeItem(at: audio)
+      setPhase(.idle)
+    } catch { presentError(error.localizedDescription) }
   }
 
   private func enforceRetention() throws {

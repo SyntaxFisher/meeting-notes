@@ -4,7 +4,13 @@ import Foundation
 
 struct TranscriptionFailure: LocalizedError {
   let message: String
+  var noSpeech = false
   var errorDescription: String? { message }
+}
+
+func isNoSpeech(_ error: Error) -> Bool {
+  if case OfflineDiarizationError.noSpeechDetected = error { return true }
+  return (error as? TranscriptionFailure)?.noSpeech == true
 }
 
 @main
@@ -22,9 +28,10 @@ struct Transcriber {
     let output = URL(fileURLWithPath: args[2])
     let progress = URL(fileURLWithPath: args[3])
     var speakerCount: Int?
-    func report(_ stage: String, error: String? = nil) {
+    func report(_ stage: String, error: String? = nil, noSpeech: Bool = false) {
       var status = ["stage": stage]
       status["error"] = error
+      status["noSpeech"] = noSpeech ? "true" : nil
       status["speakerCount"] = speakerCount.map(String.init)
       if let data = try? JSONEncoder().encode(status) {
         try? data.write(to: progress, options: .atomic)
@@ -42,7 +49,8 @@ struct Transcriber {
       let turns = diarization.segments.sorted { $0.startTimeSeconds < $1.startTimeSeconds }
       speakerCount = Set(turns.map(\.speakerId)).count
       guard !turns.isEmpty else {
-        throw TranscriptionFailure(message: "No speech was detected in the recording.")
+        throw TranscriptionFailure(
+          message: "No speech was detected in the recording.", noSpeech: true)
       }
       report("Preparing Parakeet TDT v3")
       let models = try await AsrModels.downloadAndLoad(version: .v3)
@@ -86,13 +94,14 @@ struct Transcriber {
           "[\(timestamp)] Speaker \(labels[turn.speakerId]!): \(texts.joined(separator: " "))")
       }
       guard !lines.isEmpty else {
-        throw TranscriptionFailure(message: "No speech was recognized in the recording.")
+        throw TranscriptionFailure(
+          message: "No speech was recognized in the recording.", noSpeech: true)
       }
       try Data((lines.joined(separator: "\n\n") + "\n").utf8).write(
         to: output, options: .withoutOverwriting)
       report("Complete")
     } catch {
-      report("Failed", error: error.localizedDescription)
+      report("Failed", error: error.localizedDescription, noSpeech: isNoSpeech(error))
       exit(1)
     }
   }
