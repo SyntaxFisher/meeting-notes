@@ -39,25 +39,30 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     permissions.recordingGranted && !requestingPermissions && !isBusy && recorder == nil
       && store.state.session == nil
   }
-  private lazy var permissionWarningImage: NSImage = {
+  private lazy var permissionWarningImage = Self.alertImage(
+    fill: .systemOrange, mark: .black, description: "Meeting Notes: Permissions required")
+  private lazy var errorImage = Self.alertImage(
+    fill: .systemRed, mark: .white, description: "Meeting Notes: Error")
+
+  private static func alertImage(fill: NSColor, mark: NSColor, description: String) -> NSImage {
     let image = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { rect in
-      NSColor.systemOrange.setFill()
+      fill.setFill()
       NSBezierPath(ovalIn: rect).fill()
       let attrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.boldSystemFont(ofSize: 10),
-        .foregroundColor: NSColor.black,
+        .foregroundColor: mark,
       ]
-      let mark = "!" as NSString
-      let size = mark.size(withAttributes: attrs)
-      mark.draw(
+      let exclamation = "!" as NSString
+      let size = exclamation.size(withAttributes: attrs)
+      exclamation.draw(
         at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
         withAttributes: attrs)
       return true
     }
     image.isTemplate = false
-    image.accessibilityDescription = "Meeting Notes: Permissions required"
+    image.accessibilityDescription = description
     return image
-  }()
+  }
 
   init(store: StateStore) {
     self.store = store
@@ -109,6 +114,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
 
   func menuNeedsUpdate(_ menu: NSMenu) {
     Task { await refreshPermissions() }
+    if phase == .error { setPhase(.idle) }
     menu.removeAllItems()
     teamsStatusItem.isEnabled = false
     updateTeamsStatusItem()
@@ -122,7 +128,9 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     } else {
       add("Start Recording", action: #selector(startClicked), enabled: canStartRecording)
     }
-    if phase == .error && (store.state.pendingAudio != nil || store.state.session != nil) {
+    if !isBusy && phase != .recording
+      && (store.state.pendingAudio != nil || store.state.session != nil)
+    {
       add("Retry Transcription", action: #selector(retryClicked))
     }
     menu.addItem(.separator())
@@ -314,6 +322,11 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
         "Grant Permissions: \(permissions.missing.map(\.title).joined(separator: ", "))"
       return
     }
+    if phase == .error {
+      button.image = errorImage
+      button.toolTip = message ?? "Meeting Notes: Error"
+      return
+    }
     let color: NSColor
     switch phase {
     case .idle: color = .labelColor
@@ -322,7 +335,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       color = NSColor.systemRed.withAlphaComponent(
         0.75 + 0.25 * (1 + cos(ProcessInfo.processInfo.systemUptime * .pi)) / 2)
     case .success: color = .systemGreen
-    case .error: color = .systemRed
+    case .error: return
     }
     let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold).applying(
       NSImage.SymbolConfiguration(paletteColors: [color]))
@@ -331,10 +344,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       && teamsMonitor.currentState == .muted
     let symbolName: String
     let accessibilityDescription: String
-    if phase == .error {
-      symbolName = "exclamationmark.circle.fill"
-      accessibilityDescription = "Meeting Notes: Error"
-    } else if teamsMuted {
+    if teamsMuted {
       symbolName = "mic.slash.fill"
       accessibilityDescription = "Meeting Notes: Muted in Teams"
     } else {
