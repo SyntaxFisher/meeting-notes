@@ -25,12 +25,20 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   private var screenPermissionContinuation = ScreenPermissionContinuation()
   private var work: Task<Void, Never>?
   private var recorder: NativeRecorder?
-  private var teamsMirror: TeamsMuteMirror?
+  private let teamsMonitor = TeamsMonitor()
+  private var autoRecord = TeamsAutoRecordPolicy()
   private let transcriber = NativeTranscriber()
   private var detectTeamsMute: Bool {
     !UserDefaults.standard.bool(forKey: "teamsMuteDetectionDisabled")
   }
+  private var autoRecordTeamsMeetings: Bool {
+    UserDefaults.standard.bool(forKey: "autoRecordTeamsMeetings")
+  }
   private var isBusy: Bool { phase == .preparing || phase == .transcribing }
+  private var canStartRecording: Bool {
+    permissions.recordingGranted && !requestingPermissions && !isBusy && recorder == nil
+      && store.state.session == nil
+  }
   private lazy var permissionWarningImage: NSImage = {
     let image = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { rect in
       NSColor.systemOrange.setFill()
@@ -84,6 +92,11 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       Task { @MainActor in await self?.refreshPermissions() }
     }
     if let permissionTimer { RunLoop.main.add(permissionTimer, forMode: .common) }
+    teamsMonitor.onStateChanged = { [weak self] in
+      self?.updateTeamsStatusItem()
+      self?.updateIcon()
+    }
+    teamsMonitor.onReading = { [weak self] in self?.evaluateAutoRecord() }
     if store.state.session != nil || store.state.pendingAudio != nil {
       presentError(
         "An interrupted recording or transcript needs processing. Choose Retry Transcription.")
@@ -91,6 +104,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       setPhase(.idle)
       do { try enforceRetention() } catch { presentError(error.localizedDescription) }
     }
+    updateTeamsMonitor()
   }
 
   func menuNeedsUpdate(_ menu: NSMenu) {
@@ -106,10 +120,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
         "Grant Permissions…", action: #selector(grantPermissionsClicked),
         enabled: !requestingPermissions)
     } else {
-      add(
-        "Start Recording", action: #selector(startClicked),
-        enabled: !requestingPermissions && !isBusy
-          && store.state.session == nil)
+      add("Start Recording", action: #selector(startClicked), enabled: canStartRecording)
     }
     if phase == .error && (store.state.pendingAudio != nil || store.state.session != nil) {
       add("Retry Transcription", action: #selector(retryClicked))
@@ -124,6 +135,9 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       "Mirror Teams Mute", action: #selector(toggleTeamsMuteClicked),
       enabled: !isBusy && recorder == nil)
     mirror.state = detectTeamsMute ? .on : .off
+    let autoRecordItem = add(
+      "Auto-Record Teams Meetings", action: #selector(toggleAutoRecordClicked))
+    autoRecordItem.state = autoRecordTeamsMeetings ? .on : .off
     let login = add("Launch at Login", action: #selector(toggleLoginClicked))
     login.state = SMAppService.mainApp.status == .enabled ? .on : .off
     add("Quit", action: #selector(quitClicked))
@@ -157,7 +171,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     }
     work?.cancel()
     transcriber.cancel()
-    teamsMirror?.stop()
+    teamsMonitor.stop()
     if let recorder {
       Task {
         try? await recorder.stop()
@@ -168,7 +182,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     return .terminateNow
   }
 
-  @objc private func startClicked() { work = Task { await startRecording() } }
+  @objc private func startClicked() { work = Task { await startRecording(automatically: false) } }
   @objc private func stopClicked() { work = Task { await stopRecording() } }
   @objc private func retryClicked() { work = Task { await retry() } }
   @objc private func quitClicked() { NSApp.terminate(nil) }
@@ -186,6 +200,13 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   }
   @objc private func toggleTeamsMuteClicked() {
     UserDefaults.standard.set(detectTeamsMute, forKey: "teamsMuteDetectionDisabled")
+  }
+  @objc private func toggleAutoRecordClicked() {
+    let enabled = !autoRecordTeamsMeetings
+    UserDefaults.standard.set(enabled, forKey: "autoRecordTeamsMeetings")
+    AppLog.event("autoRecord.toggled", enabled ? "on" : "off")
+    autoRecord = TeamsAutoRecordPolicy()
+    updateTeamsMonitor()
   }
   @objc private func toggleLoginClicked() {
     do {
@@ -252,9 +273,31 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     }
     updateIcon()
   }
+  private func updateTeamsMonitor() {
+    if autoRecordTeamsMeetings || teamsMonitor.mirroredRecorder != nil {
+      teamsMonitor.start()
+    } else {
+      teamsMonitor.stop()
+    }
+  }
+  private func evaluateAutoRecord() {
+    guard autoRecordTeamsMeetings, let state = teamsMonitor.currentState else { return }
+    switch autoRecord.observe(
+      state.meetingPresence, at: Date(), isRecording: phase == .recording,
+      canStart: canStartRecording)
+    {
+    case .start:
+      AppLog.event("autoRecord.start")
+      work = Task { await startRecording(automatically: true) }
+    case .stop:
+      AppLog.event("autoRecord.stop")
+      work = Task { await stopRecording() }
+    case nil: break
+    }
+  }
   private func updateTeamsStatusItem() {
-    teamsStatusItem.isHidden = phase != .recording || teamsMirror == nil
-    switch teamsMirror?.currentState {
+    teamsStatusItem.isHidden = phase != .recording || teamsMonitor.mirroredRecorder == nil
+    switch teamsMonitor.currentState {
     case .some(.muted): teamsStatusItem.title = "Muted in Teams"
     case .some(.unmuted): teamsStatusItem.title = "Not muted in Teams"
     case .some(.unavailable(.noMeeting)), .some(.unavailable(.teamsClosed)):
@@ -283,7 +326,9 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     }
     let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold).applying(
       NSImage.SymbolConfiguration(paletteColors: [color]))
-    let teamsMuted = phase == .recording && detectTeamsMute && teamsMirror?.currentState == .muted
+    let teamsMuted =
+      phase == .recording && teamsMonitor.mirroredRecorder != nil
+      && teamsMonitor.currentState == .muted
     let symbolName: String
     let accessibilityDescription: String
     if phase == .error {
@@ -318,7 +363,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     }
   }
 
-  private func startRecording() async {
+  private func startRecording(automatically: Bool) async {
     guard !isBusy, recorder == nil, store.state.session == nil else { return }
     await refreshPermissions()
     guard permissions.recordingGranted, !isBusy, recorder == nil, store.state.session == nil
@@ -339,23 +384,20 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
         }
       }
       if detectTeamsMute {
-        let mirror = TeamsMuteMirror(recorder: capture)
-        mirror.onStateChanged = { [weak self] in
-          self?.updateTeamsStatusItem()
-          self?.updateIcon()
-        }
-        teamsMirror = mirror
-        mirror.start()
+        teamsMonitor.mirroredRecorder = capture
+        updateTeamsMonitor()
       }
       try await capture.start()
       try Task.checkCancellation()
       if store.state.pendingAudio != nil {
         try store.update { $0.pendingAudio = nil }
       }
+      autoRecord.recordingStarted(automatically: automatically)
       setPhase(.recording)
     } catch {
-      teamsMirror?.stop()
-      teamsMirror = nil
+      autoRecord.recordingEnded()
+      teamsMonitor.mirroredRecorder = nil
+      updateTeamsMonitor()
       try? await recorder?.stop()
       recorder = nil
       if let session = store.state.session,
@@ -372,9 +414,10 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
 
   private func stopRecording(captureError: Error? = nil) async {
     guard let capture = recorder, let session = store.state.session else { return }
+    autoRecord.recordingEnded()
     setPhase(.preparing)
-    teamsMirror?.stop()
-    teamsMirror = nil
+    teamsMonitor.mirroredRecorder = nil
+    updateTeamsMonitor()
     var failure = captureError
     do { try await capture.stop() } catch { failure = failure ?? error }
     recorder = nil

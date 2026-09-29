@@ -117,6 +117,12 @@ struct Smoke {
     precondition(
       TeamsMuteClassifier.classify([TeamsWindowSnapshot(buttons: [["Leave"], ["Mute mic"]])])
         == .unmuted)
+    precondition(TeamsMuteState.muted.meetingPresence == .inMeeting)
+    precondition(TeamsMuteState.unavailable(.noControl).meetingPresence == .inMeeting)
+    precondition(TeamsMuteState.unavailable(.teamsClosed).meetingPresence == .noMeeting)
+    precondition(TeamsMuteState.unavailable(.accessibilityError).meetingPresence == .unknown)
+    testAutoRecordPolicy()
+    print("Teams auto-record: starts, stops after grace, respects manual control: OK")
 
     let capture = root.appendingPathComponent("capture")
     try manager.createDirectory(at: capture, withIntermediateDirectories: true)
@@ -179,6 +185,39 @@ struct Smoke {
       }
       print("Native transcription with timestamps and speaker labels: OK")
     }
+  }
+
+  private static func testAutoRecordPolicy() {
+    let start = Date(timeIntervalSince1970: 0)
+    let grace = TeamsAutoRecordPolicy.leaveGracePeriod
+    var policy = TeamsAutoRecordPolicy()
+    precondition(policy.observe(.noMeeting, at: start, isRecording: false, canStart: true) == nil)
+    precondition(policy.observe(.inMeeting, at: start, isRecording: false, canStart: false) == nil)
+    precondition(
+      policy.observe(.inMeeting, at: start, isRecording: false, canStart: true) == .start)
+    policy.recordingStarted(automatically: true)
+    precondition(policy.observe(.unknown, at: start, isRecording: true, canStart: false) == nil)
+    precondition(policy.observe(.noMeeting, at: start, isRecording: true, canStart: false) == nil)
+    precondition(
+      policy.observe(.inMeeting, at: start + grace, isRecording: true, canStart: false) == nil)
+    let left = start + 2 * grace
+    precondition(policy.observe(.noMeeting, at: left, isRecording: true, canStart: false) == nil)
+    precondition(
+      policy.observe(.noMeeting, at: left + grace, isRecording: true, canStart: false) == .stop)
+    policy.recordingEnded()
+    precondition(policy.observe(.inMeeting, at: left, isRecording: false, canStart: true) == .start)
+
+    policy.recordingStarted(automatically: true)
+    policy.recordingEnded()
+    precondition(policy.observe(.inMeeting, at: start, isRecording: false, canStart: true) == nil)
+    precondition(policy.observe(.noMeeting, at: start, isRecording: false, canStart: true) == nil)
+    precondition(
+      policy.observe(.inMeeting, at: start, isRecording: false, canStart: true) == .start)
+
+    policy.recordingStarted(automatically: false)
+    precondition(policy.observe(.noMeeting, at: start, isRecording: true, canStart: false) == nil)
+    precondition(
+      policy.observe(.noMeeting, at: start + grace, isRecording: true, canStart: false) == nil)
   }
 
   private static func writeTrack(at url: URL, muted: Bool) throws {

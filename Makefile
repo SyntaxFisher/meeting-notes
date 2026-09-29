@@ -2,7 +2,7 @@ APP_NAME = Meeting Notes
 EXECUTABLE = MeetingNotes
 BUNDLE_ID = com.jona.meeting-notes
 DEST ?= /Applications
-SOURCES = main.swift AppDelegate.swift State.swift Permissions.swift TeamsMuteReader.swift TeamsMuteMirror.swift AppLog.swift NativeTranscriber.swift NativeRecorder.swift RecordingRetention.swift
+SOURCES = main.swift AppDelegate.swift State.swift Permissions.swift TeamsMuteReader.swift TeamsMonitor.swift TeamsAutoRecord.swift AppLog.swift NativeTranscriber.swift NativeRecorder.swift RecordingRetention.swift
 BUNDLE = build/MeetingNotes.app
 SWIFT_FLAGS ?=
 
@@ -32,7 +32,7 @@ lint:
 
 test:
 	mkdir -p build
-	swiftc $(SWIFT_FLAGS) -O -parse-as-library -target arm64-apple-macos15.0 -o build/MeetingNotesSmoke Tests/Smoke.swift State.swift Permissions.swift TeamsMuteReader.swift AppLog.swift NativeRecorder.swift RecordingRetention.swift NativeTranscriber.swift
+	swiftc $(SWIFT_FLAGS) -O -parse-as-library -target arm64-apple-macos15.0 -o build/MeetingNotesSmoke Tests/Smoke.swift State.swift Permissions.swift TeamsMuteReader.swift TeamsAutoRecord.swift AppLog.swift NativeRecorder.swift RecordingRetention.swift NativeTranscriber.swift
 	build/MeetingNotesSmoke
 
 install: build
