@@ -18,8 +18,10 @@ After an ad-hoc-signed update, macOS may require removing and re-adding the inst
 
 ## Files and retention
 
-Audio: `~/Documents/meeting-notes/audios/YYYYMMDDTHHMMSSZ.m4a`.
-Transcript: `~/Documents/meeting-notes/transcripts/YYYYMMDDTHHMMSSZ.txt`.
+Audio: `~/Documents/meeting-notes/audios/YYYY-MM-DD HH.MM Meeting Title.m4a`.
+Transcript: `~/Documents/meeting-notes/transcripts/YYYY-MM-DD HH.MM Meeting Title.txt`.
+
+The timestamp is the local start time. During a recording, Meeting Notes reads the title of the Teams meeting window (the one with a **Leave** button), removes ` | Microsoft Teams`, and uses the first usable title as the file name. Generic titles such as "Calendar" are ignored, and without a title the name is just the timestamp. Recordings started in the same minute get `-2`, `-3`, and so on after the time. Older files named `YYYYMMDDTHHMMSSZ` (UTC) keep their names and are still covered by retention. `MeetingNotes --check-teams-mute` prints the detected meeting title without recording.
 
 Transcripts contain timestamps and anonymous Speaker 1/2/etc. labels. Voice labels are estimates within each recording, not participants' real identities; short clips and overlapping voices can reduce accuracy. There is no AI summary or cleanup.
 

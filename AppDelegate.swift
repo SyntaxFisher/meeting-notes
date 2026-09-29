@@ -102,7 +102,10 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       self?.updateTeamsStatusItem()
       self?.updateIcon()
     }
-    teamsMonitor.onReading = { [weak self] in self?.evaluateAutoRecord() }
+    teamsMonitor.onReading = { [weak self] in
+      self?.recordMeetingTitle()
+      self?.evaluateAutoRecord()
+    }
     if store.state.session != nil || store.state.pendingAudio != nil {
       presentError(
         "An interrupted recording or transcript needs processing. Choose Retry Transcription.")
@@ -294,11 +297,19 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     updateIcon()
   }
   private func updateTeamsMonitor() {
-    if autoRecordTeamsMeetings || teamsMonitor.mirroredRecorder != nil {
+    if autoRecordTeamsMeetings || recorder != nil {
       teamsMonitor.start()
     } else {
       teamsMonitor.stop()
     }
+  }
+  private func recordMeetingTitle() {
+    guard phase == .recording, store.state.session?.title == nil,
+      let title = MeetingFiles.titleComponent(teamsMonitor.meetingTitle)
+    else { return }
+    do {
+      try store.update { $0.session?.title = title }
+    } catch { AppLog.event("teams.meetingTitleFailed", error.localizedDescription) }
   }
   private func evaluateAutoRecord() {
     guard autoRecordTeamsMeetings, let state = teamsMonitor.currentState else { return }
@@ -405,10 +416,8 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
           self.work = Task { await self.stopRecording(captureError: error) }
         }
       }
-      if detectTeamsMute {
-        teamsMonitor.mirroredRecorder = capture
-        updateTeamsMonitor()
-      }
+      if detectTeamsMute { teamsMonitor.mirroredRecorder = capture }
+      updateTeamsMonitor()
       try await capture.start()
       try Task.checkCancellation()
       if store.state.pendingAudio != nil {
@@ -419,9 +428,9 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     } catch {
       autoRecord.recordingEnded()
       teamsMonitor.mirroredRecorder = nil
-      updateTeamsMonitor()
       try? await recorder?.stop()
       recorder = nil
+      updateTeamsMonitor()
       if let session = store.state.session,
         !FileManager.default.fileExists(
           atPath: MeetingFiles.capture(for: session.stem).appendingPathComponent("capture.json")
@@ -439,10 +448,10 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     autoRecord.recordingEnded()
     setPhase(.preparing)
     teamsMonitor.mirroredRecorder = nil
-    updateTeamsMonitor()
     var failure = captureError
     do { try await capture.stop() } catch { failure = failure ?? error }
     recorder = nil
+    updateTeamsMonitor()
     if let failure {
       handleCaptureError(failure)
     } else {
@@ -474,7 +483,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   }
 
   private func finishRecording(_ session: MeetingSession) async throws {
-    let destination = MeetingFiles.audio(for: session.stem)
+    let destination = MeetingFiles.audio(for: session.fileStem)
     let directory = MeetingFiles.capture(for: session.stem)
     if !FileManager.default.fileExists(atPath: destination.path) {
       guard

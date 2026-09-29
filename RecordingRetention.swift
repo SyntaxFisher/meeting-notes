@@ -23,7 +23,7 @@ enum RecordingRetention {
   ) throws {
     let manager = FileManager.default
     guard manager.fileExists(atPath: directory.path) else { return }
-    var files: [(stem: String, url: URL, size: Int64)] = []
+    var files: [(stem: String, date: Date, url: URL, size: Int64)] = []
     for file in try manager.contentsOfDirectory(
       at: directory,
       includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
@@ -31,15 +31,18 @@ enum RecordingRetention {
     {
       let stem = file.deletingPathExtension().lastPathComponent
       guard extensions.contains(file.pathExtension.lowercased()),
-        stem.range(of: #"^\d{8}T\d{6}Z(?:-\d+)?$"#, options: .regularExpression) != nil
+        let date = MeetingFiles.date(fromStem: stem)
       else { continue }
       let attributes = try file.resourceValues(forKeys: [
         .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
       ])
       guard attributes.isRegularFile == true, attributes.isSymbolicLink != true else { continue }
-      files.append((stem, file, Int64(attributes.fileSize ?? 0)))
+      files.append((stem, date, file, Int64(attributes.fileSize ?? 0)))
     }
-    files.sort { $0.stem.compare($1.stem, options: .numeric) == .orderedAscending }
+    files.sort {
+      $0.date != $1.date
+        ? $0.date < $1.date : $0.stem.compare($1.stem, options: .numeric) == .orderedAscending
+    }
     let newest = files.last?.stem
     var total = files.reduce(0) { $0 + $1.size }
     for file in files {
