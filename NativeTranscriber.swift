@@ -1,8 +1,26 @@
+import AVFoundation
 import Foundation
+
+struct NoSpeechDetected: LocalizedError {
+  var errorDescription: String? { "No speech was detected in the recording." }
+}
 
 @MainActor
 final class NativeTranscriber {
   private var process: Process?
+
+  nonisolated static func duration(of file: URL) throws -> TimeInterval {
+    let audio = try AVAudioFile(forReading: file)
+    return Double(audio.length) / audio.processingFormat.sampleRate
+  }
+
+  nonisolated static func failure(status: [String: String], code: Int32) -> Error {
+    if status["noSpeech"] == "true" { return NoSpeechDetected() }
+    return MeetingError(
+      status["error"]
+        ?? "Local transcription stopped during \(status["stage"] ?? "startup") (code \(code)). Retry Transcription."
+    )
+  }
 
   func cancel() {
     if let process, process.isRunning { process.terminate() }
@@ -57,14 +75,11 @@ final class NativeTranscriber {
       "code=\(task.terminationStatus); stage=\(status["stage"] ?? "starting"); speakers=\(status["speakerCount"] ?? "unknown")"
     )
     guard task.terminationStatus == 0 else {
-      throw MeetingError(
-        status["error"]
-          ?? "Local transcription stopped during \(status["stage"] ?? "startup") (code \(task.terminationStatus)). Retry Transcription."
-      )
+      throw Self.failure(status: status, code: task.terminationStatus)
     }
     let text = try String(contentsOf: output, encoding: .utf8)
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw MeetingError("No speech was recognized in the recording.")
+      throw NoSpeechDetected()
     }
     return text
   }
