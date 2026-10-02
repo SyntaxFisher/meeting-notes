@@ -141,8 +141,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     add("Show in Finder", action: #selector(showInFinderClicked), enabled: hasTranscript)
     menu.addItem(.separator())
     let mirror = add(
-      "Mirror Teams Mute", action: #selector(toggleTeamsMuteClicked),
-      enabled: !isBusy && recorder == nil)
+      "Mirror Teams Mute", action: #selector(toggleTeamsMuteClicked))
     mirror.state = detectTeamsMute ? .on : .off
     let autoRecordItem = add(
       "Auto-Record Teams Meetings", action: #selector(toggleAutoRecordClicked))
@@ -223,6 +222,14 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   }
   @objc private func toggleTeamsMuteClicked() {
     UserDefaults.standard.set(detectTeamsMute, forKey: "teamsMuteDetectionDisabled")
+    if detectTeamsMute {
+      if phase == .recording { teamsMonitor.mirroredRecorder = recorder }
+    } else {
+      teamsMonitor.mirroredRecorder = nil
+      recorder?.setMicrophoneMuted(false)
+    }
+    updateTeamsStatusItem()
+    updateIcon()
   }
   @objc private func toggleAutoRecordClicked() {
     let enabled = !autoRecordTeamsMeetings
@@ -424,6 +431,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
         try store.update { $0.pendingAudio = nil }
       }
       autoRecord.recordingStarted(automatically: automatically)
+      if detectTeamsMute { teamsMonitor.mirroredRecorder = capture }
       setPhase(.recording)
     } catch {
       autoRecord.recordingEnded()
