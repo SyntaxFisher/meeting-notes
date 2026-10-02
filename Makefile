@@ -32,7 +32,7 @@ lint:
 
 test:
 	mkdir -p build
-	swiftc $(SWIFT_FLAGS) -O -parse-as-library -target arm64-apple-macos15.0 -o build/MeetingNotesSmoke Tests/Smoke.swift State.swift Permissions.swift TeamsMuteReader.swift TeamsAutoRecord.swift AppLog.swift NativeRecorder.swift RecordingRetention.swift NativeTranscriber.swift
+	swiftc $(SWIFT_FLAGS) -O -parse-as-library -target arm64-apple-macos15.0 -o build/MeetingNotesSmoke Tests/Smoke.swift State.swift Permissions.swift TeamsMuteReader.swift TeamsAutoRecord.swift AppLog.swift NativeRecorder.swift RecordingRetention.swift NativeTranscriber.swift NativeTranscription/Sources/MeetingTranscriber/TranscriptionAudio.swift
 	build/MeetingNotesSmoke
 
 install: build

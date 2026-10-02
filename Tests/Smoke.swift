@@ -6,6 +6,22 @@ import ScreenCaptureKit
 struct Smoke {
   @MainActor
   static func main() async throws {
+    for rate in [16_000.0, 44_100.0, 48_000.0] {
+      let total = Int64(30.289 * rate)
+      precondition(TranscriptionAudio.frameCount(remaining: total, sampleRate: rate) == total)
+      let long = Int64(60.289 * rate)
+      let first = TranscriptionAudio.frameCount(remaining: long, sampleRate: rate)
+      precondition(first == Int64(30 * rate))
+      precondition(
+        TranscriptionAudio.frameCount(remaining: long - first, sampleRate: rate) == long - first)
+    }
+    let short: [Float] = [0.25, -0.25]
+    let padded = TranscriptionAudio.pad(short, minimumCount: 4_800)
+    precondition(padded.count == 4_800)
+    precondition(Array(padded.prefix(short.count)) == short)
+    precondition(padded.dropFirst(short.count).allSatisfy { $0 == 0 })
+    precondition(TranscriptionAudio.pad(padded, minimumCount: 4_800) == padded)
+    print("Transcription preserves short tails and pads short speaker turns: OK")
     let readyForScreen = PermissionSnapshot(
       microphone: true, screenRecording: false, accessibility: true)
     var continuation = ScreenPermissionContinuation()

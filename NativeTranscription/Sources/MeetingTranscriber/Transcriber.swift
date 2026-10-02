@@ -70,7 +70,8 @@ struct Transcriber {
         var position = AVAudioFramePosition(start * rate)
         let last = AVAudioFramePosition(end * rate)
         while position < last {
-          let count = AVAudioFrameCount(min(last - position, AVAudioFramePosition(30 * rate)))
+          let count = AVAudioFrameCount(
+            TranscriptionAudio.frameCount(remaining: last - position, sampleRate: rate))
           guard
             let buffer = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: count)
           else { throw TranscriptionFailure(message: "Cannot allocate transcription audio.") }
@@ -79,7 +80,9 @@ struct Transcriber {
           guard buffer.frameLength > 0 else {
             throw TranscriptionFailure(message: "Recording ended unexpectedly.")
           }
-          let samples = try converter.resampleBuffer(buffer)
+          let samples = TranscriptionAudio.pad(
+            try converter.resampleBuffer(buffer),
+            minimumCount: ASRConstants.minimumRequiredSamples(forSampleRate: 16_000))
           var decoderState = try TdtDecoderState()
           let result = try await asr.transcribe(samples, decoderState: &decoderState)
           let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
