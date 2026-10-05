@@ -1,6 +1,44 @@
 import AVFoundation
 import Foundation
 
+private final class FixtureMicrophoneEngine: MicrophoneEngine {
+  var isRunning = false
+  var startError: Error?
+  var samples: [(AVAudioPCMBuffer, Double)] = []
+  var starts = 0
+  var stops = 0
+  var onStart: (() -> Void)?
+  private var receive: AudioCaptureHandler?
+  private var change: (@Sendable () -> Void)?
+
+  func start(
+    receive: @escaping AudioCaptureHandler, onFailure: @escaping AudioCaptureFailureHandler,
+    onConfigurationChange: @escaping @Sendable () -> Void
+  ) throws {
+    starts += 1
+    self.receive = receive
+    change = onConfigurationChange
+    if let startError { throw startError }
+    isRunning = true
+    for (buffer, time) in samples {
+      receive(
+        try CapturedAudio.copy(buffer.audioBufferList, format: buffer.format),
+        AVAudioTime.hostTime(forSeconds: time))
+    }
+    onStart?()
+  }
+
+  func configurationChanged() {
+    isRunning = false
+    change?()
+  }
+
+  func stop() {
+    stops += 1
+    isRunning = false
+  }
+}
+
 private final class FixtureAudioInput: AudioCaptureInput {
   let source: CaptureSource
   var startError: Error?
@@ -42,7 +80,7 @@ extension Smoke {
   static func testAudioCapture(root: URL) async throws {
     precondition(NativeRecorder.captureInputs(teamsRunning: false).map(\.source) == [.microphone])
     precondition(
-      NativeRecorder.captureInputs(teamsRunning: true).map(\.source) == [.system, .microphone])
+      NativeRecorder.captureInputs(teamsRunning: true).map(\.source) == [.microphone, .system])
     let description = TeamsAudioCapture.tapDescription()
     precondition(description.bundleIDs == ["com.microsoft.teams2"])
     precondition(description.processes.isEmpty && !description.isExclusive)
@@ -206,7 +244,131 @@ extension Smoke {
       precondition(error.localizedDescription == "Fixture callback failure")
     }
     precondition(broken.stops == 1)
+    try await testMicrophoneRecovery(root: root)
+    testCaptureHealth()
     print("Audio-only sources, owned buffers, mute, timestamps, format changes and cleanup: OK")
+  }
+
+  private static func testMicrophoneRecovery(root: URL) async throws {
+    let old = FixtureMicrophoneEngine()
+    old.samples = [(tone(rate: 24_000), 100)]
+    let changing = FixtureMicrophoneEngine()
+    changing.startError = NSError(domain: "com.apple.coreaudio.avfaudio", code: -10868)
+    let fresh = FixtureMicrophoneEngine()
+    fresh.samples = [(tone(rate: 48_000, channels: 2), 101)]
+    let recovered = DispatchSemaphore(value: 0)
+    fresh.onStart = { recovered.signal() }
+    let engines = [old, changing, fresh]
+    var next = 0
+    let microphone = MicrophoneCapture(retryDelays: [0, 0, 0]) {
+      precondition(next < engines.count)
+      defer { next += 1 }
+      return engines[next]
+    }
+    let directory = root.appendingPathComponent("bluetooth-format-change")
+    let recorder = NativeRecorder(
+      directory: directory, makeInputs: { [microphone] }, checkPermission: {})
+    try await recorder.start()
+    old.configurationChanged()
+    precondition(recovered.wait(timeout: .now() + 5) == .success)
+    try await recorder.stop()
+    try await recorder.stop()
+    precondition(engines.allSatisfy { $0.starts == 1 && $0.stops == 1 })
+    let audio = try readSamples(directory.appendingPathComponent("microphone.caf"))
+    precondition(abs(audio.count - 96_000) < 2_000)
+    precondition(energy(audio, from: 5_000, to: 40_000) > 100)
+    precondition(energy(audio, from: 55_000, to: 85_000) > 100)
+    old.configurationChanged()
+    fresh.configurationChanged()
+    try microphone.stop()
+    precondition(next == 3)
+
+    let disconnected = FixtureMicrophoneEngine()
+    disconnected.startError = MicrophoneInputUnavailable()
+    let reconnected = FixtureMicrophoneEngine()
+    var reconnectAttempt = 0
+    let reconnecting = MicrophoneCapture(retryDelays: [0]) {
+      defer { reconnectAttempt += 1 }
+      return reconnectAttempt == 0 ? disconnected : reconnected
+    }
+    try reconnecting.start(receive: { _, _ in }, onFailure: { _ in })
+    try reconnecting.stop()
+    precondition(reconnectAttempt == 2 && disconnected.stops == 1 && reconnected.stops == 1)
+
+    let denied = FixtureMicrophoneEngine()
+    denied.startError = PermissionRequired(permission: .microphone)
+    let deniedCapture = MicrophoneCapture(retryDelays: [0, 0]) { denied }
+    do {
+      try deniedCapture.start(receive: { _, _ in }, onFailure: { _ in })
+      preconditionFailure("Microphone permission denial must fail without retrying")
+    } catch {
+      precondition(PermissionAccess.deniedPermission(for: error) == .microphone)
+    }
+    try deniedCapture.stop()
+    precondition(denied.starts == 1 && denied.stops == 1)
+
+    let initial = FixtureMicrophoneEngine()
+    let failingEngines = (0..<3).map { _ in
+      let engine = FixtureMicrophoneEngine()
+      engine.startError = NSError(domain: "com.apple.coreaudio.avfaudio", code: -10868)
+      return engine
+    }
+    let failing = [initial] + failingEngines
+    var index = 0
+    let bounded = MicrophoneCapture(retryDelays: [0, 0, 0]) {
+      precondition(index < failing.count)
+      defer { index += 1 }
+      return failing[index]
+    }
+    let failure = DispatchSemaphore(value: 0)
+    try bounded.start(receive: { _, _ in }, onFailure: { _ in failure.signal() })
+    initial.configurationChanged()
+    precondition(failure.wait(timeout: .now() + 5) == .success)
+    try bounded.stop()
+    precondition(index == 4 && failing.allSatisfy { $0.stops == 1 })
+
+    let pending = FixtureMicrophoneEngine()
+    var creations = 0
+    let cancelled = MicrophoneCapture(retryDelays: [0.1]) {
+      creations += 1
+      return pending
+    }
+    let unexpectedFailure = DispatchSemaphore(value: 0)
+    try cancelled.start(receive: { _, _ in }, onFailure: { _ in unexpectedFailure.signal() })
+    pending.configurationChanged()
+    try cancelled.stop()
+    precondition(unexpectedFailure.wait(timeout: .now() + 0.2) == .timedOut)
+    try cancelled.stop()
+    precondition(creations == 1 && pending.stops == 1)
+    print(
+      "Bluetooth 24 kHz to 48 kHz recovery, fresh engines, bounded retries and cancellation: OK")
+  }
+
+  private static func testCaptureHealth() {
+    var health = TeamsCaptureHealth()
+    precondition(health.check(outputActive: false, at: 0) == .wait)
+    precondition(health.check(outputActive: false, at: 100) == .wait)
+    precondition(health.check(outputActive: true, at: 101) == .wait)
+    precondition(health.check(outputActive: true, at: 105) == .wait)
+    precondition(health.check(outputActive: true, at: 106) == .restart)
+    precondition(health.check(outputActive: true, at: 111) == .restart)
+    precondition(health.check(outputActive: true, at: 116) == .fail)
+    health.receivedBuffer()
+    precondition(health.restarts == 0)
+    precondition(health.check(outputActive: true, at: 120) == .wait)
+    health.receivedBuffer()
+    precondition(health.check(outputActive: true, at: 126) == .wait)
+    precondition(health.check(outputActive: false, at: 200) == .wait)
+    precondition(health.check(outputActive: true, at: 300) == .wait)
+
+    var stats = CaptureSignalStatistics()
+    stats.received(frames: 480, peak: 0, muted: false)
+    precondition(stats.buffers == 1 && stats.inputPeak == 0 && stats.recordedPeak == 0)
+    stats.received(frames: 480, peak: 0.5, muted: true)
+    precondition(stats.inputPeak == 0.5 && stats.recordedPeak == 0 && stats.mutedFrames == 480)
+    stats.received(frames: 480, peak: 0.25, muted: false)
+    precondition(stats.recordedPeak == 0.25 && stats.frames == 1_440)
+    print("Missing Teams buffers, bounded restart policy, silence and mute signal diagnostics: OK")
   }
 
   private static func tone(rate: Double, channels: AVAudioChannelCount = 1) -> AVAudioPCMBuffer {
