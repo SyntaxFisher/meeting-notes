@@ -1,5 +1,4 @@
 import AppKit
-import ScreenCaptureKit
 import ServiceManagement
 import UserNotifications
 
@@ -19,13 +18,13 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   private var timer: Timer?
   private var permissionTimer: Timer?
   private var permissions = PermissionSnapshot.read()
-  private var screenAccessRejected = false
+  private var captureRetry = CaptureRetryPolicy()
   private var refreshingPermissions = false
   private var requestingPermissions = false
-  private var screenPermissionContinuation = ScreenPermissionContinuation()
   private var work: Task<Void, Never>?
   private var failedWorkToDiscard: (audio: String?, stem: String?)?
   private var recorder: NativeRecorder?
+  private var startingCaptureFailure: Error?
   private let teamsMonitor = TeamsMonitor()
   private var autoRecord = TeamsAutoRecordPolicy()
   private let transcriber = NativeTranscriber()
@@ -122,6 +121,13 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     teamsStatusItem.isEnabled = false
     updateTeamsStatusItem()
     menu.addItem(teamsStatusItem)
+    if captureRetry.systemAudioDenied && phase != .recording {
+      let guidance = NSMenuItem(
+        title: "System audio access required", action: nil, keyEquivalent: "")
+      guidance.isEnabled = false
+      guidance.toolTip = PermissionAccess.systemAudioGuidance
+      menu.addItem(guidance)
+    }
     if phase == .recording {
       add("Stop & Transcribe", action: #selector(stopClicked))
     } else if !permissions.recordingGranted {
@@ -211,13 +217,22 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   @objc private func grantPermissionsClicked() {
     guard !requestingPermissions else { return }
     requestingPermissions = true
-    screenPermissionContinuation.waitingForAccessibility = false
     Task {
       defer { requestingPermissions = false }
       AppLog.event("permissions.requested")
-      let result = await PermissionAccess.requestMissing()
-      screenPermissionContinuation.waitingForAccessibility = result == .waitingForAccessibility
+      do {
+        try await PermissionAccess.requestMissing()
+        captureRetry.retryManually()
+      } catch {
+        AppLog.event("permissions.requestFailed", error.localizedDescription)
+        if PermissionAccess.deniedPermission(for: error) != nil {
+          captureRetry.failed(with: error)
+        } else {
+          presentError(error.localizedDescription)
+        }
+      }
       await refreshPermissions()
+      updateIcon()
     }
   }
   @objc private func toggleTeamsMuteClicked() {
@@ -268,16 +283,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     guard !refreshingPermissions else { return }
     refreshingPermissions = true
     defer { refreshingPermissions = false }
-    var current = PermissionSnapshot.read()
-    if screenAccessRejected && current.screenRecording {
-      do {
-        _ = try await SCShareableContent.excludingDesktopWindows(
-          false, onScreenWindowsOnly: false)
-        screenAccessRejected = false
-      } catch {
-        current.screenRecording = false
-      }
-    }
+    let current = PermissionSnapshot.read()
     if current != permissions {
       permissions = current
       AppLog.event(
@@ -285,11 +291,8 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       updateTeamsStatusItem()
       updateIcon()
     }
-    if !requestingPermissions && screenPermissionContinuation.consumeRequest(for: current) {
-      AppLog.event("permissions.continuingAfterAccessibility")
-      grantPermissionsClicked()
-    }
   }
+
   private func setPhase(_ value: Phase, message: String? = nil) {
     AppLog.event("phase", "\(phase) -> \(value); \(message ?? "")")
     phase = value
@@ -322,7 +325,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     guard autoRecordTeamsMeetings, let state = teamsMonitor.currentState else { return }
     switch autoRecord.observe(
       state.meetingPresence, at: Date(), isRecording: phase == .recording,
-      canStart: canStartRecording)
+      canStart: canStartRecording && captureRetry.allowsAutomaticStart)
     {
     case .start:
       AppLog.event("autoRecord.start")
@@ -350,6 +353,11 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       button.image = permissionWarningImage
       button.toolTip =
         "Grant Permissions: \(permissions.missing.map(\.title).joined(separator: ", "))"
+      return
+    }
+    if captureRetry.systemAudioDenied && phase != .recording {
+      button.image = permissionWarningImage
+      button.toolTip = PermissionAccess.systemAudioGuidance
       return
     }
     if phase == .error {
@@ -408,6 +416,8 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     await refreshPermissions()
     guard permissions.recordingGranted, !isBusy, recorder == nil, store.state.session == nil
     else { return }
+    if !automatically { captureRetry.retryManually() }
+    startingCaptureFailure = nil
     setPhase(.preparing)
     do {
       try MeetingFiles.ensureDirectories()
@@ -417,16 +427,21 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       try store.update { $0.session = session }
       let capture = NativeRecorder(directory: MeetingFiles.capture(for: session.stem))
       recorder = capture
-      capture.onFailure = { [weak self] error in
+      capture.onFailure = { [weak self, weak capture] error in
         Task { @MainActor in
-          guard let self, self.phase == .recording else { return }
-          self.work = Task { await self.stopRecording(captureError: error) }
+          guard let self, let capture, self.recorder === capture else { return }
+          if self.phase == .preparing {
+            self.startingCaptureFailure = error
+          } else if self.phase == .recording {
+            self.work = Task { await self.stopRecording(captureError: error) }
+          }
         }
       }
       if detectTeamsMute { teamsMonitor.mirroredRecorder = capture }
       updateTeamsMonitor()
       try await capture.start()
       try Task.checkCancellation()
+      if let startingCaptureFailure { throw startingCaptureFailure }
       if store.state.pendingAudio != nil {
         try store.update { $0.pendingAudio = nil }
       }
@@ -475,9 +490,10 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     }
     switch permission {
     case .microphone: permissions.microphone = false
-    case .screenRecording:
-      screenAccessRejected = true
-      permissions.screenRecording = false
+    case .systemAudio:
+      captureRetry.failed(with: error)
+      PermissionAccess.invalidateSystemAudioRequest()
+      permissions.systemAudioRequested = false
     case .accessibility: permissions.accessibility = false
     }
     AppLog.event("permissions.captureBlocked", permission.rawValue)

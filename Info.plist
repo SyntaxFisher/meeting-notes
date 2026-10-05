@@ -9,10 +9,10 @@
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>21</string>
-    <key>LSMinimumSystemVersion</key><string>15.0</string>
+    <key>CFBundleVersion</key><string>23</string>
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>LSUIElement</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Meeting Notes records your microphone along with meeting audio for local transcription.</string>
-    <key>NSScreenCaptureUsageDescription</key><string>Meeting Notes captures system audio for local meeting transcription. No video is saved.</string>
+    <key>NSAudioCaptureUsageDescription</key><string>Meeting Notes records Microsoft Teams playback along with your microphone for local transcription.</string>
 </dict>
 </plist>

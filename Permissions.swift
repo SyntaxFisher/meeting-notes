@@ -1,18 +1,17 @@
 import AVFoundation
 import AppKit
-import ScreenCaptureKit
+import CoreAudio
 
-enum MeetingPermission: String, CaseIterable {
-  case microphone, accessibility, screenRecording
+enum MeetingPermission: String {
+  case microphone, accessibility, systemAudio
 
   var title: String {
     switch self {
     case .microphone: return "Microphone"
-    case .screenRecording: return "Screen & System Audio Recording"
+    case .systemAudio: return "System Audio Recording"
     case .accessibility: return "Accessibility"
     }
   }
-
 }
 
 struct PermissionRequired: Error {
@@ -21,87 +20,95 @@ struct PermissionRequired: Error {
 
 struct PermissionSnapshot: Equatable {
   var microphone: Bool
-  var screenRecording: Bool
+  var systemAudioRequested: Bool
   var accessibility: Bool
 
   var missing: [MeetingPermission] {
-    MeetingPermission.allCases.filter {
-      switch $0 {
-      case .microphone: return !microphone
-      case .screenRecording: return !screenRecording
-      case .accessibility: return !accessibility
-      }
-    }
+    var result: [MeetingPermission] = []
+    if !microphone { result.append(.microphone) }
+    if !systemAudioRequested { result.append(.systemAudio) }
+    if !accessibility { result.append(.accessibility) }
+    return result
   }
   var recordingGranted: Bool { missing.isEmpty }
 
   static func read() -> Self {
     Self(
       microphone: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-      screenRecording: CGPreflightScreenCaptureAccess(),
+      systemAudioRequested: PermissionAccess.systemAudioWasRequested,
       accessibility: TeamsMuteReader.hasAccessibilityAccess)
   }
 }
 
-struct ScreenPermissionContinuation {
-  var waitingForAccessibility = false
+struct CaptureRetryPolicy {
+  private(set) var systemAudioDenied = false
+  var allowsAutomaticStart: Bool { !systemAudioDenied }
 
-  mutating func consumeRequest(for permissions: PermissionSnapshot) -> Bool {
-    guard waitingForAccessibility else { return false }
-    if permissions.screenRecording {
-      waitingForAccessibility = false
-      return false
+  mutating func failed(with error: Error) {
+    if PermissionAccess.deniedPermission(for: error) == .systemAudio {
+      systemAudioDenied = true
     }
-    guard permissions.microphone && permissions.accessibility else { return false }
-    // Consume before requesting so denial cannot trigger another automatic prompt.
-    waitingForAccessibility = false
-    return true
   }
+
+  mutating func retryManually() { systemAudioDenied = false }
 }
 
 enum PermissionAccess {
-  enum RequestResult { case finished, waitingForAccessibility }
+  static let systemAudioGuidance =
+    "Allow Meeting Notes in System Settings > Privacy & Security > Screen & System Audio Recording, then choose Grant Permissions to retry setup."
+
+  private static let systemAudioSetupKey = "systemAudioSetupBuild"
+  private static var build: String {
+    Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "development"
+  }
+
+  // This records a completed setup request, not the current macOS authorization state.
+  static var systemAudioWasRequested: Bool {
+    UserDefaults.standard.string(forKey: systemAudioSetupKey) == build
+  }
+
+  static func invalidateSystemAudioRequest() {
+    UserDefaults.standard.removeObject(forKey: systemAudioSetupKey)
+  }
+
   static func deniedPermission(for error: Error) -> MeetingPermission? {
     if let required = error as? PermissionRequired { return required.permission }
-    let error = error as NSError
-    if error.domain == SCStreamErrorDomain && error.code == SCStreamError.Code.userDeclined.rawValue
-    {
-      return .screenRecording
-    }
-    if error.domain == SCStreamErrorDomain
-      && error.code == SCStreamError.Code.failedToStartMicrophoneCapture.rawValue
-      && AVCaptureDevice.authorizationStatus(for: .audio) != .authorized
-    {
-      return .microphone
+    if let failure = error as? CoreAudioFailure, failure.status == kAudioDevicePermissionsError {
+      return .systemAudio
     }
     return nil
   }
 
   @MainActor
-  static func requestMissing() async -> RequestResult {
+  static func requestMissing() async throws {
     NSApp.activate(ignoringOtherApps: true)
-    if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-      _ = await AVCaptureDevice.requestAccess(for: .audio)
-    }
-    guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return .finished }
-    guard TeamsMuteReader.hasAccessibilityAccess else {
-      TeamsMuteReader.requestAccess()
-      return .waitingForAccessibility
-    }
-    if !CGPreflightScreenCaptureAccess() {
-      AppLog.event("permissions.screenRequested")
-      do {
-        // Enumerating content requests ScreenCaptureKit access without starting a capture stream.
-        _ = try await SCShareableContent.excludingDesktopWindows(
-          false, onScreenWindowsOnly: false)
-        AppLog.event("permissions.screenRequestGranted")
-      } catch {
-        let error = error as NSError
-        AppLog.event(
-          "permissions.screenRequestPending", "domain=\(error.domain); code=\(error.code)")
-      }
-    }
-    return .finished
+    try await requestInOrder(
+      microphone: {
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+          return await AVCaptureDevice.requestAccess(for: .audio)
+        }
+        return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+      },
+      systemAudio: {
+        invalidateSystemAudioRequest()
+        AppLog.event("permissions.systemAudioRequested")
+        try await TeamsAudioCapture.requestAccess()
+        UserDefaults.standard.set(build, forKey: systemAudioSetupKey)
+        AppLog.event("permissions.systemAudioRequestFinished")
+      },
+      accessibility: {
+        if !TeamsMuteReader.hasAccessibilityAccess { TeamsMuteReader.requestAccess() }
+      })
   }
 
+  @MainActor
+  static func requestInOrder(
+    microphone: () async -> Bool,
+    systemAudio: () async throws -> Void,
+    accessibility: () -> Void
+  ) async throws {
+    guard await microphone() else { throw PermissionRequired(permission: .microphone) }
+    try await systemAudio()
+    accessibility()
+  }
 }
