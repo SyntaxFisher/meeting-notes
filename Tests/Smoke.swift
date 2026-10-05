@@ -312,10 +312,37 @@ struct Smoke {
   }
 
   private static func testTeamsDetection() {
+    let titleCases: [(String, String?)] = [
+      ("Mittagspause | Microsoft Teams", "Mittagspause"),
+      ("Mittagspause - Microsoft Teams", "Mittagspause"),
+      ("Mittagspause | Example GmbH | user@example.com | Microsoft Teams", "Mittagspause"),
+      ("Mittagspause | Example GmbH | user@example.com - Microsoft Teams", "Mittagspause"),
+      ("Mittagspause | Example GmbH | user@example.com", "Mittagspause"),
+      (
+        "  Planning | Q4 | Example GmbH | user+work@example.co.uk | Microsoft Teams  ",
+        "Planning | Q4"
+      ),
+      ("Planning | Q4 | Microsoft Teams", "Planning | Q4"),
+      ("Planning | Q4 | Notes", "Planning | Q4 | Notes"),
+      ("Planning | user@example.com", "Planning | user@example.com"),
+      ("Planning | Example GmbH | user@", "Planning | Example GmbH | user@"),
+      ("Planning |  | user@example.com", "Planning |  | user@example.com"),
+      ("Calendar | Example GmbH | user@example.com | Microsoft Teams", nil),
+    ]
     for (leave, unmute, mute) in [
       ("Leave", "Unmute mic", "Mute mic"),
       ("Verlassen", "Mikrofon wieder aktivieren", "Mikrofon stummschalten"),
     ] {
+      for (title, expected) in titleCases {
+        let meeting = TeamsWindowSnapshot(title: title, buttons: [[leave], [mute]])
+        precondition(TeamsMuteClassifier.meetingTitle([meeting]) == expected)
+        precondition(TeamsMuteClassifier.classify([meeting]) == .unmuted)
+      }
+      let accountPrejoin = TeamsWindowSnapshot(
+        title: "Meeting join | Mittagspause | Example GmbH | user@example.com | Microsoft Teams",
+        buttons: [[mute], ["Join now"]])
+      precondition(TeamsMuteClassifier.meetingTitle([accountPrejoin]) == nil)
+      precondition(TeamsMuteClassifier.classify([accountPrejoin]) == .unavailable(.noMeeting))
       let calendar = TeamsWindowSnapshot(title: "Calendar | Microsoft Teams", buttons: [["Chat"]])
       for (action, expected) in [(unmute, TeamsMuteState.muted), (mute, TeamsMuteState.unmuted)] {
         let meeting = TeamsWindowSnapshot(
