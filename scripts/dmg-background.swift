@@ -16,10 +16,8 @@ for scale in [1, 2] {
   bitmap.size = NSSize(width: width, height: height)
   NSGraphicsContext.saveGraphicsState()
   NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-  let transform = NSAffineTransform()
-  transform.scale(by: CGFloat(scale))
-  transform.concat()
-  NSColor(srgbRed: 0.141, green: 0.141, blue: 0.141, alpha: 1).setFill()
+  // Setting the bitmap's logical size already applies the Retina scale.
+  NSColor(white: 0.9, alpha: 1).setFill()
   NSRect(x: 0, y: 0, width: width, height: height).fill()
 
   func text(_ value: String, y: CGFloat, size: CGFloat, weight: NSFont.Weight, brightness: CGFloat)
@@ -35,10 +33,10 @@ for scale in [1, 2] {
       withAttributes: attributes)
   }
 
-  text("Install Meeting Notes", y: 324, size: 26, weight: .semibold, brightness: 0.98)
-  text("Drag Meeting Notes to Applications", y: 292, size: 16, weight: .regular, brightness: 0.78)
+  text("Install Meeting Notes", y: 324, size: 26, weight: .semibold, brightness: 0.14)
+  text("Drag Meeting Notes to Applications", y: 292, size: 16, weight: .regular, brightness: 0.35)
 
-  NSColor(white: 0.7, alpha: 1).setStroke()
+  NSColor(white: 0.45, alpha: 1).setStroke()
   let arrow = NSBezierPath()
   arrow.lineWidth = 5
   arrow.lineCapStyle = .round
@@ -50,9 +48,6 @@ for scale in [1, 2] {
   arrow.line(to: NSPoint(x: 341, y: 184))
   arrow.stroke()
 
-  text(
-    "Once copied, open Meeting Notes from Applications.", y: 42,
-    size: 13, weight: .regular, brightness: 0.65)
   NSGraphicsContext.restoreGraphicsState()
   let filename = scale == 1 ? "installer.png" : "installer@2x.png"
   try bitmap.representation(using: .png, properties: [:])!

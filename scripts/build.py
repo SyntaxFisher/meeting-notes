@@ -88,11 +88,7 @@ def create_dmg(app, dmg):
         run(python, "-m", "pip", "--disable-pip-version-check", "install",
             "--require-hashes", "--only-binary=:all:", "-r", requirements)
         stamp.write_text(digest(requirements) + "\n")
-    artwork = BUILD / "dmg-artwork"
-    run("xcrun", "swift", ROOT / "scripts/dmg-background.swift", artwork)
-    run(environment / "bin/dmgbuild", "-s", ROOT / "scripts/dmg-settings.py",
-        "-D", f"app={app}", "-D", f"background={artwork / 'installer.png'}",
-        "Meeting Notes", dmg)
+    run(python, ROOT / "scripts/dmg-layout.py", app, dmg)
 
 
 def build(info, release=False, identity="-"):
@@ -124,6 +120,11 @@ def build(info, release=False, identity="-"):
     run(directory / "GenerateIcon", icons)
     run("iconutil", "-c", "icns", "-o", contents / "Resources/AppIcon.icns", icons)
     shutil.copy2(SPARKLE / "LICENSE", contents / "Resources/Sparkle-LICENSE.txt")
+    if release:
+        artwork = BUILD / "dmg-artwork"
+        run("xcrun", "swift", ROOT / "scripts/dmg-background.swift", artwork)
+        run("tiffutil", "-cathidpicheck", artwork / "installer.png", artwork / "installer@2x.png",
+            "-out", contents / "Resources/InstallerBackground.tiff")
     framework = contents / "Frameworks/Sparkle.framework"
     run("ditto", SPARKLE / "Sparkle.framework", framework)
     # This app is not sandboxed; Sparkle's sandbox XPC services are unnecessary.

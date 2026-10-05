@@ -2,11 +2,11 @@
 
 files = [defines["app"]]
 symlinks = {"Applications": "/Applications"}
-hide_extensions = ["Meeting Notes.app"]
+# Do not use hide_extensions: SetFile adds FinderInfo to the signed app bundle.
 format = "ULFO"
 filesystem = "APFS"
-background = defines["background"]
-window_rect = ((200, 160), (640, 400))
+background = None  # dmg-layout.py references artwork inside the signed app.
+window_rect = ((200, 160), (640, 440))
 default_view = "icon-view"
 show_status_bar = False
 show_tab_view = False
