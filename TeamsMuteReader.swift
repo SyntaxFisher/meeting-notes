@@ -71,7 +71,9 @@ enum TeamsMuteClassifier {
   }
 
   private static func isLeaveButton(_ label: String) -> Bool {
-    label.range(of: #"^Leave(?:\b|$)"#, options: [.regularExpression, .caseInsensitive]) != nil
+    label.range(
+      of: #"^(?:Leave|Verlassen)(?:\b|$)"#, options: [.regularExpression, .caseInsensitive])
+      != nil
   }
 
   private static func classifyButton(_ labels: [String]) -> TeamsMuteState? {
@@ -82,12 +84,16 @@ enum TeamsMuteClassifier {
   }
 
   private static func microphoneLabel(_ label: String) -> TeamsMuteState? {
-    if label.range(of: #"^Unmute mic(?:\b|$)"#, options: [.regularExpression, .caseInsensitive])
+    if label.range(
+      of: #"^(?:Unmute mic|Mikrofon wieder aktivieren)(?:\b|$)"#,
+      options: [.regularExpression, .caseInsensitive])
       != nil
     {
       return .muted
     }
-    if label.range(of: #"^Mute mic(?:\b|$)"#, options: [.regularExpression, .caseInsensitive])
+    if label.range(
+      of: #"^(?:Mute mic|Mikrofon stummschalten)(?:\b|$)"#,
+      options: [.regularExpression, .caseInsensitive])
       != nil
     {
       return .unmuted

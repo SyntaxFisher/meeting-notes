@@ -133,12 +133,8 @@ struct Smoke {
       precondition(configuration.capturesAudio == (count > 0))
       precondition(configuration.captureMicrophone)
     }
-    precondition(
-      TeamsMuteClassifier.classify([TeamsWindowSnapshot(buttons: [["Leave"], ["Unmute mic"]])])
-        == .muted)
-    precondition(
-      TeamsMuteClassifier.classify([TeamsWindowSnapshot(buttons: [["Leave"], ["Mute mic"]])])
-        == .unmuted)
+    testTeamsDetection()
+    print("English and German Teams meeting, mute, and title detection: OK")
     precondition(TeamsMuteState.muted.meetingPresence == .inMeeting)
     precondition(TeamsMuteState.unavailable(.noControl).meetingPresence == .inMeeting)
     precondition(TeamsMuteState.unavailable(.teamsClosed).meetingPresence == .noMeeting)
@@ -281,6 +277,50 @@ struct Smoke {
     precondition(
       manager.fileExists(
         atPath: retainedAudios.appendingPathComponent("2026-09-30 09.00 B.m4a").path))
+  }
+
+  private static func testTeamsDetection() {
+    for (leave, unmute, mute) in [
+      ("Leave", "Unmute mic", "Mute mic"),
+      ("Verlassen", "Mikrofon wieder aktivieren", "Mikrofon stummschalten"),
+    ] {
+      let calendar = TeamsWindowSnapshot(title: "Calendar | Microsoft Teams", buttons: [["Chat"]])
+      for (action, expected) in [(unmute, TeamsMuteState.muted), (mute, TeamsMuteState.unmuted)] {
+        let meeting = TeamsWindowSnapshot(
+          title: "Mittagspause | Microsoft Teams", buttons: [[leave], [action]])
+        let state = TeamsMuteClassifier.classify([calendar, meeting])
+        precondition(state == expected)
+        precondition(state.meetingPresence == .inMeeting)
+        precondition(TeamsMuteClassifier.meetingTitle([calendar, meeting]) == "Mittagspause")
+        for labels in [["\(action.uppercased()) (⇧ ⌘ M)"], [action, "\(action) (⇧ ⌘ M)"]] {
+          precondition(
+            TeamsMuteClassifier.classify([
+              TeamsWindowSnapshot(buttons: [[leave.uppercased()], labels])
+            ]) == expected)
+        }
+        precondition(
+          TeamsMuteClassifier.classify([meeting, meeting]) == .unavailable(.ambiguous))
+        precondition(TeamsMuteClassifier.meetingTitle([meeting, meeting]) == nil)
+
+        let prejoin = TeamsWindowSnapshot(
+          title: "Mittagspause | Microsoft Teams", buttons: [[action]])
+        precondition(TeamsMuteClassifier.classify([prejoin]) == .unavailable(.noMeeting))
+        precondition(TeamsMuteClassifier.meetingTitle([prejoin]) == nil)
+      }
+      let missingMicrophone = TeamsWindowSnapshot(buttons: [[leave]])
+      let missingState = TeamsMuteClassifier.classify([missingMicrophone])
+      precondition(missingState == .unavailable(.noControl))
+      precondition(missingState.meetingPresence == .inMeeting)
+      precondition(!missingState.microphoneMuted)
+      precondition(
+        TeamsMuteClassifier.classify([
+          TeamsWindowSnapshot(buttons: [[leave], [unmute, mute]])
+        ]) == .unavailable(.ambiguous))
+      precondition(
+        TeamsMuteClassifier.classify([
+          TeamsWindowSnapshot(buttons: [[leave], [unmute], [mute]])
+        ]) == .unavailable(.ambiguous))
+    }
   }
 
   private static func testAutoRecordPolicy() {
