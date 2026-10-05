@@ -2,6 +2,12 @@
 
 Native macOS menu-bar recording and transcription. Records the microphone through AVAudioEngine and Microsoft Teams playback through a Core Audio process tap, saves M4A, and transcribes locally using Parakeet TDT v3 multilingual plus FluidAudio offline speaker detection. No OBS, FluidVoice, server, Python, Node, or Codex is required at runtime.
 
+## Install
+
+Download the DMG from the [latest release](https://github.com/SyntaxFisher/meeting-notes/releases/latest), open it, and drag **Meeting Notes** to **Applications**. Open it from Applications and choose **Grant Permissions…**. Requires **Apple silicon and macOS 26 or later**. Release downloads are signed with Developer ID, notarized by Apple, and include the native transcription helper. No developer tools are needed to run the app; models download on first transcription.
+
+Signed releases check for updates hourly while running and online and download verified updates automatically. Updates normally install when you quit; Sparkle may offer a restart if the app stays open. **Check for Updates…** and **Automatic Updates** are in the menu. Checks and restarts wait while recording, preparing, transcribing, or granting permissions. Existing recordings, transcripts, models, and settings live outside the app bundle. Older ad-hoc installations need a one-time DMG installation and may need permission grants renewed.
+
 ## Use
 
 Choose **Grant Permissions…** during initial setup. Requests run in this order: **Microphone → System Audio Recording → Accessibility**. The system-audio request is made before any meeting recording, even when Teams is closed. No audio is saved during permission setup. Denying microphone access or an explicit failure of the system-audio request stops the sequence before later permissions are requested. Grant Accessibility in System Settings when macOS prompts; the app checks it every three seconds. Once Microphone and Accessibility are granted and the system-audio setup step has run, **Start Recording** is available. Missing setup permissions show an orange warning. Accessibility remains required even when Teams is closed or mute mirroring is disabled.
@@ -39,10 +45,48 @@ The bundled Swift helper uses Parakeet TDT v3 and the upstream FluidAudio 0.17.1
 
 ## Build and verify
 
-Apple Silicon, macOS 26+, Swift toolchain. `make build`, `make test`, `make lint`, `make install` (defaults to `/Applications`). Swift Package Manager builds the native helper; the menu-bar app retains its Makefile/swiftc build. A recent SDK path may be supplied using `SWIFT_FLAGS`.
+Apple silicon, macOS 26+, full Xcode, and Python 3 for the build tooling. `make build` (also the default), `make test`, `make lint`, `make install` (defaults to `/Applications`). Swift Package Manager builds the native helper; the menu-bar app retains its Makefile/swiftc build. Sparkle is fetched with a pinned checksum. A recent SDK path may be supplied using `SWIFT_FLAGS`. The local bundle is `build/local/Meeting Notes.app`; local builds are ad-hoc signed and disable the updater.
 
-To update an existing installation, finish any recording or transcription, quit Meeting Notes, and run `make install` from the updated checkout. Builds use ad-hoc signing, which ties the app's code identity to that particular build, so macOS may require granting permissions again after an update. Preserving permissions across builds requires a persistent signing identity; the current build does not configure one. See [Apple's explanation of code identity and privacy permissions](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+To update an existing installation, finish any recording or transcription, quit Meeting Notes, and run `make install` from the updated checkout. Builds use ad-hoc signing, which ties the app's code identity to that particular build, so macOS may require granting permissions again after an update. Public releases use a stable Developer ID signing identity to preserve code identity across updates. `make install` refuses to replace a running copy; prefer the released DMG for normal use. See [Apple's explanation of code identity and privacy permissions](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
 
 Fixture tests cover native audio conversion and format changes, owned callback buffers, microphone-only and mixed capture, mute, host timestamp alignment, failed-start cleanup, permission retry policy, retention, session recovery and filename collisions. Mock microphone engines cover Bluetooth-style 24 kHz to 48 kHz transitions, rebuilding after format errors, bounded retries, and cancelling recovery when stopped. Teams health checks cover active output without buffers and recovery after buffers return. Automated tests never start an audio device. Test an existing file with `build/MeetingNotesSmoke --transcribe /absolute/audio/path /absolute/path/to/MeetingTranscriber`. Append an expected speaker count (for example, `2`) to check that automatic detection returns that many labels; this does not force the detector's result. Live capture requires separate approval.
 
 Logs: `~/Library/Logs/Meeting Notes/meeting-notes.log` and one rotated `meeting-notes.previous.log` (about 4 MB total). Logs include stages, detected speaker counts, failures, paths, Teams detection and retention deletions, but no audio or transcript contents. Audio diagnostics include device names and formats, Teams process/output status, and recovery attempts. A `capture.summary` entry for each selected source records buffer/frame counts, microphone mute counts, and peak sample levels before and after muting. These distinguish missing buffers from received silence; they do not establish system-audio authorization or identify speakers.
+
+## Releasing
+
+Agents should use the [release-meeting-notes skill](.agents/skills/release-meeting-notes/SKILL.md). The release workflow is `make release`, then `make publish`; this is Developer ID distribution through GitHub. Apple silicon/macOS 26 remains the supported platform. The bundled FluidAudio helper and resources ship inside the app.
+
+### Signing setup
+
+Full Xcode, Python 3, GitHub CLI access to `SyntaxFisher/meeting-notes`, and a valid Developer ID Application certificate with its private key in the login Keychain are required. The release script reads `~/.config/meeting-notes-release/config.json` (permissions `0600`):
+
+```json
+{
+  "apple": {
+    "key_id": "YOUR_API_KEY_ID",
+    "issuer_id": "YOUR_ISSUER_ID",
+    "key_path": "/absolute/private/path/AuthKey_KEYID.p8"
+  },
+  "signing": {
+    "identity": "Developer ID Application: Your Name (TEAM_ID)"
+  }
+}
+```
+
+`NOTARY_CONFIG` can point to another local team config, and `SIGN_IDENTITY` overrides its identity. Alternatively, use `NOTARY_PROFILE` for saved notarytool credentials together with `SIGN_IDENTITY`. Keys and tokens stay outside the repository and release assets.
+
+Sparkle's EdDSA key is stored in the login Keychain under account `com.jona.meeting-notes`. Its public key is in `Info.plist`; preserve both across releases. Securely back up the private key using `build/dependencies/sparkle-2.10.0/bin/generate_keys --account com.jona.meeting-notes -x /private/backup/path` and import it on another release Mac with `-f`. Do not generate a replacement as a workaround for Keychain access. macOS can request approval for `generate_appcast` or `sign_update`.
+
+### Each release
+
+1. Increase the three-part `CFBundleShortVersionString` and integer `CFBundleVersion` in `Info.plist`. Add `releases/<version>.md`.
+2. Run `make lint`, `make test`, and `make build`. Tests use generated audio and mocks; live recording requires explicit approval.
+3. Review, commit using a conventional commit, and push to `origin/main`.
+4. Run `make release`. It builds arm64, signs the native helper and Sparkle components, signs the app with Hardened Runtime and the audio-input entitlement, notarizes/staples it, and creates the installer. The DMG has a fixed Finder layout, drag instruction, arrow, and Applications shortcut. The DMG is signed, notarized, stapled, and checked by Gatekeeper. Packaging tools are pinned with hashes in `scripts/dmg-requirements.txt` inside an isolated build environment.
+5. Inspect `build/releases/<version>/manifest.json`, both notarization results (`Accepted`), app/DMG signatures, and the mounted installer. The script generates and verifies the signed update feed and checksums.
+6. Run `make publish` when publication is authorized. It requires unchanged source/assets and `origin/main` at the manifest commit, tags that commit, uploads a draft, downloads and compares its asset hashes, then publishes it as Latest.
+
+The three public assets are `Meeting-Notes-<version>-macOS-arm64.dmg`, `appcast.xml`, and `SHA256SUMS`. The app reads GitHub's `releases/latest/download/appcast.xml`; every release must include it. Earlier feed entries are retained and old assets must remain available. Never edit a signed feed or replace an existing public version. Failed builds remain available for diagnosis; inspect Apple's submission status before retrying, and move a failed version directory aside rather than overwriting a verified candidate.
+
+Pinned dependencies: [Sparkle](https://sparkle-project.org/documentation/) 2.10.0 and FluidAudio 0.17.1 (`NativeTranscription/Package.resolved`). Both licenses are bundled. Preserve the bundle identifier and signing team. See [Sparkle update customization](https://sparkle-project.org/documentation/customization/) and [Apple notarization](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
