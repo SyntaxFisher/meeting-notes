@@ -34,6 +34,8 @@ Search Knowledge Base for Meeting Notes and Apple Developer account and macOS re
 4. Inspect `build/releases/<version>/manifest.json` and both notarization JSON results. Both must be `Accepted`; source commit and asset hashes must match.
 5. Mount the DMG read-only. Verify the visible drag instruction/arrow, Applications shortcut, and packaged `Meeting Notes.app`. Run `codesign --verify --deep --strict`, `xcrun stapler validate`, and `spctl --assess --type execute --verbose=2` on the packaged app. Confirm arm64 for both `Contents/MacOS/MeetingNotes` and `MeetingTranscriber`, and confirm the app's audio-input entitlement. Unmount afterward.
 
+Installer artwork must be embedded in `Contents/Resources/InstallerBackground.tiff` before app signing. Keep the approved plain grey layout, heading, drag instruction, arrow, and two icons; no footer or loose background file. `scripts/dmg-layout.py` references the bundled artwork from Finder. Do not use dmgbuild `hide_extensions`: its FinderInfo change invalidates the app signature. Verify the packaged app after layout changes.
+
 Do not change source between preparation and publication: even documentation changes alter the manifest commit. Reconcile source changes and rebuild; never edit the manifest to misrepresent provenance.
 
 ## Publish and recover
