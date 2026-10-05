@@ -413,6 +413,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
 
   private func startRecording(automatically: Bool) async {
     guard !isBusy, recorder == nil, store.state.session == nil else { return }
+    let initialTitle = MeetingFiles.titleComponent(teamsMonitor.meetingTitle)
     await refreshPermissions()
     guard permissions.recordingGranted, !isBusy, recorder == nil, store.state.session == nil
     else { return }
@@ -423,7 +424,8 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       try MeetingFiles.ensureDirectories()
       try enforceRetention()
       let now = Date()
-      let session = MeetingSession(startedAt: now, stem: MeetingFiles.stem(for: now))
+      let session = MeetingSession(
+        startedAt: now, stem: MeetingFiles.stem(for: now), title: initialTitle)
       try store.update { $0.session = session }
       let capture = NativeRecorder(directory: MeetingFiles.capture(for: session.stem))
       recorder = capture
@@ -448,6 +450,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       autoRecord.recordingStarted(automatically: automatically)
       if detectTeamsMute { teamsMonitor.mirroredRecorder = capture }
       setPhase(.recording)
+      recordMeetingTitle()
     } catch {
       autoRecord.recordingEnded()
       teamsMonitor.mirroredRecorder = nil
