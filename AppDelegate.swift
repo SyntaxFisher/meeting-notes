@@ -28,6 +28,10 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   private let teamsMonitor = TeamsMonitor()
   private var autoRecord = TeamsAutoRecordPolicy()
   private let transcriber = NativeTranscriber()
+  private let appUpdater = AppUpdater()
+  private var updateIsBusy: Bool {
+    recorder != nil || isBusy || work != nil || requestingPermissions
+  }
   private var detectTeamsMute: Bool {
     !UserDefaults.standard.bool(forKey: "teamsMuteDetectionDisabled")
   }
@@ -37,7 +41,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   private var isBusy: Bool { phase == .preparing || phase == .transcribing }
   private var canStartRecording: Bool {
     permissions.recordingGranted && !requestingPermissions && !isBusy && recorder == nil
-      && store.state.session == nil
+      && store.state.session == nil && !appUpdater.installation.installationStarted
   }
   private lazy var permissionWarningImage = Self.alertImage(
     fill: .systemOrange, mark: .black, description: "Meeting Notes: Permissions required")
@@ -113,6 +117,8 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
       do { try enforceRetention() } catch { presentError(error.localizedDescription) }
     }
     updateTeamsMonitor()
+    appUpdater.isBusy = { [weak self] in self?.updateIsBusy ?? true }
+    appUpdater.start()
   }
 
   func menuNeedsUpdate(_ menu: NSMenu) {
@@ -133,12 +139,14 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     } else if !permissions.recordingGranted {
       add(
         "Grant Permissions…", action: #selector(grantPermissionsClicked),
-        enabled: !requestingPermissions)
+        enabled: !requestingPermissions && !appUpdater.installation.installationStarted)
     } else {
       add("Start Recording", action: #selector(startClicked), enabled: canStartRecording)
     }
     if phase == .error && (store.state.pendingAudio != nil || store.state.session != nil) {
-      add("Retry Transcription", action: #selector(retryClicked))
+      add(
+        "Retry Transcription", action: #selector(retryClicked),
+        enabled: !appUpdater.installation.installationStarted)
     }
     menu.addItem(.separator())
     let hasTranscript =
@@ -154,6 +162,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     autoRecordItem.state = autoRecordTeamsMeetings ? .on : .off
     let login = add("Launch at Login", action: #selector(toggleLoginClicked))
     login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+    appUpdater.addMenuItems(to: menu)
     add("Quit", action: #selector(quitClicked))
   }
 
@@ -210,12 +219,13 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   @objc private func startClicked() { work = Task { await startRecording(automatically: false) } }
   @objc private func stopClicked() { work = Task { await stopRecording() } }
   @objc private func retryClicked() {
+    guard !appUpdater.installation.installationStarted else { return }
     failedWorkToDiscard = nil
     work = Task { await retry() }
   }
   @objc private func quitClicked() { NSApp.terminate(nil) }
   @objc private func grantPermissionsClicked() {
-    guard !requestingPermissions else { return }
+    guard !requestingPermissions, !appUpdater.installation.installationStarted else { return }
     requestingPermissions = true
     Task {
       defer { requestingPermissions = false }
@@ -273,6 +283,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   }
 
   private func tick() {
+    appUpdater.installation.resumeIfIdle(!updateIsBusy)
     if phase == .success, let successUntil, Date() >= successUntil {
       setPhase(.idle)
     } else if phase == .recording {
@@ -412,10 +423,13 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   }
 
   private func startRecording(automatically: Bool) async {
-    guard !isBusy, recorder == nil, store.state.session == nil else { return }
+    guard !isBusy, recorder == nil, store.state.session == nil,
+      !appUpdater.installation.installationStarted
+    else { return }
     let initialTitle = MeetingFiles.titleComponent(teamsMonitor.meetingTitle)
     await refreshPermissions()
-    guard permissions.recordingGranted, !isBusy, recorder == nil, store.state.session == nil
+    guard permissions.recordingGranted, !isBusy, recorder == nil, store.state.session == nil,
+      !appUpdater.installation.installationStarted
     else { return }
     if !automatically { captureRetry.retryManually() }
     startingCaptureFailure = nil

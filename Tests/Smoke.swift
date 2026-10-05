@@ -6,6 +6,23 @@ import Foundation
 struct Smoke {
   @MainActor
   static func main() async throws {
+    let updateGate = UpdateInstallationGate()
+    var installs = 0
+    precondition(updateGate.postpone(whileBusy: true) { installs += 1 })
+    updateGate.resumeIfIdle(false)
+    precondition(installs == 0 && !updateGate.installationStarted)
+    updateGate.resumeIfIdle(true)
+    updateGate.resumeIfIdle(true)
+    precondition(installs == 1 && updateGate.installationStarted)
+    updateGate.reset()
+    precondition(!updateGate.installationStarted)
+    precondition(updateGate.postpone(whileBusy: true) { installs += 1 })
+    updateGate.reset()
+    updateGate.resumeIfIdle(true)
+    precondition(installs == 1)
+    precondition(!updateGate.postpone(whileBusy: false) { installs += 1 })
+    precondition(updateGate.installationStarted && installs == 1)
+    print("Update installation waits for work, resumes once, and clears failed attempts: OK")
     for rate in [16_000.0, 44_100.0, 48_000.0] {
       let total = Int64(30.289 * rate)
       precondition(TranscriptionAudio.frameCount(remaining: total, sampleRate: rate) == total)

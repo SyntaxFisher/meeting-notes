@@ -2,17 +2,45 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key><string>MeetingNotes</string>
-    <key>CFBundleIdentifier</key><string>com.jona.meeting-notes</string>
-    <key>CFBundleDisplayName</key><string>Meeting Notes</string>
-    <key>CFBundleName</key><string>Meeting Notes</string>
-    <key>CFBundleIconFile</key><string>AppIcon</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>26</string>
-    <key>LSMinimumSystemVersion</key><string>26.0</string>
-    <key>LSUIElement</key><true/>
-    <key>NSMicrophoneUsageDescription</key><string>Meeting Notes records your microphone along with meeting audio for local transcription.</string>
-    <key>NSAudioCaptureUsageDescription</key><string>Meeting Notes records Microsoft Teams playback along with your microphone for local transcription.</string>
+	<key>CFBundleExecutable</key>
+	<string>MeetingNotes</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.jona.meeting-notes</string>
+	<key>CFBundleDisplayName</key>
+	<string>Meeting Notes</string>
+	<key>CFBundleName</key>
+	<string>Meeting Notes</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>27</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Meeting Notes records your microphone along with meeting audio for local transcription.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Meeting Notes records Microsoft Teams playback along with your microphone for local transcription.</string>
+	<key>MNEnableUpdater</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/SyntaxFisher/meeting-notes/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>SFyBV5ByLFRPUGmru7BDgAuCBTPCGQoJdqY0uAM9IyY=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
 </dict>
 </plist>
