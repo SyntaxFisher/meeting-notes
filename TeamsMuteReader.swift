@@ -59,8 +59,17 @@ enum TeamsMuteClassifier {
   static func meetingTitle(_ windows: [TeamsWindowSnapshot]) -> String? {
     let meetingWindows = windows.filter(isMeetingWindow)
     guard meetingWindows.count == 1, var title = meetingWindows[0].title else { return nil }
+    title = title.trimmingCharacters(in: .whitespacesAndNewlines)
     for suffix in [" | Microsoft Teams", " - Microsoft Teams"] where title.hasSuffix(suffix) {
       title.removeLast(suffix.count)
+    }
+    let components = title.components(separatedBy: " | ")
+    if components.count >= 3,
+      let account = components.last?.trimmingCharacters(in: .whitespacesAndNewlines),
+      account.range(of: #"^[^\s@|]+@[^\s@|]+\.[^\s@|]+$"#, options: .regularExpression) != nil,
+      !components[components.count - 2].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      title = components.dropLast(2).joined(separator: " | ")
     }
     title = title.trimmingCharacters(in: .whitespacesAndNewlines)
     return genericTitles.contains(title.lowercased()) ? nil : title
