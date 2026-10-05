@@ -1,133 +1,154 @@
 import AVFoundation
-import ScreenCaptureKit
+import AppKit
 
 struct CaptureManifest: Codable {
   var systemStart: Double?
   var microphoneStart: Double?
 }
 
-final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+final class NativeRecorder: @unchecked Sendable {
   private let queue = DispatchQueue(label: "com.jona.meeting-notes.capture")
-  private var stream: SCStream?
-  private var tracks: [SCStreamOutputType: CaptureTrack] = [:]
+  private let lifecycle = DispatchQueue(label: "com.jona.meeting-notes.capture-lifecycle")
+  private var inputs: [any AudioCaptureInput] = []
+  private var tracks: [CaptureSource: CaptureTrack] = [:]
   private var microphoneMuted = false
+  private var acceptingSamples = false
+  private var started = false
   private var failure: Error?
   private var manifest = CaptureManifest()
   private let directory: URL
+  private let makeInputs: () -> [any AudioCaptureInput]
+  private let checkPermission: () throws -> Void
   var onFailure: (@Sendable (Error) -> Void)?
 
-  init(directory: URL) { self.directory = directory }
+  init(
+    directory: URL,
+    makeInputs: @escaping () -> [any AudioCaptureInput] = {
+      NativeRecorder.captureInputs(
+        teamsRunning: !NSRunningApplication.runningApplications(
+          withBundleIdentifier: TeamsAudioCapture.bundleID
+        ).isEmpty)
+    },
+    checkPermission: @escaping () throws -> Void = {
+      guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+        throw PermissionRequired(permission: .microphone)
+      }
+    }
+  ) {
+    self.directory = directory
+    self.makeInputs = makeInputs
+    self.checkPermission = checkPermission
+  }
+
+  static func captureInputs(teamsRunning: Bool) -> [any AudioCaptureInput] {
+    if teamsRunning { return [TeamsAudioCapture(), MicrophoneCapture()] }
+    return [MicrophoneCapture()]
+  }
 
   func setMicrophoneMuted(_ muted: Bool) {
     queue.async { self.microphoneMuted = muted }
   }
 
   func start() async throws {
-    guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-      throw PermissionRequired(permission: .microphone)
+    try Task.checkCancellation()
+    do {
+      try await withCheckedThrowingContinuation {
+        (continuation: CheckedContinuation<Void, Error>) in
+        lifecycle.async { [self] in
+          do {
+            guard !self.started else { throw MeetingError("This recorder has already started.") }
+            self.started = true
+            try self.checkPermission()
+            let manager = FileManager.default
+            if manager.fileExists(atPath: self.directory.path),
+              !(try manager.contentsOfDirectory(atPath: self.directory.path)).isEmpty
+            {
+              throw MeetingError("The capture directory is not empty. Nothing was overwritten.")
+            }
+            try manager.createDirectory(at: self.directory, withIntermediateDirectories: true)
+            self.queue.sync { self.acceptingSamples = true }
+            for input in self.makeInputs() {
+              self.inputs.append(input)
+              let source = input.source
+              try input.start(
+                receive: { [weak self] buffer, hostTime in
+                  self?.queue.async { [weak self] in
+                    self?.receive(buffer.buffer, hostTime: hostTime, source: source)
+                  }
+                },
+                onFailure: { [weak self] error in
+                  self?.queue.async { [weak self] in self?.recordFailure(error) }
+                })
+            }
+            if let error = self.queue.sync(execute: { self.failure }) { throw error }
+            let includesTeams = self.inputs.contains { $0.source == .system }
+            AppLog.event(
+              "capture.started",
+              "\(self.directory.path); mode=\(includesTeams ? "microphone-and-teams" : "microphone-only")"
+            )
+            continuation.resume()
+          } catch {
+            continuation.resume(throwing: error)
+          }
+        }
+      }
+      try Task.checkCancellation()
+    } catch {
+      try? await stop()
+      throw error
     }
-    let content = try await SCShareableContent.excludingDesktopWindows(
-      false, onScreenWindowsOnly: false)
-    guard let display = content.displays.first else {
-      throw MeetingError("No display is available for system audio capture.")
-    }
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let teams = content.applications.filter { $0.bundleIdentifier == "com.microsoft.teams2" }
-    let configuration = Self.configuration(teamsApplicationCount: teams.count)
-    let filter = SCContentFilter(display: display, including: teams, exceptingWindows: [])
-    let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-    if configuration.capturesAudio {
-      try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
-    }
-    try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
-    self.stream = stream
-    try await stream.startCapture()
-    if let error = queue.sync(execute: { failure }) { throw error }
-    AppLog.event(
-      "capture.started",
-      "\(directory.path); mode=\(teams.isEmpty ? "microphone-only" : "microphone-and-teams")")
-  }
-
-  static func configuration(teamsApplicationCount: Int) -> SCStreamConfiguration {
-    let configuration = SCStreamConfiguration()
-    configuration.capturesAudio = teamsApplicationCount > 0
-    configuration.captureMicrophone = true
-    configuration.excludesCurrentProcessAudio = true
-    configuration.sampleRate = 48_000
-    configuration.channelCount = 1
-    configuration.width = 2
-    configuration.height = 2
-    configuration.minimumFrameInterval = CMTime(seconds: 1, preferredTimescale: 1)
-    configuration.showsCursor = false
-    return configuration
   }
 
   func stop() async throws {
-    var stopError: Error?
-    if let stream {
-      do { try await stream.stopCapture() } catch { stopError = error }
-    }
-    stream = nil
-    await withCheckedContinuation { continuation in
-      queue.async {
-        self.tracks.removeAll()
-        continuation.resume()
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      lifecycle.async { [self] in
+        var stopError: Error?
+        for input in self.inputs.reversed() {
+          do { try input.stop() } catch { stopError = stopError ?? error }
+        }
+        self.inputs.removeAll()
+        let failure = self.queue.sync {
+          self.acceptingSamples = false
+          self.tracks.removeAll()
+          return self.failure
+        }
+        if let error = failure ?? stopError {
+          continuation.resume(throwing: error)
+        } else {
+          continuation.resume()
+        }
       }
     }
-    if let failure { throw failure }
-    if let stopError { throw stopError }
-  }
-
-  func stream(_ stream: SCStream, didStopWithError error: Error) {
-    queue.async { self.recordFailure(error) }
   }
 
   private func recordFailure(_ error: Error) {
-    guard failure == nil else { return }
+    guard acceptingSamples, failure == nil else { return }
     failure = error
     AppLog.event("capture.failed", error.localizedDescription)
     onFailure?(error)
   }
 
-  func stream(
-    _ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-    of type: SCStreamOutputType
-  ) {
-    guard type == .audio || type == .microphone, sampleBuffer.isValid, sampleBuffer.numSamples > 0,
-      failure == nil
-    else { return }
+  private func receive(_ buffer: AVAudioPCMBuffer, hostTime: UInt64, source: CaptureSource) {
+    guard acceptingSamples, buffer.frameLength > 0, failure == nil else { return }
     do {
-      guard let description = sampleBuffer.formatDescription else {
-        throw MeetingError("Captured audio has no format.")
-      }
-      let format = AVAudioFormat(cmAudioFormatDescription: description)
-      guard
-        let buffer = AVAudioPCMBuffer(
-          pcmFormat: format, frameCapacity: AVAudioFrameCount(sampleBuffer.numSamples))
-      else { throw MeetingError("Cannot read captured audio format.") }
-      buffer.frameLength = buffer.frameCapacity
-      let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
-        sampleBuffer, at: 0, frameCount: Int32(buffer.frameLength),
-        into: buffer.mutableAudioBufferList)
-      guard status == noErr else { throw MeetingError("Cannot copy captured audio (\(status)).") }
-      let timestamp = sampleBuffer.presentationTimeStamp.seconds
+      let timestamp = AVAudioTime.seconds(forHostTime: hostTime)
       guard timestamp.isFinite else { throw MeetingError("Captured audio has no valid timestamp.") }
-      if tracks[type] == nil {
-        let name = type == .audio ? "system" : "microphone"
-        tracks[type] = try CaptureTrack(
-          url: directory.appendingPathComponent(name + ".caf"), start: timestamp)
-        if type == .audio {
-          manifest.systemStart = timestamp
-        } else {
-          manifest.microphoneStart = timestamp
+      if tracks[source] == nil {
+        tracks[source] = try CaptureTrack(
+          url: directory.appendingPathComponent(source.rawValue + ".caf"), start: timestamp)
+        switch source {
+        case .system: manifest.systemStart = timestamp
+        case .microphone: manifest.microphoneStart = timestamp
         }
         try JSONEncoder().encode(manifest).write(
           to: directory.appendingPathComponent("capture.json"), options: .atomic)
         AppLog.event(
-          "capture.track", "\(name); rate=\(format.sampleRate); channels=\(format.channelCount)")
+          "capture.track",
+          "\(source.rawValue); rate=\(buffer.format.sampleRate); channels=\(buffer.format.channelCount)"
+        )
       }
-      try tracks[type]?.append(
-        buffer, timestamp: timestamp, muted: type == .microphone && microphoneMuted)
+      try tracks[source]?.append(
+        buffer, timestamp: timestamp, muted: source == .microphone && microphoneMuted)
     } catch { recordFailure(error) }
   }
 
@@ -135,7 +156,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     let manifest = try JSONDecoder().decode(
       CaptureManifest.self, from: Data(contentsOf: directory.appendingPathComponent("capture.json"))
     )
-    // Both streams use presentation timestamps from the same host clock.
+    // Both tracks use timestamps from the same host clock.
     let sources = [("system", manifest.systemStart), ("microphone", manifest.microphoneStart)]
     guard let origin = sources.compactMap({ $0.1 }).min() else {
       throw MeetingError("No audio was captured.")
@@ -198,6 +219,9 @@ final class CaptureTrack {
 
   init(url: URL, start: Double) throws {
     self.start = start
+    guard !FileManager.default.fileExists(atPath: url.path) else {
+      throw MeetingError("The audio track already exists. Nothing was overwritten.")
+    }
     file = try AVAudioFile(
       forWriting: url,
       settings: [

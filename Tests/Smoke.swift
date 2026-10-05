@@ -1,6 +1,6 @@
 import AVFoundation
+import CoreAudio
 import Foundation
-import ScreenCaptureKit
 
 @main
 struct Smoke {
@@ -22,57 +22,93 @@ struct Smoke {
     precondition(padded.dropFirst(short.count).allSatisfy { $0 == 0 })
     precondition(TranscriptionAudio.pad(padded, minimumCount: 4_800) == padded)
     print("Transcription preserves short tails and pads short speaker turns: OK")
-    let readyForScreen = PermissionSnapshot(
-      microphone: true, screenRecording: false, accessibility: true)
-    var continuation = ScreenPermissionContinuation()
-    precondition(!continuation.consumeRequest(for: readyForScreen))
-    continuation.waitingForAccessibility = true
-    precondition(
-      !continuation.consumeRequest(
-        for: PermissionSnapshot(
-          microphone: true, screenRecording: false, accessibility: false)))
-    precondition(
-      !continuation.consumeRequest(
-        for: PermissionSnapshot(
-          microphone: false, screenRecording: false, accessibility: true)))
-    precondition(continuation.consumeRequest(for: readyForScreen))
-    precondition(!continuation.consumeRequest(for: readyForScreen))
-    continuation.waitingForAccessibility = true
-    precondition(
-      !continuation.consumeRequest(
-        for: PermissionSnapshot(
-          microphone: true, screenRecording: true, accessibility: true)))
-    precondition(!continuation.consumeRequest(for: readyForScreen))
-    print("Screen permission continuation: waits for prerequisites and requests only once: OK")
-    precondition(
-      PermissionSnapshot(microphone: false, screenRecording: false, accessibility: false).missing
-        == [.microphone, .accessibility, .screenRecording])
     for microphone in [false, true] {
-      for screen in [false, true] {
+      for systemAudioRequested in [false, true] {
         for accessibility in [false, true] {
           let permissions = PermissionSnapshot(
-            microphone: microphone, screenRecording: screen, accessibility: accessibility)
-          precondition(permissions.recordingGranted == (microphone && screen && accessibility))
+            microphone: microphone, systemAudioRequested: systemAudioRequested,
+            accessibility: accessibility)
+          precondition(
+            permissions.recordingGranted == (microphone && systemAudioRequested && accessibility))
           precondition(permissions.missing.contains(.microphone) == !microphone)
-          precondition(permissions.missing.contains(.screenRecording) == !screen)
+          precondition(permissions.missing.contains(.systemAudio) == !systemAudioRequested)
           precondition(permissions.missing.contains(.accessibility) == !accessibility)
         }
       }
     }
     precondition(
+      PermissionSnapshot(microphone: false, systemAudioRequested: false, accessibility: false)
+        .missing
+        == [.microphone, .systemAudio, .accessibility])
+    var setupSteps: [String] = []
+    try await PermissionAccess.requestInOrder(
+      microphone: {
+        setupSteps.append("microphone")
+        return true
+      },
+      systemAudio: {
+        setupSteps.append("systemAudio.request")
+        await Task.yield()
+        setupSteps.append("systemAudio.finished")
+      },
+      accessibility: { setupSteps.append("accessibility") })
+    precondition(
+      setupSteps == ["microphone", "systemAudio.request", "systemAudio.finished", "accessibility"])
+    setupSteps.removeAll()
+    do {
+      try await PermissionAccess.requestInOrder(
+        microphone: {
+          setupSteps.append("microphone")
+          return false
+        },
+        systemAudio: { setupSteps.append("systemAudio") },
+        accessibility: { setupSteps.append("accessibility") })
+      preconditionFailure("Denied microphone access must stop setup")
+    } catch {
+      precondition(PermissionAccess.deniedPermission(for: error) == .microphone)
+    }
+    precondition(setupSteps == ["microphone"])
+    setupSteps.removeAll()
+    do {
+      try await PermissionAccess.requestInOrder(
+        microphone: {
+          setupSteps.append("microphone")
+          return true
+        },
+        systemAudio: {
+          setupSteps.append("systemAudio")
+          throw PermissionRequired(permission: .systemAudio)
+        },
+        accessibility: { setupSteps.append("accessibility") })
+      preconditionFailure("A failed system audio request must stop before Accessibility")
+    } catch {
+      precondition(PermissionAccess.deniedPermission(for: error) == .systemAudio)
+    }
+    precondition(setupSteps == ["microphone", "systemAudio"])
+    print(
+      "Setup requests microphone, then system audio, then Accessibility; failures stop the sequence: OK"
+    )
+    precondition(
       PermissionAccess.deniedPermission(for: PermissionRequired(permission: .microphone))
         == .microphone)
-    precondition(
-      PermissionAccess.deniedPermission(
-        for: NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.userDeclined.rawValue))
-        == .screenRecording)
-    precondition(
-      PermissionAccess.deniedPermission(
-        for: NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.internalError.rawValue))
-        == nil)
-    precondition(
-      PermissionAccess.deniedPermission(for: MeetingError("Disk full")) == nil)
-    print("All permission combinations and permission-only error classification: OK")
+    let denied = CoreAudioFailure(
+      operation: "Start Teams audio", status: kAudioDevicePermissionsError)
+    precondition(PermissionAccess.deniedPermission(for: denied) == .systemAudio)
+    let deviceFailure = CoreAudioFailure(
+      operation: "Start Teams audio", status: kAudioHardwareBadDeviceError)
+    precondition(PermissionAccess.deniedPermission(for: deviceFailure) == nil)
+    precondition(PermissionAccess.deniedPermission(for: MeetingError("Disk full")) == nil)
+    var retry = CaptureRetryPolicy()
+    precondition(retry.allowsAutomaticStart)
+    retry.failed(with: denied)
+    precondition(!retry.allowsAutomaticStart)
+    retry.failed(with: deviceFailure)
+    precondition(!retry.allowsAutomaticStart)
+    retry.retryManually()
+    precondition(retry.allowsAutomaticStart)
+    retry.failed(with: deviceFailure)
+    precondition(retry.allowsAutomaticStart)
+    print("Permission prerequisites and explicit system audio denial recovery: OK")
     let manager = FileManager.default
     let root = manager.temporaryDirectory.appendingPathComponent(
       "meeting-tests-\(UUID().uuidString)")
@@ -128,11 +164,7 @@ struct Smoke {
     ] {
       precondition(!TeamsMuteState.unavailable(reason).microphoneMuted)
     }
-    for count in 0...2 {
-      let configuration = NativeRecorder.configuration(teamsApplicationCount: count)
-      precondition(configuration.capturesAudio == (count > 0))
-      precondition(configuration.captureMicrophone)
-    }
+    try await testAudioCapture(root: root.appendingPathComponent("audio-capture"))
     testTeamsDetection()
     print("English and German Teams meeting, mute, and title detection: OK")
     precondition(TeamsMuteState.muted.meetingPresence == .inMeeting)
