@@ -1,0 +1,13 @@
+# Developing Meeting Notes
+
+[Back to the product overview](../README.md)
+
+## Build and verify
+
+Apple silicon, macOS 26+, full Xcode, and Python 3 for the build tooling. `make build` (also the default), `make test`, `make lint`, `make install` (defaults to `/Applications`). Swift Package Manager builds the native helper; the menu-bar app retains its Makefile/swiftc build. Sparkle is fetched with a pinned checksum. A recent SDK path may be supplied using `SWIFT_FLAGS`. The local bundle is `build/local/Meeting Notes.app`; local builds are ad-hoc signed and disable the updater.
+
+To update an existing installation, finish any recording or transcription, quit Meeting Notes, and run `make install` from the updated checkout. Builds use ad-hoc signing, which ties the app's code identity to that particular build, so macOS may require granting permissions again after an update. Public releases use a stable Developer ID signing identity to preserve code identity across updates. `make install` refuses to replace a running copy; prefer the released DMG for normal use. See [Apple's explanation of code identity and privacy permissions](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+
+Fixture tests cover native audio conversion and format changes, owned callback buffers, microphone-only and mixed capture, mute, host timestamp alignment, failed-start cleanup, permission retry policy, retention, session recovery and filename collisions. Mock microphone engines cover Bluetooth-style 24 kHz to 48 kHz transitions, rebuilding after format errors, bounded retries, and cancelling recovery when stopped. Teams health checks cover active output without buffers and recovery after buffers return. Automated tests never start an audio device. Test an existing file with `build/MeetingNotesSmoke --transcribe /absolute/audio/path /absolute/path/to/MeetingTranscriber`. Append an expected speaker count (for example, `2`) to check that automatic detection returns that many labels; this does not force the detector's result. Live capture requires separate approval.
+
+Logs: `~/Library/Logs/Meeting Notes/meeting-notes.log` and one rotated `meeting-notes.previous.log` (about 4 MB total). Logs include stages, detected speaker counts, failures, paths, Teams detection and retention deletions, but no audio or transcript contents. Audio diagnostics include device names and formats, Teams process/output status, and recovery attempts. A `capture.summary` entry for each selected source records buffer/frame counts, microphone mute counts, and peak sample levels before and after muting. These distinguish missing buffers from received silence; they do not establish system-audio authorization or identify speakers.
