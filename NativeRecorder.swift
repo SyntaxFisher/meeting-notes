@@ -10,6 +10,7 @@ final class NativeRecorder: @unchecked Sendable {
   private let queue = DispatchQueue(label: "com.jona.meeting-notes.capture")
   private let lifecycle = DispatchQueue(label: "com.jona.meeting-notes.capture-lifecycle")
   private var inputs: [any AudioCaptureInput] = []
+  private var expectedSources: [CaptureSource] = []
   private var tracks: [CaptureSource: CaptureTrack] = [:]
   private var microphoneMuted = false
   private var acceptingSamples = false
@@ -41,7 +42,8 @@ final class NativeRecorder: @unchecked Sendable {
   }
 
   static func captureInputs(teamsRunning: Bool) -> [any AudioCaptureInput] {
-    if teamsRunning { return [TeamsAudioCapture(), MicrophoneCapture()] }
+    // Opening a Bluetooth microphone can change the output device's format too.
+    if teamsRunning { return [MicrophoneCapture(), TeamsAudioCapture()] }
     return [MicrophoneCapture()]
   }
 
@@ -67,7 +69,9 @@ final class NativeRecorder: @unchecked Sendable {
             }
             try manager.createDirectory(at: self.directory, withIntermediateDirectories: true)
             self.queue.sync { self.acceptingSamples = true }
-            for input in self.makeInputs() {
+            let inputs = self.makeInputs()
+            self.queue.sync { self.expectedSources = inputs.map(\.source) }
+            for input in inputs {
               self.inputs.append(input)
               let source = input.source
               try input.start(
@@ -109,6 +113,12 @@ final class NativeRecorder: @unchecked Sendable {
         self.inputs.removeAll()
         let failure = self.queue.sync {
           self.acceptingSamples = false
+          for source in self.expectedSources {
+            AppLog.event(
+              "capture.summary",
+              "\(source.rawValue); \(self.tracks[source]?.summary ?? "buffers=0; frames=0")")
+          }
+          self.expectedSources.removeAll()
           self.tracks.removeAll()
           return self.failure
         }
@@ -216,6 +226,11 @@ final class CaptureTrack {
   private var written: Int64 = 0
   private let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
   private var converter: AVAudioConverter?
+  private var statistics = CaptureSignalStatistics()
+
+  var summary: String {
+    statistics.summary
+  }
 
   init(url: URL, start: Double) throws {
     self.start = start
@@ -251,6 +266,10 @@ final class CaptureTrack {
     }
     if let error { throw error }
     guard status != .error else { throw MeetingError("Audio conversion failed.") }
+    let samples = UnsafeBufferPointer(
+      start: buffer.floatChannelData![0], count: Int(buffer.frameLength))
+    let peak = samples.reduce(Float(0)) { max($0, abs($1)) }
+    statistics.received(frames: Int64(buffer.frameLength), peak: peak, muted: muted)
     let expected = Int64(max(0, timestamp - start) * 48_000)
     // Fill genuine capture gaps; ignore sub-buffer timestamp rounding.
     if expected - written > 2_400 {
