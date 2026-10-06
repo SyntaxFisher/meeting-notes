@@ -81,11 +81,12 @@ extension Smoke {
     precondition(NativeRecorder.captureInputs(teamsRunning: false).map(\.source) == [.microphone])
     precondition(
       NativeRecorder.captureInputs(teamsRunning: true).map(\.source) == [.microphone, .system])
-    let description = TeamsAudioCapture.tapDescription()
+    let description = TeamsAudioCapture.tapDescription(processes: [])
     precondition(description.bundleIDs == ["com.microsoft.teams2"])
     precondition(description.processes.isEmpty && !description.isExclusive)
     precondition(description.isPrivate && description.isMixdown && description.isMono)
     precondition(description.isProcessRestoreEnabled && description.muteBehavior == .unmuted)
+    testTeamsTapTargets()
 
     let resources = AudioCaptureResources()
     var released: [Int] = []
@@ -342,6 +343,55 @@ extension Smoke {
     precondition(creations == 1 && pending.stops == 1)
     print(
       "Bluetooth 24 kHz to 48 kHz recovery, fresh engines, bounded retries and cancellation: OK")
+  }
+
+  private static func testTeamsTapTargets() {
+    let moduleHost = AudioProcessStatus(
+      id: 101, pid: 61878, bundleID: "com.microsoft.teams2.modulehost",
+      outputActive: true, outputDevices: [96])
+    let helper = AudioProcessStatus(
+      id: 102, pid: 61885, bundleID: "com.microsoft.teams2.helper",
+      outputActive: false, outputDevices: [])
+    let unrelated = AudioProcessStatus(
+      id: 103, pid: 70000, bundleID: "com.apple.Music",
+      outputActive: true, outputDevices: [96])
+    let similarName = AudioProcessStatus(
+      id: 104, pid: 70001, bundleID: "com.microsoft.teams20",
+      outputActive: true, outputDevices: [96])
+    let description = TeamsAudioCapture.tapDescription(
+      processes: [moduleHost, helper, unrelated, similarName])
+    precondition(
+      description.bundleIDs == [
+        "com.microsoft.teams2", "com.microsoft.teams2.helper", "com.microsoft.teams2.modulehost",
+      ])
+    precondition(!description.isExclusive && description.muteBehavior == .unmuted)
+    let initial = TeamsAudioCapture.bundleIDs(for: [helper])
+    let joined = TeamsAudioCapture.bundleIDs(for: [helper, moduleHost])
+    precondition(initial != joined)
+    precondition(TeamsAudioCapture.bundleIDs(for: [helper]) == initial)
+    let restartedHost = AudioProcessStatus(
+      id: 105, pid: 70002, bundleID: moduleHost.bundleID,
+      outputActive: false, outputDevices: [])
+    precondition(TeamsAudioCapture.bundleIDs(for: [restartedHost, helper, helper]) == joined)
+    precondition(
+      TeamsAudioCapture.needsRestart(
+        tappedBundleIDs: initial, previous: [helper], current: [helper, moduleHost]))
+    precondition(
+      TeamsAudioCapture.needsRestart(
+        tappedBundleIDs: initial, previous: [helper, moduleHost], current: [helper, moduleHost]))
+    precondition(
+      TeamsAudioCapture.needsRestart(
+        tappedBundleIDs: joined, previous: [helper, moduleHost], current: [helper]))
+    precondition(
+      !TeamsAudioCapture.needsRestart(
+        tappedBundleIDs: joined, previous: [helper, moduleHost], current: [helper, restartedHost]))
+    let reroutedHost = AudioProcessStatus(
+      id: moduleHost.id, pid: moduleHost.pid, bundleID: moduleHost.bundleID,
+      outputActive: true, outputDevices: [148])
+    precondition(
+      TeamsAudioCapture.needsRestart(
+        tappedBundleIDs: joined, previous: [helper, moduleHost], current: [helper, reroutedHost]))
+    print("Teams module host capture, inactive helpers, process replacement and app isolation: OK")
   }
 
   private static func testCaptureHealth() {
