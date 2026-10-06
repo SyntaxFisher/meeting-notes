@@ -59,6 +59,10 @@ struct AudioProcessStatus: Equatable {
   let outputActive: Bool
   let outputDevices: [AudioObjectID]
 
+  static func isTeams(bundleID: String) -> Bool {
+    bundleID == TeamsAudioCapture.bundleID || bundleID.hasPrefix(TeamsAudioCapture.bundleID + ".")
+  }
+
   var summary: String {
     "pid=\(pid); bundle=\(bundleID); outputActive=\(outputActive); devices=\(outputDevices)"
   }
@@ -118,7 +122,7 @@ enum AudioHardwareInfo {
     return objects.compactMap { object in
       // A process can exit between enumeration and reading its properties.
       guard let bundle = try? string(object, kAudioProcessPropertyBundleID),
-        bundle == TeamsAudioCapture.bundleID || bundle.hasPrefix(TeamsAudioCapture.bundleID + ".")
+        AudioProcessStatus.isTeams(bundleID: bundle)
       else { return nil }
       var pid: Int32 = 0
       var active: UInt32 = 0
