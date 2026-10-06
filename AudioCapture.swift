@@ -285,13 +285,28 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
   private var pendingRestart: DispatchWorkItem?
   private var health = TeamsCaptureHealth()
   private var lastProcesses: [AudioProcessStatus]?
+  private var tappedBundleIDs: [String] = []
   private var bufferRecoveryAttempts = 0
 
-  static func tapDescription() -> CATapDescription {
+  static func bundleIDs(for processes: [AudioProcessStatus]) -> [String] {
+    let teams = processes.filter { AudioProcessStatus.isTeams(bundleID: $0.bundleID) }
+    return Set([bundleID] + teams.map(\.bundleID)).sorted()
+  }
+
+  static func needsRestart(
+    tappedBundleIDs: [String], previous: [AudioProcessStatus]?, current: [AudioProcessStatus]
+  ) -> Bool {
+    if bundleIDs(for: current) != tappedBundleIDs { return true }
+    let oldDevices = Set((previous ?? []).flatMap(\.outputDevices))
+    let newDevices = Set(current.flatMap(\.outputDevices))
+    return previous != nil && !newDevices.isEmpty && newDevices != oldDevices
+  }
+
+  static func tapDescription(processes: [AudioProcessStatus]) -> CATapDescription {
     let description = CATapDescription()
     description.uuid = UUID()
     description.name = "Meeting Notes Teams audio"
-    description.bundleIDs = [bundleID]
+    description.bundleIDs = bundleIDs(for: processes)
     description.isExclusive = false
     description.isMixdown = true
     description.isMono = true
@@ -343,7 +358,8 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
     generation = UUID()
     let currentGeneration = generation
     try resources.release()
-    let description = Self.tapDescription()
+    let processes = try AudioHardwareInfo.teamsProcesses()
+    let description = Self.tapDescription(processes: processes)
     var tap = AudioObjectID(kAudioObjectUnknown)
     try CoreAudioFailure.check(AudioHardwareCreateProcessTap(description, &tap), "Create Teams tap")
     let tapID = tap
@@ -436,7 +452,6 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
       object: AudioObjectID(kAudioObjectSystemObject),
       selector: kAudioHardwarePropertyDefaultInputDevice
     ) { _, _ in restart(false) }
-    let processes = try AudioHardwareInfo.teamsProcesses()
     var devices = Set(processes.flatMap(\.outputDevices))
     let output = try AudioHardwareInfo.defaultDevice(kAudioHardwarePropertyDefaultOutputDevice)
     let input = try AudioHardwareInfo.defaultDevice(kAudioHardwarePropertyDefaultInputDevice)
@@ -451,6 +466,8 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
       }
     }
     try CoreAudioFailure.check(AudioDeviceStart(deviceID, ioProc), "Start Teams audio")
+    tappedBundleIDs = description.bundleIDs
+    AppLog.event("capture.teamsTargets", tappedBundleIDs.joined(separator: ","))
     resources.add {
       try CoreAudioFailure.check(AudioDeviceStop(deviceID, ioProc), "Stop Teams audio")
     }
@@ -487,16 +504,15 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
     guard running, pendingRestart == nil else { return }
     do {
       let processes = try AudioHardwareInfo.teamsProcesses()
+      let needsRestart = Self.needsRestart(
+        tappedBundleIDs: tappedBundleIDs, previous: lastProcesses, current: processes)
       if processes != lastProcesses {
         AppLog.event("capture.teamsProcesses", processes.map(\.summary).joined(separator: " | "))
-        let oldDevices = Set((lastProcesses ?? []).flatMap(\.outputDevices))
-        let newDevices = Set(processes.flatMap(\.outputDevices))
-        let routeChanged = lastProcesses != nil && !newDevices.isEmpty && newDevices != oldDevices
         lastProcesses = processes
-        if routeChanged {
-          scheduleRestart(receive: receive, onFailure: onFailure)
-          return
-        }
+      }
+      if needsRestart {
+        scheduleRestart(receive: receive, onFailure: onFailure)
+        return
       }
       switch health.check(
         outputActive: processes.contains(where: \.outputActive),
