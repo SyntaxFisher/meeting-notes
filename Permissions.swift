@@ -35,7 +35,7 @@ struct PermissionSnapshot: Equatable {
   static func read() -> Self {
     Self(
       microphone: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-      systemAudioRequested: PermissionAccess.systemAudioWasRequested,
+      systemAudioRequested: PermissionAccess.systemAudioWasRequested(),
       accessibility: TeamsMuteReader.hasAccessibilityAccess)
   }
 }
@@ -63,12 +63,13 @@ enum PermissionAccess {
   }
 
   // This records a completed setup request, not the current macOS authorization state.
-  static var systemAudioWasRequested: Bool {
-    UserDefaults.standard.string(forKey: systemAudioSetupKey) == build
+  static func systemAudioWasRequested(defaults: UserDefaults = .standard) -> Bool {
+    guard let setupBuild = defaults.string(forKey: systemAudioSetupKey) else { return false }
+    return !setupBuild.isEmpty
   }
 
-  static func invalidateSystemAudioRequest() {
-    UserDefaults.standard.removeObject(forKey: systemAudioSetupKey)
+  static func invalidateSystemAudioRequest(defaults: UserDefaults = .standard) {
+    defaults.removeObject(forKey: systemAudioSetupKey)
   }
 
   static func deniedPermission(for error: Error) -> MeetingPermission? {
