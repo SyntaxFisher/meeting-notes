@@ -182,6 +182,27 @@ extension Smoke {
     try NativeRecorder.mix(
       directory: aloneDirectory, destination: root.appendingPathComponent("alone.m4a"))
 
+    let completedAudio = root.appendingPathComponent("alone.m4a")
+    let completedBytes = try Data(contentsOf: completedAudio)
+    for failsOnStop in [false, true] {
+      let discardedInput = FixtureAudioInput(.microphone)
+      discardedInput.samples = [(tone(rate: 48_000), 100)]
+      if failsOnStop { discardedInput.stopError = MeetingError("Fixture stop failure") }
+      let discardedDirectory = root.appendingPathComponent("discard-\(failsOnStop)")
+      let discarded = NativeRecorder(
+        directory: discardedDirectory, makeInputs: { [discardedInput] }, checkPermission: {})
+      try await discarded.start()
+      try await discarded.discard()
+      precondition(discardedInput.stops == 1)
+      precondition(!FileManager.default.fileExists(atPath: discardedDirectory.path))
+      discardedInput.emit(tone(rate: 48_000), at: 102)
+      try await discarded.discard()
+      precondition(discardedInput.stops == 1)
+      precondition(!FileManager.default.fileExists(atPath: discardedDirectory.path))
+      let preservedBytes = try Data(contentsOf: completedAudio)
+      precondition(preservedBytes == completedBytes)
+    }
+
     let first = FixtureAudioInput(.system)
     let second = FixtureAudioInput(.microphone)
     second.startError = MeetingError("Fixture startup failure")

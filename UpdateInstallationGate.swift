@@ -5,12 +5,16 @@ final class UpdateInstallationGate {
   private var pendingInstallation: (() -> Void)?
   private(set) var installationStarted = false
 
+  func installWhenIdle(_ install: @escaping () -> Void) {
+    pendingInstallation = install
+  }
+
   func postpone(whileBusy busy: Bool, install: @escaping () -> Void) -> Bool {
     guard busy else {
       installationStarted = true
       return false
     }
-    pendingInstallation = install
+    installWhenIdle(install)
     return true
   }
 

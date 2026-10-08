@@ -31,7 +31,7 @@ The release app is signed with Developer ID and notarized by Apple. No developer
 
 1. Open Teams before starting if you want to include its playback. Without Teams, the recording uses only your microphone.
 2. Choose **Start Recording** in the Meeting Notes menu.
-3. Choose **Stop & Transcribe** when you finish.
+3. Choose **Stop & Transcribe** when you finish, or **Stop & Discard** to delete the recording immediately. Both actions pause auto-record until you leave the Teams meeting and join again.
 4. Use **Show in Finder** or **Copy Last Transcript Path** to find the result.
 
 Headphones help avoid echo between meeting playback and your microphone. Sounds from other apps are not captured in place of Teams audio, although your microphone can pick up sounds in the room.
@@ -58,7 +58,7 @@ Files are saved under `~/Documents/meeting-notes/` in the `audios` and `transcri
 
 ## Updates and uninstall
 
-Release builds check for updates hourly and download them automatically. Updates normally install when you quit; checks and restarts wait until recording, transcription, and permission setup have finished. Use **Check for Updates…** or **Automatic Updates** in the menu to manage them.
+Release builds check for updates roughly hourly while running and download them automatically. Downloaded updates install and restart the app automatically once recording, transcription, and permission setup have finished. If auto-record is waiting for a Teams meeting you stopped recording to end, updates wait too, so restarting cannot resume that recording. Checks also wait while the app is busy; sleep and network availability can delay them. Use **Check for Updates…** or **Automatic Updates** in the menu to manage them.
 
 To uninstall, finish recording or transcription, turn off **Launch at Login** if enabled, quit the app, and delete it from Applications. Your recordings and transcripts remain in `~/Documents/meeting-notes/`. Downloaded models remain in the shared `~/Library/Application Support/FluidAudio/Models` cache.
 
