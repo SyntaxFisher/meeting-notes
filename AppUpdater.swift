@@ -42,12 +42,35 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
 
   func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
     guard !isBusy() else {
+      AppLog.event("update.deferred", "App is busy")
       throw NSError(
         domain: "com.jona.meeting-notes.update", code: 1,
         userInfo: [
           NSLocalizedDescriptionKey: "Updates wait until recording and transcription finish."
         ])
     }
+    AppLog.event("update.check", "type=\(updateCheck.rawValue)")
+  }
+
+  func updater(_ updater: SPUUpdater, willScheduleUpdateCheckAfterDelay delay: TimeInterval) {
+    AppLog.event("update.scheduled", "delay=\(Int(delay)) seconds")
+  }
+
+  func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+    AppLog.event(
+      "update.found", "version=\(item.displayVersionString); build=\(item.versionString)")
+  }
+
+  func updater(
+    _ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
+    immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
+  ) -> Bool {
+    AppLog.event("update.ready", "build=\(item.versionString); waiting for idle")
+    installation.installWhenIdle {
+      AppLog.event("update.installing", "build=\(item.versionString)")
+      immediateInstallHandler()
+    }
+    return true
   }
 
   func updater(
@@ -59,6 +82,12 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
 
   func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
     installation.reset()
-    AppLog.event("update.aborted", error.localizedDescription)
+    let error = error as NSError
+    if error.domain == SUSparkleErrorDomain && error.code == SUError.noUpdateError.rawValue {
+      AppLog.event("update.current", error.localizedDescription)
+    } else {
+      AppLog.event(
+        "update.aborted", "\(error.domain); code=\(error.code); \(error.localizedDescription)")
+    }
   }
 }

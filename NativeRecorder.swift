@@ -131,6 +131,16 @@ final class NativeRecorder: @unchecked Sendable {
     }
   }
 
+  func discard() async throws {
+    do { try await stop() } catch {
+      AppLog.event("capture.discardStopFailed", error.localizedDescription)
+    }
+    if FileManager.default.fileExists(atPath: directory.path) {
+      try FileManager.default.removeItem(at: directory)
+    }
+    AppLog.event("capture.discarded", directory.path)
+  }
+
   private func recordFailure(_ error: Error) {
     guard acceptingSamples, failure == nil else { return }
     failure = error

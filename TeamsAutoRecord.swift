@@ -26,25 +26,27 @@ struct TeamsAutoRecordPolicy {
 
   static let leaveGracePeriod: TimeInterval = 5
   private(set) var ownsRecording = false
-  private var waitingForMeetingEnd = false
-  private var lastPresence: TeamsMeetingPresence = .unknown
+  private(set) var waitingForMeetingEnd = false
+  private var meetingHasEnded = false
   private var absentSince: Date?
 
   mutating func observe(
     _ presence: TeamsMeetingPresence, at now: Date, isRecording: Bool, canStart: Bool
   ) -> Action? {
-    lastPresence = presence
     switch presence {
     case .inMeeting:
       absentSince = nil
+      meetingHasEnded = false
       return !isRecording && canStart && !waitingForMeetingEnd ? .start : nil
     case .noMeeting:
-      waitingForMeetingEnd = false
-      guard isRecording, ownsRecording else { return nil }
       let since = absentSince ?? now
       absentSince = since
-      return now.timeIntervalSince(since) >= Self.leaveGracePeriod ? .stop : nil
+      guard now.timeIntervalSince(since) >= Self.leaveGracePeriod else { return nil }
+      meetingHasEnded = true
+      waitingForMeetingEnd = false
+      return isRecording && ownsRecording ? .stop : nil
     case .unknown:
+      absentSince = nil
       return nil
     }
   }
@@ -52,11 +54,11 @@ struct TeamsAutoRecordPolicy {
   mutating func recordingStarted(automatically: Bool) {
     ownsRecording = automatically
     absentSince = nil
+    meetingHasEnded = false
   }
 
   mutating func recordingEnded() {
     ownsRecording = false
-    absentSince = nil
-    waitingForMeetingEnd = lastPresence != .noMeeting
+    waitingForMeetingEnd = !meetingHasEnded
   }
 }

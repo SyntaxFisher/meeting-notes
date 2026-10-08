@@ -22,6 +22,19 @@ struct Smoke {
     precondition(installs == 1)
     precondition(!updateGate.postpone(whileBusy: false) { installs += 1 })
     precondition(updateGate.installationStarted && installs == 1)
+    updateGate.reset()
+    updateGate.installWhenIdle { installs += 1 }
+    precondition(installs == 1 && !updateGate.installationStarted)
+    updateGate.resumeIfIdle(false)
+    precondition(installs == 1 && !updateGate.installationStarted)
+    updateGate.resumeIfIdle(true)
+    updateGate.resumeIfIdle(true)
+    precondition(installs == 2 && updateGate.installationStarted)
+    updateGate.reset()
+    updateGate.installWhenIdle { installs += 1 }
+    updateGate.reset()
+    updateGate.resumeIfIdle(true)
+    precondition(installs == 2 && !updateGate.installationStarted)
     print("Update installation waits for work, resumes once, and clears failed attempts: OK")
     for rate in [16_000.0, 44_100.0, 48_000.0] {
       let total = Int64(30.289 * rate)
@@ -424,12 +437,41 @@ struct Smoke {
     precondition(policy.observe(.inMeeting, at: start, isRecording: false, canStart: true) == nil)
     precondition(policy.observe(.noMeeting, at: start, isRecording: false, canStart: true) == nil)
     precondition(
-      policy.observe(.inMeeting, at: start, isRecording: false, canStart: true) == .start)
+      policy.observe(.inMeeting, at: start + 1, isRecording: false, canStart: true) == nil)
+    precondition(
+      policy.observe(.unknown, at: start + 2, isRecording: false, canStart: true) == nil)
+    precondition(
+      policy.observe(.inMeeting, at: start + 3, isRecording: false, canStart: true) == nil)
+    precondition(
+      policy.observe(.noMeeting, at: start + 4, isRecording: false, canStart: true) == nil)
+    precondition(
+      policy.observe(.noMeeting, at: start + 4 + grace, isRecording: false, canStart: true) == nil)
+    precondition(
+      policy.observe(.inMeeting, at: start + 5 + grace, isRecording: false, canStart: true)
+        == .start)
 
     policy.recordingStarted(automatically: false)
     precondition(policy.observe(.noMeeting, at: start, isRecording: true, canStart: false) == nil)
     precondition(
       policy.observe(.noMeeting, at: start + grace, isRecording: true, canStart: false) == nil)
+
+    for automatically in [false, true] {
+      var stopped = TeamsAutoRecordPolicy()
+      _ = stopped.observe(.inMeeting, at: start, isRecording: false, canStart: true)
+      stopped.recordingStarted(automatically: automatically)
+      _ = stopped.observe(.noMeeting, at: start + 1, isRecording: true, canStart: false)
+      stopped.recordingEnded()
+      precondition(!stopped.ownsRecording)
+      precondition(stopped.waitingForMeetingEnd)
+      precondition(
+        stopped.observe(.inMeeting, at: start + 2, isRecording: false, canStart: true) == nil)
+      _ = stopped.observe(.noMeeting, at: start + 3, isRecording: false, canStart: true)
+      _ = stopped.observe(.noMeeting, at: start + 3 + grace, isRecording: false, canStart: true)
+      precondition(!stopped.waitingForMeetingEnd)
+      precondition(
+        stopped.observe(.inMeeting, at: start + 4 + grace, isRecording: false, canStart: true)
+          == .start)
+    }
   }
 
   private static func writeTrack(at url: URL, muted: Bool) throws {
