@@ -31,6 +31,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
   private let appUpdater = AppUpdater()
   private var updateIsBusy: Bool {
     recorder != nil || isBusy || work != nil || requestingPermissions
+      || (autoRecordTeamsMeetings && autoRecord.waitingForMeetingEnd)
   }
   private var detectTeamsMute: Bool {
     !UserDefaults.standard.bool(forKey: "teamsMuteDetectionDisabled")
@@ -136,6 +137,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     }
     if phase == .recording {
       add("Stop & Transcribe", action: #selector(stopClicked))
+      add("Stop & Discard", action: #selector(discardClicked))
     } else if !permissions.recordingGranted {
       add(
         "Grant Permissions…", action: #selector(grantPermissionsClicked),
@@ -218,6 +220,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
 
   @objc private func startClicked() { work = Task { await startRecording(automatically: false) } }
   @objc private func stopClicked() { work = Task { await stopRecording() } }
+  @objc private func discardClicked() { work = Task { await stopRecording(discard: true) } }
   @objc private func retryClicked() {
     guard !appUpdater.installation.installationStarted else { return }
     failedWorkToDiscard = nil
@@ -483,11 +486,24 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
     work = nil
   }
 
-  private func stopRecording(captureError: Error? = nil) async {
-    guard let capture = recorder, let session = store.state.session else { return }
+  private func stopRecording(captureError: Error? = nil, discard: Bool = false) async {
+    guard phase == .recording, let capture = recorder, let session = store.state.session else {
+      return
+    }
     autoRecord.recordingEnded()
     setPhase(.preparing)
     teamsMonitor.mirroredRecorder = nil
+    if discard {
+      do {
+        try await capture.discard()
+        try store.update { $0.session = nil }
+        setPhase(.idle)
+      } catch { presentError(error.localizedDescription) }
+      recorder = nil
+      updateTeamsMonitor()
+      work = nil
+      return
+    }
     var failure = captureError
     do { try await capture.stop() } catch { failure = failure ?? error }
     recorder = nil
