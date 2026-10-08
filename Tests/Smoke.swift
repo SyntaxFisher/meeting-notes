@@ -6,6 +6,39 @@ import Foundation
 struct Smoke {
   @MainActor
   static func main() async throws {
+    if CommandLine.arguments.count == 4,
+      CommandLine.arguments[1] == "--permission-setup-fixture"
+    {
+      let defaults = UserDefaults(suiteName: CommandLine.arguments[2])!
+      switch CommandLine.arguments[3] {
+      case "setup":
+        precondition(!PermissionAccess.systemAudioWasRequested(defaults: defaults))
+        defaults.set("28", forKey: "systemAudioSetupBuild")
+      case "relaunch":
+        precondition(PermissionAccess.systemAudioWasRequested(defaults: defaults))
+      case "deny":
+        precondition(PermissionAccess.systemAudioWasRequested(defaults: defaults))
+        PermissionAccess.invalidateSystemAudioRequest(defaults: defaults)
+      case "denied-relaunch":
+        precondition(!PermissionAccess.systemAudioWasRequested(defaults: defaults))
+      default: preconditionFailure("Unknown permission fixture action")
+      }
+      precondition(defaults.synchronize())
+      return
+    }
+    let permissionSuite = "com.jona.meeting-notes.tests.\(UUID().uuidString)"
+    defer {
+      UserDefaults(suiteName: permissionSuite)?.removePersistentDomain(forName: permissionSuite)
+    }
+    for action in ["setup", "relaunch", "relaunch", "deny", "denied-relaunch"] {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+      process.arguments = ["--permission-setup-fixture", permissionSuite, action]
+      try process.run()
+      process.waitUntilExit()
+      precondition(process.terminationReason == .exit && process.terminationStatus == 0)
+    }
+    print("System audio setup survives relaunches and build changes; explicit denial clears it: OK")
     let updateGate = UpdateInstallationGate()
     var installs = 0
     precondition(updateGate.postpone(whileBusy: true) { installs += 1 })
