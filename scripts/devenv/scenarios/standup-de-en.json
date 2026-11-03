@@ -1,0 +1,24 @@
+{
+  "description": "Bilingual daily standup with three people. The local speaker switches between German and English, briefly overlaps another speaker, and says something while muted in Teams that must not appear in the transcript.",
+  "speakers": {
+    "me": { "via": "mic", "voice": "Reed (German (Germany))", "lang": "de" },
+    "anna": { "via": "guest", "display": "Anna Schmidt", "voice": "Anna", "lang": "de" },
+    "sam": { "via": "guest", "display": "Sam Carter", "voice": "Samantha", "lang": "en" }
+  },
+  "steps": [
+    { "speaker": "me", "text": "Guten Morgen. Lasst uns mit dem Daily anfangen, wir haben heute nur eine Viertelstunde." },
+    { "speaker": "anna", "text": "Morgen. Ich habe gestern die Fehlerbehandlung für Bluetooth-Headsets fertig gemacht. Wenn das Headset die Abtastrate wechselt, startet die Aufnahme jetzt automatisch neu." },
+    { "speaker": "anna", "gap": 0.4, "text": "Heute schaue ich mir die Speicherverwaltung an. Alte Aufnahmen sollen gelöscht werden, sobald der Ordner größer als hundert Megabyte ist." },
+    { "speaker": "me", "voice": "Reed (English (US))", "lang": "en", "text": "Thanks Anna. Sam, since you're joining from London, let's continue in English. What's your status?" },
+    { "speaker": "sam", "text": "Yesterday I reviewed the release pipeline. Notarization works, but the upload to GitHub failed twice because of a timeout." },
+    { "speaker": "sam", "gap": 0.3, "text": "Today I want to add a retry with a longer timeout, and then I'll prepare the release notes for version one point one." },
+    { "speaker": "me", "voice": "Reed (English (US))", "lang": "en", "gap": -1.2, "text": "Okay, quick question on that." },
+    { "action": "mute" },
+    { "speaker": "me", "text": "Das hier ist privat und darf auf keinen Fall im Protokoll auftauchen, Kennwort Pinguin Ananas Leuchtturm." },
+    { "action": "unmute" },
+    { "speaker": "me", "voice": "Reed (English (US))", "lang": "en", "text": "Sorry, I was on mute. Do we need a new signing certificate for the next release, or is the current one still valid?" },
+    { "speaker": "sam", "text": "The current certificate is valid until next year, so we don't need to do anything for now." },
+    { "speaker": "anna", "text": "Kurze Ergänzung von mir: Ich bin am Freitag im Urlaub, bitte schickt mir offene Fragen bis Donnerstag." },
+    { "speaker": "me", "text": "Alles klar, danke euch beiden. Dann sehen wir uns morgen um neun Uhr wieder." }
+  ]
+}

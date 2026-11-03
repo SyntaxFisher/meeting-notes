@@ -1,0 +1,22 @@
+{
+  "description": "Five participants who each speak a different European language, plus one participant who switches to English. Exercises language detection and diarization with many voices.",
+  "speakers": {
+    "me": { "via": "mic", "voice": "Eddy (German (Germany))", "lang": "de" },
+    "thomas": { "via": "guest", "display": "Thomas Durand", "voice": "Thomas", "lang": "fr" },
+    "monica": { "via": "guest", "display": "Mónica García", "voice": "Mónica", "lang": "es" },
+    "alice": { "via": "guest", "display": "Alice Rossi", "voice": "Alice", "lang": "it" },
+    "daniel": { "via": "guest", "display": "Daniel Hughes", "voice": "Daniel", "lang": "en" }
+  },
+  "steps": [
+    { "speaker": "me", "text": "Herzlich willkommen zu unserer internationalen Runde. Jeder spricht heute in seiner eigenen Sprache, und wir prüfen, ob das Protokoll alles richtig erfasst." },
+    { "speaker": "thomas", "text": "Bonjour à tous. De notre côté, la nouvelle version de l'application fonctionne très bien, mais les utilisateurs demandent un résumé automatique après chaque réunion." },
+    { "speaker": "monica", "text": "Hola a todos. En España hemos probado la grabación durante una semana entera y no hemos perdido ningún archivo, aunque algunos auriculares cambiaron de formato." },
+    { "speaker": "alice", "text": "Buongiorno. Per il nostro team in Italia la cosa più importante è che i dati restino sul computer e non vengano mai inviati a un server esterno." },
+    { "speaker": "daniel", "text": "Good morning from the United Kingdom. We would like the transcripts to show participant names instead of anonymous speaker labels, if that is technically possible." },
+    { "speaker": "me", "text": "Danke für das Feedback. Die Sprechernamen sind schwierig, weil wir nur den Ton aufnehmen und keine Informationen aus Teams auslesen." },
+    { "speaker": "thomas", "voice": "Eddy (English (US))", "lang": "en", "text": "If I may switch to English for a moment: could we at least read the participant list from the meeting window?" },
+    { "speaker": "monica", "text": "Eso sería muy útil, pero hay que tener cuidado con la privacidad de los participantes." },
+    { "speaker": "alice", "text": "Sono d'accordo. Proporrei di discuterne nella prossima riunione con il responsabile della protezione dei dati." },
+    { "speaker": "me", "text": "Gute Idee. Ich plane das Thema für nächste Woche ein. Vielen Dank an alle und bis bald." }
+  ]
+}
