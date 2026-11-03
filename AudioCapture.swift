@@ -285,18 +285,23 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
   private var pendingRestart: DispatchWorkItem?
   private var health = TeamsCaptureHealth()
   private var lastProcesses: [AudioProcessStatus]?
-  private var tappedBundleIDs: [String] = []
+  private var tappedProcesses: [AudioObjectID] = []
   private var bufferRecoveryAttempts = 0
 
-  static func bundleIDs(for processes: [AudioProcessStatus]) -> [String] {
-    let teams = processes.filter { AudioProcessStatus.isTeams(bundleID: $0.bundleID) }
-    return Set([bundleID] + teams.map(\.bundleID)).sorted()
+  /// Teams audio process objects to tap. Taps target process objects rather than bundle IDs:
+  /// when several Teams helpers share a bundle ID (for example an idle and an active module
+  /// host), a bundle-ID tap can miss the instance that plays the meeting and deliver nothing.
+  static func tapTargets(for processes: [AudioProcessStatus]) -> [AudioObjectID] {
+    Set(processes.filter { AudioProcessStatus.isTeams(bundleID: $0.bundleID) }.map(\.id))
+      .sorted()
   }
 
   static func needsRestart(
-    tappedBundleIDs: [String], previous: [AudioProcessStatus]?, current: [AudioProcessStatus]
+    tappedProcesses: [AudioObjectID], previous: [AudioProcessStatus]?,
+    current: [AudioProcessStatus]
   ) -> Bool {
-    if bundleIDs(for: current) != tappedBundleIDs { return true }
+    // A process tap does not follow new or replaced processes, so rebuild it when they change.
+    if tapTargets(for: current) != tappedProcesses { return true }
     let oldDevices = Set((previous ?? []).flatMap(\.outputDevices))
     let newDevices = Set(current.flatMap(\.outputDevices))
     return previous != nil && !newDevices.isEmpty && newDevices != oldDevices
@@ -306,12 +311,19 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
     let description = CATapDescription()
     description.uuid = UUID()
     description.name = "Meeting Notes Teams audio"
-    description.bundleIDs = bundleIDs(for: processes)
+    let targets = tapTargets(for: processes)
+    if targets.isEmpty {
+      // Teams has no audio process object until it first opens audio; the health check
+      // switches to process targets as soon as one appears.
+      description.bundleIDs = [bundleID]
+      description.isProcessRestoreEnabled = true
+    } else {
+      description.processes = targets
+    }
     description.isExclusive = false
     description.isMixdown = true
     description.isMono = true
     description.isPrivate = true
-    description.isProcessRestoreEnabled = true
     description.muteBehavior = .unmuted
     return description
   }
@@ -466,8 +478,11 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
       }
     }
     try CoreAudioFailure.check(AudioDeviceStart(deviceID, ioProc), "Start Teams audio")
-    tappedBundleIDs = description.bundleIDs
-    AppLog.event("capture.teamsTargets", tappedBundleIDs.joined(separator: ","))
+    tappedProcesses = description.processes
+    let targets = processes.filter { tappedProcesses.contains($0.id) }
+      .map { "\($0.bundleID)[\($0.pid)]" }
+    let summary = targets.isEmpty ? description.bundleIDs : targets
+    AppLog.event("capture.teamsTargets", summary.joined(separator: ","))
     resources.add {
       try CoreAudioFailure.check(AudioDeviceStop(deviceID, ioProc), "Stop Teams audio")
     }
@@ -505,7 +520,7 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
     do {
       let processes = try AudioHardwareInfo.teamsProcesses()
       let needsRestart = Self.needsRestart(
-        tappedBundleIDs: tappedBundleIDs, previous: lastProcesses, current: processes)
+        tappedProcesses: tappedProcesses, previous: lastProcesses, current: processes)
       if processes != lastProcesses {
         AppLog.event("capture.teamsProcesses", processes.map(\.summary).joined(separator: " | "))
         lastProcesses = processes

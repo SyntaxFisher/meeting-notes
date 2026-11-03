@@ -81,6 +81,7 @@ extension Smoke {
     precondition(NativeRecorder.captureInputs(teamsRunning: false).map(\.source) == [.microphone])
     precondition(
       NativeRecorder.captureInputs(teamsRunning: true).map(\.source) == [.microphone, .system])
+    // Before Teams opens audio there is no process object, so the tap falls back to the bundle.
     let description = TeamsAudioCapture.tapDescription(processes: [])
     precondition(description.bundleIDs == ["com.microsoft.teams2"])
     precondition(description.processes.isEmpty && !description.isExclusive)
@@ -381,38 +382,48 @@ extension Smoke {
       outputActive: true, outputDevices: [96])
     let description = TeamsAudioCapture.tapDescription(
       processes: [moduleHost, helper, unrelated, similarName])
-    precondition(
-      description.bundleIDs == [
-        "com.microsoft.teams2", "com.microsoft.teams2.helper", "com.microsoft.teams2.modulehost",
-      ])
+    precondition(description.processes == [101, 102] && description.bundleIDs.isEmpty)
     precondition(!description.isExclusive && description.muteBehavior == .unmuted)
-    let initial = TeamsAudioCapture.bundleIDs(for: [helper])
-    let joined = TeamsAudioCapture.bundleIDs(for: [helper, moduleHost])
-    precondition(initial != joined)
-    precondition(TeamsAudioCapture.bundleIDs(for: [helper]) == initial)
+    precondition(description.isMixdown && description.isMono && description.isPrivate)
+
+    // An idle module host and the one playing the meeting share a bundle ID; tap both.
+    let idleHost = AudioProcessStatus(
+      id: 99, pid: 50320, bundleID: moduleHost.bundleID, outputActive: false, outputDevices: [])
+    precondition(
+      TeamsAudioCapture.tapTargets(for: [moduleHost, idleHost, helper]) == [99, 101, 102])
+
+    let initial = TeamsAudioCapture.tapTargets(for: [helper])
+    let joined = TeamsAudioCapture.tapTargets(for: [helper, moduleHost])
+    precondition(initial == [102] && joined == [101, 102])
+    precondition(TeamsAudioCapture.tapTargets(for: [helper, helper]) == initial)
+    precondition(
+      TeamsAudioCapture.needsRestart(
+        tappedProcesses: [], previous: nil, current: [helper]))
+    precondition(
+      !TeamsAudioCapture.needsRestart(tappedProcesses: [], previous: nil, current: [unrelated]))
+    precondition(
+      TeamsAudioCapture.needsRestart(
+        tappedProcesses: initial, previous: [helper], current: [helper, moduleHost]))
+    precondition(
+      !TeamsAudioCapture.needsRestart(
+        tappedProcesses: joined, previous: [helper, moduleHost], current: [helper, moduleHost]))
+    precondition(
+      TeamsAudioCapture.needsRestart(
+        tappedProcesses: joined, previous: [helper, moduleHost], current: [helper]))
     let restartedHost = AudioProcessStatus(
       id: 105, pid: 70002, bundleID: moduleHost.bundleID,
       outputActive: false, outputDevices: [])
-    precondition(TeamsAudioCapture.bundleIDs(for: [restartedHost, helper, helper]) == joined)
     precondition(
       TeamsAudioCapture.needsRestart(
-        tappedBundleIDs: initial, previous: [helper], current: [helper, moduleHost]))
-    precondition(
-      TeamsAudioCapture.needsRestart(
-        tappedBundleIDs: initial, previous: [helper, moduleHost], current: [helper, moduleHost]))
-    precondition(
-      TeamsAudioCapture.needsRestart(
-        tappedBundleIDs: joined, previous: [helper, moduleHost], current: [helper]))
-    precondition(
-      !TeamsAudioCapture.needsRestart(
-        tappedBundleIDs: joined, previous: [helper, moduleHost], current: [helper, restartedHost]))
+        tappedProcesses: joined, previous: [helper, moduleHost], current: [helper, restartedHost]))
     let reroutedHost = AudioProcessStatus(
       id: moduleHost.id, pid: moduleHost.pid, bundleID: moduleHost.bundleID,
       outputActive: true, outputDevices: [148])
     precondition(
       TeamsAudioCapture.needsRestart(
-        tappedBundleIDs: joined, previous: [helper, moduleHost], current: [helper, reroutedHost]))
-    print("Teams module host capture, inactive helpers, process replacement and app isolation: OK")
+        tappedProcesses: joined, previous: [helper, moduleHost], current: [helper, reroutedHost]))
+    print(
+      "Teams process taps, duplicate module hosts, helper changes and app isolation: OK")
   }
 
   private static func testCaptureHealth() {
