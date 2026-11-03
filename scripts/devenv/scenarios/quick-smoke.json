@@ -1,0 +1,15 @@
+{
+  "description": "Short English and German exchange between the local speaker and one guest; for fast end-to-end checks.",
+  "speakers": {
+    "me": { "via": "mic", "voice": "Reed (German (Germany))", "lang": "de" },
+    "sam": { "via": "guest", "display": "Sam Carter", "voice": "Samantha", "lang": "en" }
+  },
+  "steps": [
+    { "speaker": "sam", "text": "Hi, can you hear me? I just joined from the browser and wanted to check the audio before we start." },
+    { "speaker": "me", "voice": "Reed (English (US))", "lang": "en", "text": "Yes, I can hear you clearly. Give me a second, I will switch to German for my colleague." },
+    { "speaker": "me", "text": "Guten Morgen zusammen. Wir sprechen heute kurz über den Stand der Aufnahmefunktion und die nächsten Schritte." },
+    { "speaker": "sam", "text": "Sounds good. The new build records both sides of the call, and the transcript arrived a few seconds after the meeting ended." },
+    { "speaker": "me", "text": "Sehr gut. Dann testen wir als Nächstes längere Meetings mit mehreren Teilnehmern und verschiedenen Sprachen." },
+    { "speaker": "sam", "text": "Perfect, let's do that tomorrow. Thanks everyone, talk to you later." }
+  ]
+}
