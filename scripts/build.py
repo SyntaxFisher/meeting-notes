@@ -305,7 +305,8 @@ def main():
     elif mode == "publish":
         publish(info)
     else:
-        app = build(info)
+        # A stable development identity keeps macOS privacy grants across local rebuilds.
+        app = build(info, identity=os.environ.get("LOCAL_SIGN_IDENTITY") or "-")
         if mode == "install":
             running = subprocess.run(["pgrep", "-x", "MeetingNotes"], stdout=subprocess.DEVNULL).returncode == 0
             require(not running, "Finish recording/transcription and quit Meeting Notes before installing.")
