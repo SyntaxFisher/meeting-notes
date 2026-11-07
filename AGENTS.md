@@ -2,9 +2,9 @@
 
 - This is a native Swift macOS menu-bar app. Keep the Makefile; Swift Package Manager builds the bundled transcription helper (whisper.cpp XCFramework for speech recognition and VAD, FluidAudio for diarization). Models download on first use with checksum verification.
 - For live end-to-end checks, use the local Teams test environment in `scripts/devenv` (see `docs/development.md`): a dummy Teams account, virtual audio devices and synthetic speech.
-- Never overwrite a completed recording. Requested transcript corrections update the transcript directly, without retaining an original copy or edit history. Retention removes the oldest recordings above 10 GB, keeping the newest and protecting pending work. Transcripts and their records are never automatically deleted.
+- Never overwrite a completed recording. Requested transcript corrections update the transcript directly, without retaining an original copy or edit history. Audio retention uses the configured limit, preserving the newest recording and unfinished or failed work. Retention never removes transcripts or their records.
 - Run `make lint` before any commit.
-- For signed DMG preparation/publication, use `.agents/skills/release-meeting-notes/SKILL.md` and the README release workflow (`make release`, then `make publish`).
+- For signed DMG preparation/publication, use `.agents/skills/release-meeting-notes/SKILL.md` and `docs/releasing.md` (`make release`, then `make publish`).
 - Preserve bundle ID `com.jona.meeting-notes`, the Sparkle signing key, and the Apple signing team. Release credentials stay in local configuration/Keychain.
 - Release builds enable Sparkle; ad-hoc builds disable it. Updates must not interrupt recording, transcription, or permission setup.
 

@@ -18,7 +18,7 @@ Recording and transcription run on your Mac. Connected agents receive the transc
 - **Local transcription** with timestamps by OpenAI Whisper large-v3-turbo, in German, English and the other languages Whisper knows, also when a meeting switches between them. Everything your microphone recorded carries your name, the Teams participant list is saved with the meeting, and a remote voice gets a name when Teams listed only one other participant.
 - **Agent access** through a built-in MCP server. **Settings > Agents** connects Codex, Claude Code or pi with one click; `get_meeting` answers "my last meeting" in a single call.
 - **Nothing is lost silently.** A failed or interrupted recording stays visible until you retry or discard it, even after a crash. Discarded and deleted meetings go to the Trash.
-- **Optional extras** for people who want them: a Library window with search, playback from any timestamp and speaker renaming; a command-line tool; an event log, a `meetingnotes://` URL scheme and Shortcuts actions; every setting in the Settings window, stored in `~/.config/meeting-notes/config.json`.
+- **Optional extras** for people who want them: a Library window with search, playback from any timestamp and speaker renaming; a command-line tool; an event log, a `meetingnotes://` URL scheme and Shortcuts actions; a Settings window for recording, storage, agent preferences and updates.
 
 ## Requirements
 
@@ -44,7 +44,7 @@ Click the menu bar icon to see the recording control, the last three meetings wi
 
 **Mirror Teams mute** (on by default) leaves your microphone out of the recording while you are muted in Teams. Headphones avoid echo between the meeting playback and your microphone.
 
-In a Teams meeting, your microphone and the Teams audio are transcribed separately. Everything you said is labeled with your Teams display name once Meeting Notes has seen it (otherwise your macOS name; change it in **Settings > General**). Remote voices are labeled **Speaker 1**, **Speaker 2** and so on, told apart by sound; the transcript lists the participants Teams showed, so you or an agent can match them. Recordings without Teams audio label every voice anonymously.
+In a Teams meeting, your microphone and the Teams audio are transcribed separately. Everything you said is labeled with your Teams display name once Meeting Notes has seen it (otherwise your macOS name; change it in **Settings > General**). Remote voices are labeled **Speaker 1**, **Speaker 2** and so on, told apart by sound; the transcript lists the participants Teams showed, so you or an agent can match them. A silent Teams track does not change your microphone label. When separate capture tracks are unavailable, the mixed recording uses anonymous speaker labels.
 
 ## Use with coding agents
 

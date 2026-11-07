@@ -112,7 +112,7 @@ meeting-notes stop
 meeting-notes wait                        # the next transcript; or: wait <id>
 meeting-notes retry "2026-11-05 15.17"
 meeting-notes discard "2026-11-05 15.17"  # moves it to the Trash
-meeting-notes delete "2026-11-05 15.17"   # a finished meeting, to the Trash
+meeting-notes delete "2026-11-05 15.17"   # any meeting, cancelling active work and moving it to the Trash
 meeting-notes settings auto-record off local-name "Jona B."
 meeting-notes settings recordings-limit 20GB
 meeting-notes status --json
@@ -169,15 +169,15 @@ Each meeting has one record, `transcripts/<id>.json`, the single source of truth
 - `segments` and `speakers` describe the current transcript. `segments[].speaker` is a speaker label; `speakers[].name` is its assigned name. After a merge, the affected passages use the surviving label. `is_local_user` is identity metadata, not proof that every microphone voice belongs to one person.
 - Edits overwrite the `.txt` transcript and update the record. `revision` increases with each effective change. File names are relative to `audios/` and `transcripts/`.
 - Transcripts from older versions without a record are parsed from their text; naming a speaker creates the record.
-- Markdown is rendered on demand (`show`, `get_meeting`) from the current corrected text and speaker assignments. Search and passage `url` fields use the same view.
+- CLI `show` renders Markdown on demand from the current corrected text and speaker assignments. MCP `get_meeting` returns a compact text view with passage IDs and a meeting URL; both read the same saved transcript.
 
 ## Control socket
 
-The running app listens on `~/Library/Application Support/Meeting Notes/control.sock` (mode 0600, peer user checked). Each connection carries one JSON request line and gets one JSON response line with `ok`, `message`, `meeting_id` and the full `status`. Commands: `status`, `start`, `stop`, `retry`, `discard`, `delete`, `set_title`, `rename_speakers`, `set_settings`. They go through the same command layer as the panel, the URL scheme and Shortcuts, so every surface applies the same checks and reports the same reasons. Prefer the CLI or MCP; the socket may change between versions.
+The running app listens on `~/Library/Application Support/Meeting Notes/control.sock` (mode 0600, peer user checked). Each connection carries one JSON request line and gets one JSON response line with `ok`, `message`, `meeting_id` and the full `status`. Commands: `status`, `start`, `stop`, `retry`, `discard`, `delete`, `open_meeting`, `set_title`, `rename_speakers`, `set_settings`. They go through the same command layer as the panel, the URL scheme and Shortcuts, so every surface applies the same checks and reports the same reasons. Prefer the CLI or MCP; the socket may change between versions.
 
 ## Limits
 
-- Only the user can grant macOS permissions; agents see `missing_permissions` in `get_status` and must ask.
+- Recording requires macOS permissions. MCP `get_status` explains when starting is blocked; permission setup is available in the app.
 - Search matches keywords at word starts, ignoring case and accents. It is not semantic and does not translate.
 - Remote speaker labels are estimates per recording. Agents should name speakers only on clear evidence and say so.
 - The first time the CLI or MCP server reads `~/Documents/meeting-notes`, macOS may ask the app hosting the agent for access to the Documents folder.

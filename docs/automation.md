@@ -44,8 +44,8 @@ Everything here is optional; Meeting Notes works without any of it. For coding a
 | `localSpeakerName` | `null` | Label for everything the microphone records. `null` uses your Teams display name once seen, otherwise your macOS name. No colons. |
 | `retention.audioBytes` | `10000000000` | Budget of the `audios` folder; the oldest recordings above it are deleted. |
 
-- The app creates the file with the defaults on first launch. It is the only place settings live:
-  the Settings window, the panel and the command line (`settings`) read and write it. MCP's
+- The app creates the file with the defaults on first launch. Recording, storage and agent
+  preferences are shared by the Settings window, the panel and the command line (`settings`). MCP's
   `get_status` reports recording, pending work and actionable problems.
   A change from the Settings window is applied on top of the file as it is at that moment, so
   edits an agent made a second earlier are kept.
@@ -73,7 +73,7 @@ jq '.autoRecordTeamsMeetings = false' ~/.config/meeting-notes/config.json > /tmp
 ```
 
 Launch at login lives in **Settings > General** only: it is a macOS login item, not an app setting.
-UI-only state such as window positions stays in the app's defaults.
+Automatic-update preferences and UI-only state such as window positions stay in the app's defaults.
 
 ## Event log: events.jsonl
 
