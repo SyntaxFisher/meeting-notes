@@ -12,4 +12,4 @@
 
 - Squash-merge feature work locally into `main`, with focused commits describing the final changes.
 - Push only `main`; keep working branches local.
-- This repository is public. Review outgoing changes for credentials, private data and machine-specific artifacts before committing or publishing.
+- This repository is public. Keep public documentation general; private infrastructure and environment details must stay out of Git history. Review outgoing files and commits for credentials, private data and machine-specific artifacts before committing or publishing.
