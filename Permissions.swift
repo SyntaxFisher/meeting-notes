@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import CoreAudio
+import Darwin
 
 enum MeetingPermission: String {
   case microphone, accessibility, systemAudio, documents
@@ -55,13 +56,13 @@ struct PermissionRequired: Error {
 
 struct PermissionSnapshot: Equatable {
   var microphone: Bool
-  var systemAudioRequested: Bool
+  var systemAudio: Bool
   var accessibility: Bool
 
   var missing: [MeetingPermission] {
     var result: [MeetingPermission] = []
     if !microphone { result.append(.microphone) }
-    if !systemAudioRequested { result.append(.systemAudio) }
+    if !systemAudio { result.append(.systemAudio) }
     if !accessibility { result.append(.accessibility) }
     return result
   }
@@ -81,7 +82,7 @@ struct PermissionSnapshot: Equatable {
   static func read() -> Self {
     Self(
       microphone: AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-      systemAudioRequested: PermissionAccess.systemAudioWasRequested(),
+      systemAudio: SystemAudioAuthorization.current() == .authorized,
       accessibility: TeamsMuteReader.hasAccessibilityAccess)
   }
 }
@@ -102,21 +103,6 @@ struct CaptureRetryPolicy {
 enum PermissionAccess {
   static let systemAudioGuidance =
     "Allow Meeting Notes in System Settings > Privacy & Security > Screen & System Audio Recording, then set up System Audio Recording again."
-
-  private static let systemAudioSetupKey = "systemAudioSetupBuild"
-  private static var build: String {
-    Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "development"
-  }
-
-  // This records a completed setup request, not the current macOS authorization state.
-  static func systemAudioWasRequested(defaults: UserDefaults = .standard) -> Bool {
-    guard let setupBuild = defaults.string(forKey: systemAudioSetupKey) else { return false }
-    return !setupBuild.isEmpty
-  }
-
-  static func invalidateSystemAudioRequest(defaults: UserDefaults = .standard) {
-    defaults.removeObject(forKey: systemAudioSetupKey)
-  }
 
   static func deniedPermission(for error: Error) -> MeetingPermission? {
     if let required = error as? PermissionRequired { return required.permission }
@@ -154,11 +140,11 @@ enum PermissionAccess {
       default: openSettings(for: .microphone)
       }
     case .systemAudio:
-      if systemAudioDenied {
-        openSettings(for: .systemAudio)
-        return
+      switch SystemAudioAuthorization.current() {
+      case .authorized: break
+      case .notDetermined where !systemAudioDenied: try await requestSystemAudio()
+      default: openSettings(for: .systemAudio)
       }
-      try await requestSystemAudio()
     case .accessibility:
       guard !TeamsMuteReader.hasAccessibilityAccess else { return }
       TeamsMuteReader.requestAccess()
@@ -170,11 +156,10 @@ enum PermissionAccess {
 
   @MainActor
   private static func requestSystemAudio() async throws {
-    invalidateSystemAudioRequest()
     AppLog.event("permissions.systemAudioRequested")
-    try await SystemAudioCapture.requestAccess()
-    UserDefaults.standard.set(build, forKey: systemAudioSetupKey)
-    AppLog.event("permissions.systemAudioRequestFinished")
+    let granted = await SystemAudioAuthorization.request()
+    AppLog.event("permissions.systemAudioRequestFinished", granted ? "granted" : "denied")
+    guard granted else { throw PermissionRequired(permission: .systemAudio) }
   }
 
   @MainActor
@@ -187,7 +172,9 @@ enum PermissionAccess {
         }
         return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
       },
-      systemAudio: { try await requestSystemAudio() },
+      systemAudio: {
+        if SystemAudioAuthorization.current() != .authorized { try await requestSystemAudio() }
+      },
       accessibility: {
         if !TeamsMuteReader.hasAccessibilityAccess { TeamsMuteReader.requestAccess() }
       })
@@ -202,5 +189,51 @@ enum PermissionAccess {
     guard await microphone() else { throw PermissionRequired(permission: .microphone) }
     try await systemAudio()
     accessibility()
+  }
+}
+
+/// macOS's System Audio Recording decision for this app. macOS has no public API for it, so it
+/// is read from TCC. Where TCC's functions are unavailable, access counts as authorized and a
+/// denial surfaces as a capture failure instead.
+enum SystemAudioAuthorization: Equatable {
+  case authorized, denied, notDetermined
+
+  private static let service = "kTCCServiceAudioCapture" as CFString
+
+  /// Whether this macOS provides TCC's functions, so the status is macOS's actual decision.
+  static var isReadable: Bool { TCC.preflight != nil && TCC.request != nil }
+
+  static func current() -> Self {
+    guard let preflight = TCC.preflight else { return .authorized }
+    switch preflight(service, nil) {
+    case 0: return .authorized
+    case 1: return .denied
+    default: return .notDetermined
+    }
+  }
+
+  /// Asks macOS, which prompts while the user has not decided yet. Unlike starting a capture,
+  /// this prompts even when no app is playing audio.
+  static func request() async -> Bool {
+    guard let request = TCC.request else { return true }
+    return await withCheckedContinuation { continuation in
+      request(service, nil) { continuation.resume(returning: $0) }
+    }
+  }
+
+  private enum TCC {
+    typealias Preflight = @convention(c) (CFString, CFDictionary?) -> Int32
+    typealias Request =
+      @convention(c) (CFString, CFDictionary?, @escaping @convention(block) (Bool) -> Void) -> Void
+
+    nonisolated(unsafe) private static let handle = dlopen(
+      "/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC", RTLD_NOW)
+    static let preflight = symbol("TCCAccessPreflight", as: Preflight.self)
+    static let request = symbol("TCCAccessRequest", as: Request.self)
+
+    private static func symbol<T>(_ name: String, as type: T.Type) -> T? {
+      guard let handle, let pointer = dlsym(handle, name) else { return nil }
+      return unsafeBitCast(pointer, to: type)
+    }
   }
 }

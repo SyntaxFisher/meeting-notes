@@ -49,9 +49,9 @@ extension Smoke {
 
   private static func testPanelStatus() {
     let granted = PermissionSnapshot(
-      microphone: true, systemAudioRequested: true, accessibility: true)
+      microphone: true, systemAudio: true, accessibility: true)
     let missing = PermissionSnapshot(
-      microphone: true, systemAudioRequested: false, accessibility: false)
+      microphone: true, systemAudio: false, accessibility: false)
     let start = Date(timeIntervalSince1970: 1_000)
     let recording = MeetingRecord(
       id: "20261105T100000Z", title: "Weekly Sync", startedAt: start, status: .recording)

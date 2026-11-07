@@ -876,8 +876,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     case .microphone: permissions.microphone = false
     case .systemAudio:
       captureRetry.failed(with: error)
-      PermissionAccess.invalidateSystemAudioRequest()
-      permissions.systemAudioRequested = false
+      permissions.systemAudio = false
     case .accessibility: permissions.accessibility = false
     case .documents: libraryStore.open()
     }

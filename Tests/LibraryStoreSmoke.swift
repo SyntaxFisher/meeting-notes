@@ -34,7 +34,7 @@ extension Smoke {
       engine: engine, config: config, teams: TeamsMonitor(),
       context: CommandCenter.Context(
         permissions: {
-          PermissionSnapshot(microphone: true, systemAudioRequested: true, accessibility: true)
+          PermissionSnapshot(microphone: true, systemAudio: true, accessibility: true)
         },
         requestingPermissions: { false }, updateInstalling: { false }, refreshPermissions: {},
         meetings: { await store.current().meetings },
