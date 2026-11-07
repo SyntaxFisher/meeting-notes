@@ -60,6 +60,7 @@ struct Smoke {
     try AgentSmoke.run()
     try TranscriptEditsSmoke.run()
     try MeetingTitlesSmoke.run()
+    try MigrationSmoke.run()
     try AgentEditingSmoke.run()
     TranscriptScrollSmoke.run()
     try testPausedMeetingLinks()
@@ -334,48 +335,38 @@ struct Smoke {
     let transcripts = root.appendingPathComponent("transcripts")
     try manager.createDirectory(at: audios, withIntermediateDirectories: true)
     try manager.createDirectory(at: transcripts, withIntermediateDirectories: true)
-    let utc = TimeZone(secondsFromGMT: 0)!
-    let epoch = Date(timeIntervalSince1970: 0)
-    func stem() -> String {
-      MeetingFiles.stem(for: epoch, in: audios, transcriptDirectory: transcripts, timeZone: utc)
+    let epoch = Date(timeIntervalSince1970: 0.75)
+    func id() -> String {
+      MeetingFiles.id(startingAt: epoch, in: audios, transcriptDirectory: transcripts)
     }
-    precondition(stem() == "1970-01-01 00.00")
-    try Data().write(to: transcripts.appendingPathComponent("1970-01-01 00.00 Weekly Sync.txt"))
-    precondition(stem() == "1970-01-01 00.00-2")
+    precondition(id() == "19700101T000000Z")
+    try Data().write(to: transcripts.appendingPathComponent("19700101T000000Z.txt"))
+    precondition(id() == "19700101T000000Z-2")
     try manager.createDirectory(
-      at: audios.appendingPathComponent(".1970-01-01 00.00-2.recording"),
+      at: audios.appendingPathComponent(".19700101T000000Z-2.recording"),
       withIntermediateDirectories: true)
-    precondition(stem() == "1970-01-01 00.00-3")
+    precondition(id() == "19700101T000000Z-3")
 
-    precondition(
-      MeetingFiles.date(fromStem: "1970-01-01 00.00-2 Weekly Sync", timeZone: utc) == epoch)
-    precondition(MeetingFiles.date(fromStem: "19700101T000000Z-2") == epoch)
-    precondition(MeetingFiles.date(fromStem: "1970-01-01 00.00Weekly") == nil)
-    precondition(MeetingFiles.date(fromStem: "keep-me") == nil)
+    let start = Date(timeIntervalSince1970: 0)
+    precondition(MeetingFiles.date(fromID: "19700101T000000Z") == start)
+    precondition(MeetingFiles.date(fromID: "19700101T000000Z-2") == start)
+    precondition(MeetingFiles.date(fromID: "19700101T000000Z-0") == nil)
+    precondition(MeetingFiles.date(fromID: "19700101T000000Z Weekly") == nil)
+    precondition(MeetingFiles.date(fromID: "1970-01-01 00.00") == nil)
+    precondition(MeetingFiles.date(fromID: "keep-me") == nil)
 
-    precondition(MeetingFiles.titleComponent("  Sync 1:1 / Team  ") == "Sync 1-1 - Team")
-    precondition(MeetingFiles.titleComponent("A\nB") == "A-B")
-    precondition(MeetingFiles.titleComponent("..hidden") == "hidden")
-    precondition(MeetingFiles.titleComponent("   ") == nil)
-    precondition(MeetingFiles.titleComponent(String(repeating: "a", count: 200))?.count == 80)
     precondition(
       MeetingFiles.displayTitle("  Produkt-Sync:\n Export-Launch ") == "Produkt-Sync: Export-Launch"
     )
     precondition(MeetingFiles.displayTitle(" \n ") == nil)
     precondition(
-      MeetingFiles.fileStem(id: "2026-11-05 10.00", title: "Produkt-Sync: Export-Launch")
-        == "2026-11-05 10.00 Produkt-Sync- Export-Launch")
-    precondition(
-      MeetingFiles.fileStem(id: "1970-01-01 00.00", title: "Weekly Sync")
-        == "1970-01-01 00.00 Weekly Sync")
-    precondition(MeetingFiles.fileStem(id: "19700101T000000Z", title: nil) == "19700101T000000Z")
-    precondition(
-      MeetingFiles.id(fromFileName: "1970-01-01 00.00-2 Weekly Sync.summary.md")
-        == "1970-01-01 00.00-2")
-    precondition(MeetingFiles.id(fromFileName: "1970-01-01 00.00.json") == "1970-01-01 00.00")
+      MeetingFiles.id(fromFileName: "19700101T000000Z-2.summary.md") == "19700101T000000Z-2")
+    precondition(MeetingFiles.id(fromFileName: "19700101T000000Z.json") == "19700101T000000Z")
     precondition(MeetingFiles.id(fromFileName: "19700101T000000Z.m4a") == "19700101T000000Z")
-    precondition(
-      MeetingFiles.id(fromFileName: "1970-01-01 00.00 v1.2 review.txt") == "1970-01-01 00.00")
+    precondition(MeetingFiles.id(fromFileName: "19700101T000000Z") == nil)
+    precondition(MeetingFiles.id(fromFileName: "19700101T000000Z Weekly Sync.txt") == nil)
+    precondition(MeetingFiles.id(fromFileName: ".19700101T000000Z.recording") == nil)
+    precondition(MeetingFiles.id(fromFileName: "1970-01-01 00.00.json") == nil)
     precondition(MeetingFiles.id(fromFileName: "keep-me.m4a") == nil)
 
     let calendar = TeamsWindowSnapshot(title: "Calendar | Microsoft Teams", buttons: [["Chat"]])
@@ -391,7 +382,7 @@ struct Smoke {
     let retention = root.appendingPathComponent("retention")
     let retainedAudios = retention.appendingPathComponent("audios")
     try manager.createDirectory(at: retainedAudios, withIntermediateDirectories: true)
-    for name in ["20260928T073121Z", "2026-09-29 14.42 A", "2026-09-30 09.00 B"] {
+    for name in ["20260928T073121Z", "20260929T144200Z", "20260930T090000Z"] {
       try Data(repeating: 1, count: 20).write(
         to: retainedAudios.appendingPathComponent(name + ".m4a"))
     }
@@ -401,10 +392,10 @@ struct Smoke {
         atPath: retainedAudios.appendingPathComponent("20260928T073121Z.m4a").path))
     precondition(
       manager.fileExists(
-        atPath: retainedAudios.appendingPathComponent("2026-09-29 14.42 A.m4a").path))
+        atPath: retainedAudios.appendingPathComponent("20260929T144200Z.m4a").path))
     precondition(
       manager.fileExists(
-        atPath: retainedAudios.appendingPathComponent("2026-09-30 09.00 B.m4a").path))
+        atPath: retainedAudios.appendingPathComponent("20260930T090000Z.m4a").path))
   }
 
   private static func testTeamsDetection() {

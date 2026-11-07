@@ -22,7 +22,7 @@ enum MeetingTitlesSmoke {
   private static func record(_ title: String?, source: MeetingTitleSource = .teams) -> MeetingRecord
   {
     var record = MeetingRecord(
-      id: "2026-11-06 09.00", title: title, startedAt: Date(timeIntervalSince1970: 1_794_000_000),
+      id: "20261106T090000Z", title: title, startedAt: Date(timeIntervalSince1970: 1_794_000_000),
       status: .complete, source: .teams, titleSource: source)
     record.segments = [
       .init(start: 0, end: 10, speaker: "Speaker 1", text: "Wir besprechen den Release-Plan.")
@@ -75,7 +75,7 @@ enum MeetingTitlesSmoke {
       at: library.transcripts, withIntermediateDirectories: true)
     for (index, source) in [MeetingTitleSource.none, .teams, .agent, .user].enumerated() {
       var existing = record("Mittagspause", source: source)
-      existing.id = "2026-11-06 10.0\(index)"
+      existing.id = "20261106T100\(index)00Z"
       existing.transcriptFile = existing.id + ".txt"
       let transcript = library.transcripts.appendingPathComponent(existing.transcriptFile!)
       let original = Data(MeetingLibrary.transcriptText(existing).utf8)

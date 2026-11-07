@@ -39,10 +39,11 @@ enum AgentSmoke {
     let manager = FileManager.default
     try manager.createDirectory(at: library.transcripts, withIntermediateDirectories: true)
     try manager.createDirectory(at: library.audios, withIntermediateDirectories: true)
-    let legacy = "2026-11-03 17.39"
     try legacyText.write(
-      to: MeetingFiles.transcript(for: legacy + " Weekly Sync", in: library.transcripts),
+      to: library.transcripts.appendingPathComponent("2026-11-03 17.39 Weekly Sync.txt"),
       atomically: true, encoding: .utf8)
+    let migration = try MeetingFilesMigration.run(root: library.root, timeZone: library.timeZone)
+    let legacy = migration.migrated["2026-11-03 17.39"]!
     try "ignored".write(
       to: library.transcripts.appendingPathComponent("notes.txt"), atomically: true,
       encoding: .utf8)
@@ -60,7 +61,7 @@ enum AgentSmoke {
     (components.hour, components.minute) = (17, 39)
     precondition(parsed.startedAt == components.date!)
 
-    let fresh = "2026-11-05 15.17"
+    let fresh = "20261105T151700Z"
     let segments = [
       MeetingSegment(
         start: 1.5, end: 4.25, speaker: "Jona", text: "Let's start with the café menu."),
@@ -76,7 +77,7 @@ enum AgentSmoke {
       MeetingSpeaker(label: "Jona", isLocalUser: true, identity: .localUser, source: .microphone),
       MeetingSpeaker(label: "Speaker 1", source: .teams),
     ]
-    record.transcriptFile = "2026-11-05 15.17 Design Review.txt"
+    record.transcriptFile = "20261105T151700Z.txt"
     try library.save(record)
     try MeetingLibrary.transcriptText(record).write(
       to: library.transcripts.appendingPathComponent(record.transcriptFile!), atomically: true,
@@ -94,18 +95,17 @@ enum AgentSmoke {
     loaded.updatedAt = nil
     precondition(loaded == record)
 
-    let pending = "2026-11-05 16.00"
+    let pending = "20261105T160000Z"
     try library.save(
       MeetingRecord(
         id: pending, startedAt: Date(timeIntervalSince1970: 1_793_890_800), status: .transcribing))
 
     precondition(library.meetings().map(\.id) == [pending, fresh, legacy])
     try expect(try library.resolve("latest") == fresh)
-    try expect(try library.resolve("2026-11-03") == legacy)
+    try expect(try library.resolve(String(legacy.prefix(8))) == legacy)
     try expect(try library.resolve("design") == fresh)
-    try expect(try library.resolve("2026-11-05 15.17 Design Review") == fresh)
     do {
-      _ = try library.resolve("2026-11-05")
+      _ = try library.resolve("20261105")
       preconditionFailure("Ambiguous prefixes must not resolve")
     } catch {
       precondition(error.localizedDescription.contains("matches 2 meetings"))
@@ -115,7 +115,7 @@ enum AgentSmoke {
     let summary = library.summary(of: try library.load(fresh))
     precondition(summary.segmentCount == 2 && summary.wordCount == 10)
     precondition(summary.recordPath != nil && summary.audioPath == nil)
-    precondition(summary.transcriptPath?.hasSuffix("Design Review.txt") == true)
+    precondition(summary.transcriptPath?.hasSuffix("/20261105T151700Z.txt") == true)
 
     let renamed = try library.renameSpeakers(fresh, names: ["1": "Ada"])
     precondition(renamed.speakers.map(\.name) == [nil, "Ada"])
@@ -145,10 +145,10 @@ enum AgentSmoke {
 
     let markdown = library.markdown(try library.load(fresh))
     for line in [
-      "---", "id: \"2026-11-05 15.17\"", "title: \"Design Review\"", "status: complete",
+      "---", "id: \"20261105T151700Z\"", "title: \"Design Review\"", "status: complete",
       "  - label: \"Speaker 1\"", "    name: \"Ada\"", "    local_user: true", "# Design Review",
-      "url: \"https://meeting-notes.jonabihl.dev/meeting/2026-11-05%2015.17\"",
-      "[00:00:04](https://meeting-notes.jonabihl.dev/meeting/2026-11-05%2015.17?t=4.2) **Ada:** The budget is fine.",
+      "url: \"https://meeting-notes.jonabihl.dev/meeting/20261105T151700Z\"",
+      "[00:00:04](https://meeting-notes.jonabihl.dev/meeting/20261105T151700Z?t=4.2) **Ada:** The budget is fine.",
     ] {
       precondition(markdown.contains(line), "Missing \(line) in markdown")
     }
@@ -165,7 +165,7 @@ enum AgentSmoke {
 
   static func testSearch(_ library: MeetingLibrary) throws {
     let hits = library.search("BUDGET")
-    precondition(hits.map(\.meetingId) == ["2026-11-05 15.17", "2026-11-03 17.39"])
+    precondition(hits.map(\.meetingId) == ["20261105T151700Z", "20261103T163900Z"])
     precondition(hits[1].timestamp == "00:01:05" && hits[1].start == 65)
     precondition(library.search("cafe menu").first?.speaker == "Jona")
     precondition(library.search("uber aufnahmefunktion").first?.speaker == "Grace")
@@ -174,13 +174,13 @@ enum AgentSmoke {
     precondition(library.search("ursday").isEmpty, "Terms match at word starts only")
     precondition(library.search("budget nonexistent").isEmpty)
     precondition(library.search("budget", limit: 1).count == 1)
-    precondition(library.search("budget", meeting: "2026-11-03 17.39").count == 1)
+    precondition(library.search("budget", meeting: "20261103T163900Z").count == 1)
     let since = try DateFilter.parse("2026-11-04")
     precondition(library.search("budget", since: since).count == 1)
-    precondition(library.list(query: "grace aufnahmefunktion").map(\.id) == ["2026-11-03 17.39"])
+    precondition(library.list(query: "grace aufnahmefunktion").map(\.id) == ["20261103T163900Z"])
     precondition(library.list(limit: 1).count == 1)
-    precondition(library.list(until: since).map(\.id) == ["2026-11-03 17.39"])
-    precondition(library.list(status: [.transcribing]).map(\.id) == ["2026-11-05 16.00"])
+    precondition(library.list(until: since).map(\.id) == ["20261103T163900Z"])
+    precondition(library.list(status: [.transcribing]).map(\.id) == ["20261105T160000Z"])
     let long =
       String(repeating: "word ", count: 100) + "needle " + String(repeating: "tail ", count: 100)
     let snippet = MeetingLibrary.snippet(long, around: "needle")
@@ -204,7 +204,7 @@ enum AgentSmoke {
     let server = ControlServer(socket: socket) { request in
       ControlResponse(
         ok: request.command == "start", message: request.arguments["title"]?.stringValue,
-        meetingId: request.command == "start" ? "2026-11-05 15.17 Test" : nil)
+        meetingId: request.command == "start" ? "20261105T151700Z" : nil)
     }
     try server.start()
     defer { server.stop() }
@@ -214,7 +214,7 @@ enum AgentSmoke {
     let response = try ControlClient.send(
       ControlRequest(command: "start", arguments: ["title": "Weekly Sync"]), socket: socket)
     precondition(response.ok && response.message == "Weekly Sync")
-    precondition(response.meetingId == "2026-11-05 15.17 Test")
+    precondition(response.meetingId == "20261105T151700Z")
     try expect(try !ControlClient.send(ControlRequest(command: "nope"), socket: socket).ok)
     precondition(ControlClient.isServing(socket: socket))
     expectError { try ControlServer(socket: socket) { _ in .failure("second") }.start() }
@@ -233,15 +233,15 @@ enum AgentSmoke {
     bridge.configFile = root.appendingPathComponent("config.json")
     guard case .ready(let ready) = try bridge.waitForTranscript(meetingId: "design", timeout: 1)
     else { preconditionFailure("A complete meeting is ready at once") }
-    precondition(ready.id == "2026-11-05 15.17")
-    var failed = MeetingRecord(id: "2026-11-05 17.00", startedAt: Date(), status: .failed)
+    precondition(ready.id == "20261105T151700Z")
+    var failed = MeetingRecord(id: "20261105T170000Z", startedAt: Date(), status: .failed)
     failed.error = "Disk full"
     try library.save(failed)
     expectError(
-      { _ = try bridge.waitForTranscript(meetingId: "2026-11-05 17.00", timeout: 1) },
+      { _ = try bridge.waitForTranscript(meetingId: "20261105T170000Z", timeout: 1) },
       message: { $0.contains("needs attention: Disk full") })
     expectError(
-      { _ = try bridge.waitForTranscript(meetingId: "2026-11-05 16.00", timeout: 1) },
+      { _ = try bridge.waitForTranscript(meetingId: "20261105T160000Z", timeout: 1) },
       message: { $0.contains("not running") })
     expectError(
       { _ = try bridge.waitForTranscript(meetingId: nil, timeout: 1) },
@@ -250,18 +250,18 @@ enum AgentSmoke {
       { _ = try bridge.waitForTranscript(meetingId: "1999", timeout: 1) },
       message: { $0.contains("No meeting matches") })
     let offline = bridge.status()
-    precondition(!offline.running && offline.attention.map(\.meetingId) == ["2026-11-05 17.00"])
-    precondition(offline.queue.map(\.meetingId) == ["2026-11-05 16.00"])
+    precondition(!offline.running && offline.attention.map(\.meetingId) == ["20261105T170000Z"])
+    precondition(offline.queue.map(\.meetingId) == ["20261105T160000Z"])
     precondition(offline.attention[0].canRetry == false)
     let summary = StatusSnapshot.offline(library: library, configFile: bridge.configFile).summary
     precondition(summary.contains("1 meeting needs attention"), summary)
-    try FileManager.default.removeItem(at: library.recordURL(for: "2026-11-05 17.00"))
+    try FileManager.default.removeItem(at: library.recordURL(for: "20261105T170000Z"))
   }
 
   static func testCommandLine() throws {
     let arguments = try CommandLineInterface.Arguments(
-      ["2026-11-05 15.17", "--since", "7d", "--json", "--format=text", "--", "--title"])
-    precondition(arguments.positional == ["2026-11-05 15.17", "--title"])
+      ["20261105T151700Z", "--since", "7d", "--json", "--format=text", "--", "--title"])
+    precondition(arguments.positional == ["20261105T151700Z", "--title"])
     precondition(arguments.options == ["since": "7d", "format": "text"])
     precondition(arguments.flags == ["json"])
     expectError { _ = try CommandLineInterface.Arguments(["--limit"]) }
@@ -398,7 +398,7 @@ enum AgentSmoke {
     let pending = call("tools/call", ["name": "get_meeting", "arguments": [:]])
     guard case .array(let content) = pending["result"]?["content"] else { preconditionFailure() }
     let text = content.first?["text"]?.stringValue ?? ""
-    precondition(text.contains("2026-11-05 16.00") && text.contains("not ready"), text)
+    precondition(text.contains("20261105T160000Z") && text.contains("not ready"), text)
     precondition(!text.contains("The budget is fine"), "Must never substitute an older transcript")
     precondition(pending["result"]?["structuredContent"] == nil)
   }

@@ -297,9 +297,6 @@ def claimed_identities(transcript_path, truth):
     claims = {}
     path = Path(transcript_path)
     sidecar = path.with_suffix(".json")
-    match = re.match(r"^(\d{4}-\d{2}-\d{2} \d{2}\.\d{2}(?:-\d+)?)", path.stem)
-    if not sidecar.exists() and match:
-        sidecar = path.parent / f"{match[1]}.json"
     local = next((key for key, speaker in truth["speakers"].items()
                   if speaker.get("via") == "mic"), None)
     if sidecar.exists():

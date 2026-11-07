@@ -12,7 +12,7 @@ extension Smoke {
     library.trash = { _ in }
     try library.save(
       MeetingRecord(
-        id: "2026-11-05 11.00", title: "Crashed", startedAt: Date(timeIntervalSince1970: 1_000),
+        id: "20261105T110000Z", title: "Crashed", startedAt: Date(timeIntervalSince1970: 1_000),
         status: .recording))
     let prompt = DispatchSemaphore(value: 0)
     let store = LibraryStore(root: meetings, retryInterval: .milliseconds(20)) { root in
@@ -60,7 +60,7 @@ extension Smoke {
       case .success = await commands.perform(
         .updateSettings(SettingsChange(mirrorTeamsMute: false)), source: .socket)
     else { preconditionFailure("Settings do not need the meetings folder") }
-    let link = MeetingLink(meetingID: "2026-11-05 11.00")
+    let link = MeetingLink(meetingID: "20261105T110000Z")
     var navigationFinished = false
     let navigation = Task {
       let response = await commands.handle(
@@ -83,8 +83,8 @@ extension Smoke {
     let navigated = await navigation.value
     precondition(navigated.ok && navigationFinished && openedLinks == [link])
     precondition(ready == 1)
-    precondition(store.snapshot.meetings.map(\.id) == ["2026-11-05 11.00"])
-    let recovered = try library.load("2026-11-05 11.00")
+    precondition(store.snapshot.meetings.map(\.id) == ["20261105T110000Z"])
+    let recovered = try library.load("20261105T110000Z")
     precondition(recovered.status == .interrupted)
     precondition(commands.startBlockedReason == nil)
 

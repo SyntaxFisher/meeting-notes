@@ -80,13 +80,13 @@ Automatic-update preferences and UI-only state such as window positions stay in 
 One JSON object per line, appended as things happen:
 
 ```json
-{"details":{"audioPath":"/Users/example/Documents/meeting-notes/audios/2026-11-05 16.02 Weekly Sync.m4a","automatic":true,"durationSeconds":74.2,"endedAt":"2026-11-05T16:03:21.410+01:00","id":"2026-11-05 16.02","speakers":["Speaker 1","Speaker 2"],"startedAt":"2026-11-05T16:02:07.180+01:00","stem":"2026-11-05 16.02 Weekly Sync","title":"Weekly Sync","transcriptPath":"/Users/example/Documents/meeting-notes/transcripts/2026-11-05 16.02 Weekly Sync.txt"},"event":"transcript.ready","meeting":"2026-11-05 16.02","time":"2026-11-05T16:03:40.022+01:00"}
+{"details":{"audioPath":"/Users/example/Documents/meeting-notes/audios/20261105T150207Z.m4a","automatic":true,"durationSeconds":74.2,"endedAt":"2026-11-05T16:03:21.410+01:00","id":"20261105T150207Z","speakers":["Speaker 1","Speaker 2"],"startedAt":"2026-11-05T16:02:07.180+01:00","title":"Weekly Sync","transcriptPath":"/Users/example/Documents/meeting-notes/transcripts/20261105T150207Z.txt"},"event":"transcript.ready","meeting":"20261105T150207Z","time":"2026-11-05T16:03:40.022+01:00"}
 ```
 
 - `time`: local ISO 8601 timestamp. `event`: name below. `meeting`: the meeting id, or `null`.
-- The **meeting id** is the start-time stem (`2026-11-05 16.02`, with `-2` for a second recording
-  in the same minute). It stays the same when the Teams title is appended to the file names, and
-  every file of the meeting starts with it.
+- The **meeting id** is the UTC start time (`20261105T150207Z`, with `-2` for a second recording
+  in the same second). It never changes, and every file of the meeting is named
+  `<id>.<extension>`.
 - When the file passes 1 MB it moves to `events.previous.jsonl` (replacing the previous one).
 
 | Event | When | Extra details |
@@ -108,7 +108,7 @@ One JSON object per line, appended as things happen:
 | `agent.connected`, `agent.connectFailed` | Settings > Agents registered the MCP server | `agent`, `command` |
 | `agent.removed`, `agent.removeFailed` | Settings > Agents removed the MCP server | `agent`, `command` |
 
-Meeting events carry the meeting in `details`: `id`, `stem`, `title`, `status`, `startedAt`,
+Meeting events carry the meeting in `details`: `id`, `title`, `status`, `startedAt`,
 `endedAt`, `durationSeconds`, `audioPath`, `transcriptPath`, `recordPath`, `speakers` (display
 names), `localSpeaker`, `participants` (Teams), `automatic` and `error`; unknown values are `null`.
 The meeting record (`recordPath`) has everything else, including the segments.
@@ -137,7 +137,7 @@ open meetingnotes://stop
 | `meetingnotes://meeting/<meeting id>[?p=<passage> or ?t=<seconds>]` | Existing native meeting links remain supported |
 
 Meeting links are what the [MCP server and the command line](mcp-and-cli.md#navigation-and-source-links) return for
-citing a passage, for example `https://meeting-notes.jonabihl.dev/meeting/2026-11-05%2015.17?t=754.3`. The meeting id
+citing a passage, for example `https://meeting-notes.jonabihl.dev/meeting/20261105T141700Z?t=754.3`. The meeting id
 is percent-encoded and must match exactly; `t` is seconds from the start of the recording, with
 up to one decimal. The passage is the last segment starting at or before `t`, and playback
 stays paused. Use `?p=s42` instead to address a passage ID exactly, including overlapping speech. A link without `t` or `p` just opens the meeting. A meeting that does not exist,

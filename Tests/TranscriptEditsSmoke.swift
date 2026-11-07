@@ -15,7 +15,7 @@ enum TranscriptEditsSmoke {
     )
   }
 
-  static let meetingID = "2026-11-06 09.00"
+  static let meetingID = "20261106T090000Z"
 
   static func writeFixture(root: URL, text: String) throws {
     do {

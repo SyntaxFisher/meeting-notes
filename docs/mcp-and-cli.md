@@ -65,11 +65,11 @@ Provide the meeting URL by default. Call `open_meeting` only when the user expli
 Each meeting supplies its `url` once. Passages have stable short IDs (`s1`, `s2`, …) and timestamps. Cite a passage by appending `?p=<passage ID>` to that URL:
 
 ```text
-url: https://meeting-notes.jonabihl.dev/meeting/2026-11-05%2015.17
+url: https://meeting-notes.jonabihl.dev/meeting/20261105T141700Z
 s42 00:12:34 Speaker 1: We ship on the 14th.
 ```
 
-Citation: `[00:12:34](https://meeting-notes.jonabihl.dev/meeting/2026-11-05%2015.17?p=s42)`.
+Citation: `[00:12:34](https://meeting-notes.jonabihl.dev/meeting/20261105T141700Z?p=s42)`.
 
 For meeting references, use the base meeting URL unchanged, without `?p=` or `?t=`. Passage links are for specific transcript evidence or an explicitly requested location.
 
@@ -92,7 +92,7 @@ Transcript pages contain up to 12,000 text characters and 100 passages. Whole pa
 Text edits, speaker changes and titles update the record and overwrite the transcript. No original copy, history or undo is retained. Passage IDs and timing remain fixed. Read before editing, use the exact ID and current revision, and review again after a conflict. Each edit is atomic; invalid or stale changes leave the meeting untouched. Merge only labels known to represent one person, specifying `name` when assigned names disagree.
 
 ```json
-{"meeting_id":"2026-11-05 15.17","revision":0,"changes":[{"segment_id":"s4","text":"We ship on the 14th."}]}
+{"meeting_id":"20261105T141700Z","revision":0,"changes":[{"segment_id":"s4","text":"We ship on the 14th."}]}
 ```
 
 Mutation replies provide the resulting revision and relevant changed title/speakers. Recording actions return a concise result and meeting ID. Errors provide actionable text rather than internal status dumps.
@@ -110,9 +110,9 @@ meeting-notes rename-speaker latest 2 "Grace"
 meeting-notes start --title "Design review"
 meeting-notes stop
 meeting-notes wait                        # the next transcript; or: wait <id>
-meeting-notes retry "2026-11-05 15.17"
-meeting-notes discard "2026-11-05 15.17"  # moves it to the Trash
-meeting-notes delete "2026-11-05 15.17"   # any meeting, cancelling active work and moving it to the Trash
+meeting-notes retry 20261105T141700Z
+meeting-notes discard 20261105T141700Z  # moves it to the Trash
+meeting-notes delete 20261105T141700Z   # any meeting, cancelling active work and moving it to the Trash
 meeting-notes settings auto-record off local-name "Jona B."
 meeting-notes settings recordings-limit 20GB
 meeting-notes status --json
@@ -124,8 +124,8 @@ Every command accepts `--json`. `list`, `show`, `search`, `rename-speaker`, `set
 
 ```sh
 meeting-notes show latest --json
-meeting-notes edit-text "2026-11-05 15.17" s4 "We ship on the 14th." --revision 0 --json
-meeting-notes merge-speakers "2026-11-05 15.17" "Speaker 1" "Speaker 2" --name Ada --revision 1 --json
+meeting-notes edit-text 20261105T141700Z s4 "We ship on the 14th." --revision 0 --json
+meeting-notes merge-speakers 20261105T141700Z "Speaker 1" "Speaker 2" --name Ada --revision 1 --json
 ```
 
 
@@ -133,7 +133,7 @@ meeting-notes merge-speakers "2026-11-05 15.17" "Speaker 1" "Speaker 2" --name A
 
 ## Meeting ids
 
-A meeting's id is the local start time at the beginning of its file names, for example `2026-11-05 15.17` (with `-2` for a second recording in the same minute). It is fixed when recording starts and never changes, also when its title changes. CLI reads accept the full file name, a unique prefix, a unique title fragment (`weekly`) or `latest` for the newest completed meeting. MCP `get_meeting` and `open_meeting` use the newest meeting regardless of status when the ID is omitted or `latest`; they never substitute an older completed meeting. MCP editing tools and CLI `edit-text` and `merge-speakers` require the exact id returned by a read, together with its revision.
+A meeting's id is its UTC start time, for example `20261105T141700Z` (with `-2` for a second recording in the same second), and every file of the meeting is named `<id>.<extension>`. It is fixed when recording starts and never changes, also when its title changes. CLI reads accept the id, a unique id prefix (`20261105`), a unique title fragment (`weekly`) or `latest` for the newest completed meeting. MCP `get_meeting` and `open_meeting` use the newest meeting regardless of status when the ID is omitted or `latest`; they never substitute an older completed meeting. MCP editing tools and CLI `edit-text` and `merge-speakers` require the exact id returned by a read, together with its revision.
 
 ## The meeting record
 
@@ -142,7 +142,7 @@ Each meeting has one record, `transcripts/<id>.json`, the single source of truth
 ```json
 {
   "schema_version": 1,
-  "id": "2026-11-05 15.17",
+  "id": "20261105T141700Z",
   "title": "Weekly Sync",
   "started_at": "2026-11-05T15:17:00+01:00",
   "ended_at": "2026-11-05T15:18:08+01:00",
@@ -151,8 +151,8 @@ Each meeting has one record, `transcripts/<id>.json`, the single source of truth
   "trigger": "automatic",
   "status": "complete",
   "revision": 0,
-  "audio_file": "2026-11-05 15.17 Weekly Sync.m4a",
-  "transcript_file": "2026-11-05 15.17 Weekly Sync.txt",
+  "audio_file": "20261105T141700Z.m4a",
+  "transcript_file": "20261105T141700Z.txt",
   "speakers": [
     { "label": "Jona Bihl", "is_local_user": true, "identity": "local-user", "source": "microphone", "participant": "Jona Bihl", "turns": 4, "seconds": 31.2 },
     { "label": "Speaker 1", "name": "Ada", "is_local_user": false, "identity": "unidentified", "source": "teams", "turns": 3, "seconds": 22.0 }
@@ -164,11 +164,11 @@ Each meeting has one record, `transcripts/<id>.json`, the single source of truth
 }
 ```
 
-- `status` is one of `recording`, `saving`, `queued`, `transcribing` (with `stage` and `progress`), `complete`, `failed` or `interrupted` (with `error` and `failed_at`); `untranscribed` marks leftover audio without a record. See the [lifecycle](usage.md#meeting-lifecycle).
+- `status` is one of `recording`, `saving`, `queued`, `transcribing` (with `stage` and `progress`), `complete`, `failed` or `interrupted` (with `error` and `failed_at`); `untranscribed` marks audio an older version saved but never transcribed. See the [lifecycle](usage.md#meeting-lifecycle).
 - `source` is fixed at recording start: `teams`, `device-audio`, `app:<bundleID>` or `microphone`. Automatic uses Teams during a detected Teams meeting, otherwise device audio; auto-record always uses Teams. `meeting-notes status` shows the active source. See [recording sources](usage.md#recording).
 - `segments` and `speakers` describe the current transcript. `segments[].speaker` is a speaker label; `speakers[].name` is its assigned name. After a merge, the affected passages use the surviving label. `is_local_user` is identity metadata, not proof that every microphone voice belongs to one person.
 - Edits overwrite the `.txt` transcript and update the record. `revision` increases with each effective change. File names are relative to `audios/` and `transcripts/`.
-- Transcripts from older versions without a record are parsed from their text; naming a speaker creates the record.
+- Transcripts from older versions get a record when their files are [renamed to the current scheme](usage.md#files-and-retention).
 - CLI `show` renders Markdown on demand from the current corrected text and speaker assignments. MCP `get_meeting` returns a compact text view with passage IDs and a meeting URL; both read the same saved transcript.
 
 ## Control socket

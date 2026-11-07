@@ -6,15 +6,15 @@ extension Smoke {
     func parse(_ string: String) -> MeetingLink? { MeetingLink(url: URL(string: string)!) }
 
     let base = MeetingLink.baseURL
-    let link = MeetingLink(meetingID: "2026-11-05 15.17", time: 754)
-    precondition(link.string == base + "2026-11-05%2015.17?t=754", link.string)
+    let link = MeetingLink(meetingID: "20261105T151700Z", time: 754)
+    precondition(link.string == base + "20261105T151700Z?t=754", link.string)
     precondition(parse(link.string) == link)
     precondition(URLCommand(url: link.url) == .meeting(link))
     precondition(URLCommand(url: link.url)?.isNavigation == true)
     precondition(URLCommand(url: URL(string: "meetingnotes://start")!)?.isNavigation == false)
 
     for id in [
-      "2026-11-05 15.17-2", "a?b#c&d=e%20f+g", "Größe 日本", "x;y,z:@!$'()*", " spaced ",
+      "20261105T151700Z-2", "a?b#c&d=e%20f+g", "Größe 日本", "x;y,z:@!$'()*", " spaced ",
     ] {
       let link = MeetingLink(meetingID: id, time: 12.5)
       precondition(parse(link.string) == link, "\(id) must survive a round trip")
@@ -26,12 +26,12 @@ extension Smoke {
       precondition(parse(native) == link, "Existing native links must keep their exact target")
     }
 
-    let plain = MeetingLink(meetingID: "2026-11-05 15.17")
-    precondition(plain.string == base + "2026-11-05%2015.17")
+    let plain = MeetingLink(meetingID: "20261105T151700Z")
+    precondition(plain.string == base + "20261105T151700Z")
     precondition(parse(plain.string) == plain)
-    precondition(parse("MeetingNotes://MEETING/2026-11-05%2015.17/") == plain)
-    precondition(parse("HTTPS://MEETING-NOTES.JONABIHL.DEV/meeting/2026-11-05%2015.17/") == plain)
-    precondition(parse("meetingnotes://meeting/2026-11-05%2015.17?t=") == plain)
+    precondition(parse("MeetingNotes://MEETING/20261105T151700Z/") == plain)
+    precondition(parse("HTTPS://MEETING-NOTES.JONABIHL.DEV/meeting/20261105T151700Z/") == plain)
+    precondition(parse("meetingnotes://meeting/20261105T151700Z?t=") == plain)
     precondition(parse(base + "x?t=12.25")?.time == 12.25)
     precondition(MeetingLink(meetingID: "x", time: 12.25).string == base + "x?t=12.2")
     for prefix in [base, "meetingnotes://meeting/"] {
@@ -87,7 +87,7 @@ extension Smoke {
     precondition(MeetingLink.segmentIndex(at: 5, in: []) == nil)
 
     var record = MeetingRecord(
-      id: "2026-11-05 15.17", startedAt: Date(timeIntervalSince1970: 0), status: .complete)
+      id: "20261105T151700Z", startedAt: Date(timeIntervalSince1970: 0), status: .complete)
     record.segments = segments
     record.durationSeconds = 61.4
     precondition(record.link == plain)
@@ -122,7 +122,7 @@ extension Smoke {
       let audio = try AVAudioFile(forWriting: file, settings: format.settings)
       try audio.write(from: buffer)
     }
-    var record = MeetingRecord(id: "2026-11-07 09.00", startedAt: Date(), status: .complete)
+    var record = MeetingRecord(id: "20261107T090000Z", startedAt: Date(), status: .complete)
     record.durationSeconds = 10
     record.segments = [
       .init(start: 0, end: 5, speaker: "Speaker 1", text: "First"),

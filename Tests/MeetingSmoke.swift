@@ -20,7 +20,7 @@ enum MeetingSmoke {
     try manager.createDirectory(at: library.transcripts, withIntermediateDirectories: true)
 
     try testScanning(library)
-    print("Meeting library: records, legacy transcripts, leftover audio and captures: OK")
+    print("Meeting library: records describe meetings; files belong by id: OK")
     let helper = try fakeHelper(in: root)
     try await testQueue(library, helper: helper, root: root, trash: trash)
     print("Queue: recovery after relaunch, serial order, failures, retry and discard: OK")
@@ -36,7 +36,7 @@ enum MeetingSmoke {
       "Retention by meeting id, with extra files, audio, protected meetings and its preview: OK")
   }
 
-  static func date(_ text: String) -> Date { MeetingFiles.date(fromStem: text)! }
+  static func date(_ text: String) -> Date { MeetingFiles.date(fromID: text)! }
 
   @discardableResult
   static func write(
@@ -47,7 +47,7 @@ enum MeetingSmoke {
     record.queuedAt = queuedAt
     record.error = error
     if audio {
-      let file = MeetingFiles.audio(for: record.fileStem, in: library.audios)
+      let file = MeetingFiles.audio(for: record.id, in: library.audios)
       try Data(repeating: 7, count: 64).write(to: file)
       record.audioFile = file.lastPathComponent
       record.durationSeconds = 120
@@ -58,45 +58,55 @@ enum MeetingSmoke {
 
   static func testScanning(_ library: MeetingLibrary) throws {
     let manager = FileManager.default
-    try "[00:00:01] Speaker 1: Legacy hello\n".write(
-      to: library.transcripts.appendingPathComponent("2026-10-01 09.00 Old Sync.txt"),
-      atomically: true, encoding: .utf8)
+    var complete = MeetingRecord(
+      id: "20261001T090000Z", title: "Old Sync", startedAt: date("20261001T090000Z"),
+      status: .complete)
+    complete.transcriptFile = "20261001T090000Z.txt"
+    complete.segments = [MeetingSegment(start: 1, end: 2, speaker: "Speaker 1", text: "Hello")]
+    try library.save(complete)
+    for name in ["20261001T090000Z.txt", "20261001T090000Z.summary.md", "20261001T090000Z-2.txt"] {
+      try "[00:00:01] Speaker 1: Hello\n".write(
+        to: library.transcripts.appendingPathComponent(name), atomically: true, encoding: .utf8)
+    }
     try Data(repeating: 1, count: 16).write(
-      to: library.audios.appendingPathComponent("2026-10-02 09.00 Orphan.m4a"))
+      to: library.audios.appendingPathComponent("20261002T090000Z.m4a"))
     try manager.createDirectory(
-      at: library.captureURL(for: "2026-10-03 09.00"), withIntermediateDirectories: true)
+      at: library.captureURL(for: "20261003T090000Z"), withIntermediateDirectories: true)
     try #"{"title":"not ours"}"#.write(
-      to: library.transcripts.appendingPathComponent("2026-10-04 09.00.json"), atomically: true,
+      to: library.transcripts.appendingPathComponent("20261004T090000Z.json"), atomically: true,
       encoding: .utf8)
     try #"{"speakers":[]}"#.write(
-      to: library.transcripts.appendingPathComponent("2026-10-01 09.00 Old Sync.json"),
+      to: library.transcripts.appendingPathComponent("20261001T090000Z.speakers.json"),
       atomically: true, encoding: .utf8)
     let all = library.meetings()
-    let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
-    precondition(byID["2026-10-01 09.00"]?.status == .complete)
-    precondition(byID["2026-10-01 09.00"]?.title == "Old Sync")
-    precondition(byID["2026-10-02 09.00"]?.status == .untranscribed)
-    precondition(byID["2026-10-02 09.00"]?.audioFile == "2026-10-02 09.00 Orphan.m4a")
-    precondition(byID["2026-10-03 09.00"]?.status == .interrupted)
-    precondition(byID["2026-10-04 09.00"] == nil, "Foreign JSON is not a meeting")
-    precondition(library.needingAttention().map(\.id) == ["2026-10-02 09.00", "2026-10-03 09.00"])
-    precondition(library.work(for: byID["2026-10-02 09.00"]!).canRetry)
-    precondition(!library.work(for: byID["2026-10-03 09.00"]!).canRetry)
+    precondition(all.map(\.id) == ["20261001T090000Z"], "Only records describe meetings")
+    precondition(all[0].title == "Old Sync" && all[0].status == .complete)
     do {
-      try library.save(MeetingRecord(id: "2026-10-04 09.00", startedAt: Date(), status: .failed))
+      try library.save(MeetingRecord(id: "20261004T090000Z", startedAt: Date(), status: .failed))
       preconditionFailure("A foreign file must not be replaced")
     } catch {}
-    try manager.removeItem(at: library.transcripts.appendingPathComponent("2026-10-04 09.00.json"))
-    let encoded = try JSONCoding.encoder().encode(byID["2026-10-01 09.00"]!)
+    try manager.removeItem(at: library.transcripts.appendingPathComponent("20261004T090000Z.json"))
+    let encoded = try JSONCoding.encoder().encode(all[0])
     let decoded = try JSONCoding.decoder().decode(MeetingRecord.self, from: encoded)
-    precondition(decoded == byID["2026-10-01 09.00"])
+    precondition(decoded == all[0])
     var future = String(decoding: encoded, as: UTF8.self)
     future = future.replacingOccurrences(of: "\"schema_version\":1", with: "\"schema_version\":2")
     precondition(
       (try? JSONCoding.decoder().decode(MeetingRecord.self, from: Data(future.utf8))) == nil)
     precondition(
-      Set(library.files(of: "2026-10-01 09.00").map(\.lastPathComponent))
-        == ["2026-10-01 09.00 Old Sync.txt", "2026-10-01 09.00 Old Sync.json"])
+      Set(library.files(of: "20261001T090000Z").map(\.lastPathComponent))
+        == [
+          "20261001T090000Z.json", "20261001T090000Z.txt", "20261001T090000Z.summary.md",
+          "20261001T090000Z.speakers.json",
+        ])
+    for name in [
+      "20261001T090000Z.json", "20261001T090000Z.txt", "20261001T090000Z.summary.md",
+      "20261001T090000Z.speakers.json", "20261001T090000Z-2.txt",
+    ] {
+      try manager.removeItem(at: library.transcripts.appendingPathComponent(name))
+    }
+    try manager.removeItem(at: library.audios.appendingPathComponent("20261002T090000Z.m4a"))
+    try manager.removeItem(at: library.captureURL(for: "20261003T090000Z"))
   }
 
   /// A stand-in for MeetingTranscriber: reports one stage, then writes two segments, or fails
@@ -136,16 +146,16 @@ enum MeetingSmoke {
   static func testQueue(_ library: MeetingLibrary, helper: URL, root: URL, trash: URL) async throws
   {
     let manager = FileManager.default
-    let t0 = date("2026-11-05 08.00")
-    try write(library, "2026-11-05 09.00", .transcribing, title: "First", audio: true, queuedAt: t0)
+    let t0 = date("20261105T080000Z")
+    try write(library, "20261105T090000Z", .transcribing, title: "First", audio: true, queuedAt: t0)
     try write(
-      library, "2026-11-05 10.00", .queued, title: "Second", audio: true,
+      library, "20261105T100000Z", .queued, title: "Second", audio: true,
       queuedAt: t0.addingTimeInterval(60))
-    try write(library, "2026-11-05 11.00", .recording, title: "Crashed")
+    try write(library, "20261105T110000Z", .recording, title: "Crashed")
     try manager.createDirectory(
-      at: library.captureURL(for: "2026-11-05 11.00"), withIntermediateDirectories: true)
-    try write(library, "2026-11-05 12.00", .saving, audio: true)
-    try write(library, "2026-11-05 13.00", .failed, error: "Saving failed")
+      at: library.captureURL(for: "20261105T110000Z"), withIntermediateDirectories: true)
+    try write(library, "20261105T120000Z", .saving, audio: true)
+    try write(library, "20261105T130000Z", .failed, error: "Saving failed")
 
     var events: [(LifecycleEvent, String)] = []
     let engine = MeetingEngine(library: library, teams: TeamsMonitor())
@@ -154,35 +164,35 @@ enum MeetingSmoke {
     engine.onEvent = { event, record, _ in events.append((event, record.id)) }
     engine.recover(library.recoverable(library.meetings()))
     let recovered = Dictionary(uniqueKeysWithValues: library.meetings().map { ($0.id, $0.status) })
-    precondition(recovered["2026-11-05 11.00"] == .interrupted)
-    precondition(recovered["2026-11-05 13.00"] == .failed)
+    precondition(recovered["20261105T110000Z"] == .interrupted)
+    precondition(recovered["20261105T130000Z"] == .failed)
     precondition(engine.isBusy)
-    precondition(engine.protectedIDs.isSuperset(of: ["2026-11-05 10.00", "2026-11-05 13.00"]))
+    precondition(engine.protectedIDs.isSuperset(of: ["20261105T100000Z", "20261105T130000Z"]))
     await waitUntil { engine.queue.isEmpty }
     let order = try String(contentsOf: root.appendingPathComponent("order.log"), encoding: .utf8)
     precondition(
-      order == "2026-11-05 09.00 First.m4a\n2026-11-05 10.00 Second.m4a\n2026-11-05 12.00.m4a\n",
+      order == "20261105T090000Z.m4a\n20261105T100000Z.m4a\n20261105T120000Z.m4a\n",
       "Unexpected order: \(order)")
-    let first = try library.load("2026-11-05 09.00")
+    let first = try library.load("20261105T090000Z")
     precondition(first.status == .complete && first.segments.count == 2)
     precondition(first.speakers.map(\.label) == ["Speaker 1", "Speaker 2"])
     precondition(first.stage == nil && first.queuedAt == nil)
     let text = try String(contentsOf: library.transcriptURL(of: first)!, encoding: .utf8)
-    precondition(text.contains("[00:00:00] Speaker 1: Hello from 2026-11-05 09.00 First.m4a"))
-    precondition(first.transcriptFile == "2026-11-05 09.00 First.txt")
+    precondition(text.contains("[00:00:00] Speaker 1: Hello from 20261105T090000Z.m4a"))
+    precondition(first.transcriptFile == "20261105T090000Z.txt")
     precondition(
       events.filter { $0.0 == .transcriptReady }.map(\.1)
-        == ["2026-11-05 09.00", "2026-11-05 10.00", "2026-11-05 12.00"])
-    precondition(events.contains { $0 == (.recordingInterrupted, "2026-11-05 11.00") })
+        == ["20261105T090000Z", "20261105T100000Z", "20261105T120000Z"])
+    precondition(events.contains { $0 == (.recordingInterrupted, "20261105T110000Z") })
 
     // Two failures at once, each retried and discarded on its own.
     try Data().write(to: root.appendingPathComponent("fail"))
-    try write(library, "2026-11-05 14.00", .failed, title: "Alpha", audio: true, error: "Old")
-    try write(library, "2026-11-05 15.00", .failed, title: "Beta", audio: true, error: "Old")
-    try engine.retry("2026-11-05 14.00")
-    try engine.retry("2026-11-05 15.00")
+    try write(library, "20261105T140000Z", .failed, title: "Alpha", audio: true, error: "Old")
+    try write(library, "20261105T150000Z", .failed, title: "Beta", audio: true, error: "Old")
+    try engine.retry("20261105T140000Z")
+    try engine.retry("20261105T150000Z")
     await waitUntil { engine.queue.isEmpty }
-    for id in ["2026-11-05 14.00", "2026-11-05 15.00"] {
+    for id in ["20261105T140000Z", "20261105T150000Z"] {
       let failed = try library.load(id)
       precondition(failed.status == .failed && failed.error == "Fake engine failure")
       precondition(failed.failedAt != nil && library.work(for: failed).canRetry)
@@ -207,7 +217,7 @@ enum MeetingSmoke {
       }
       return error.message
     }
-    let meetingLink = MeetingLink(meetingID: "2026-11-05 09.00")
+    let meetingLink = MeetingLink(meetingID: "20261105T090000Z")
     let opened = await commands.handle(
       ControlRequest(command: "open_meeting", arguments: ["url": .string(meetingLink.string)]))
     precondition(opened.ok && opened.meetingId == meetingLink.meetingID)
@@ -227,9 +237,9 @@ enum MeetingSmoke {
     precondition(discardAmbiguous.contains("pass the id"))
     let stop = await refusal(.stop)
     precondition(stop == "Nothing is recording.")
-    let discardComplete = await refusal(.discard(id: "2026-11-05 09.00"))
+    let discardComplete = await refusal(.discard(id: "20261105T090000Z"))
     precondition(discardComplete.contains("Delete the meeting"))
-    let retryComplete = await refusal(.retry(id: "2026-11-05 09.00"))
+    let retryComplete = await refusal(.retry(id: "20261105T090000Z"))
     precondition(retryComplete.contains("only failed"))
     permissions.accessibility = false
     precondition(commands.startBlockedReason == nil)
@@ -262,56 +272,62 @@ enum MeetingSmoke {
     try manager.removeItem(at: root.appendingPathComponent("fail"))
     let external = MeetingLibrary(root: library.root)
     try external.updateMeeting(
-      "2026-11-05 14.00", title: .some("Alpha reviewed"), expectedRevision: 0)
+      "20261105T140000Z", title: .some("Alpha reviewed"), expectedRevision: 0)
     guard
       case .success(let retried) = await commands.perform(
-        .retry(id: "2026-11-05 14.00"), source: .panel)
+        .retry(id: "20261105T140000Z"), source: .panel)
     else { preconditionFailure("Retry is accepted") }
     precondition(retried.meeting?.status == .queued)
     await waitUntil { engine.queue.isEmpty }
-    let alpha = try library.load("2026-11-05 14.00")
-    let beta = try library.load("2026-11-05 15.00")
+    let alpha = try library.load("20261105T140000Z")
+    let beta = try library.load("20261105T150000Z")
     precondition(alpha.status == .complete && beta.status == .failed)
     precondition(alpha.title == "Alpha reviewed" && alpha.revision == 1)
-    precondition(alpha.audioFile == "2026-11-05 14.00 Alpha.m4a")
-    guard case .success = await commands.perform(.delete(id: "2026-11-05 15.00"), source: .socket)
+    precondition(alpha.audioFile == "20261105T140000Z.m4a")
+    guard case .success = await commands.perform(.delete(id: "20261105T150000Z"), source: .socket)
     else { preconditionFailure("Discard is accepted") }
-    precondition((try? library.load("2026-11-05 15.00")) == nil)
+    precondition((try? library.load("20261105T150000Z")) == nil)
     precondition(
-      manager.fileExists(atPath: trash.appendingPathComponent("2026-11-05 15.00.json").path))
+      manager.fileExists(atPath: trash.appendingPathComponent("20261105T150000Z.json").path))
     precondition(
-      manager.fileExists(atPath: trash.appendingPathComponent("2026-11-05 15.00 Beta.m4a").path))
+      manager.fileExists(atPath: trash.appendingPathComponent("20261105T150000Z.m4a").path))
     do {
-      try engine.retry("2026-11-05 13.00")
+      try engine.retry("20261105T130000Z")
       preconditionFailure("Without audio there is nothing to retry")
     } catch {
       precondition(error.localizedDescription.contains("Discard it instead"))
     }
+    try write(library, "20261002T090000Z", .untranscribed, title: "Orphan", audio: true)
+    try write(
+      library, "20261003T090000Z", .interrupted,
+      error: "The recording was interrupted before its audio was saved.")
+    try manager.createDirectory(
+      at: library.captureURL(for: "20261003T090000Z"), withIntermediateDirectories: true)
     let single = await commands.perform(.retry(id: nil), source: .url)
     if case .success = single { preconditionFailure("Several meetings still need attention") }
-    try await engine.discard("2026-11-05 13.00")
-    try await engine.discard("2026-11-05 11.00")
-    try await engine.discard("2026-10-03 09.00")
-    precondition(library.needingAttention().map(\.id) == ["2026-10-02 09.00"])
+    try await engine.discard("20261105T130000Z")
+    try await engine.discard("20261105T110000Z")
+    try await engine.discard("20261003T090000Z")
+    precondition(library.needingAttention().map(\.id) == ["20261002T090000Z"])
     guard case .success(let only) = await commands.perform(.retry(id: nil), source: .url)
     else { preconditionFailure("The only meeting that needs attention can be retried") }
-    precondition(only.meeting?.id == "2026-10-02 09.00")
+    precondition(only.meeting?.id == "20261002T090000Z")
     await waitUntil { engine.queue.isEmpty }
-    let orphan = try library.load("2026-10-02 09.00")
+    let orphan = try library.load("20261002T090000Z")
     precondition(orphan.status == .complete && orphan.title == "Orphan")
     precondition(
-      library.transcriptURL(of: orphan)?.lastPathComponent == "2026-10-02 09.00 Orphan.txt")
+      library.transcriptURL(of: orphan)?.lastPathComponent == "20261002T090000Z.txt")
 
-    guard case .success = await commands.perform(.delete(id: "2026-11-05 09.00"), source: .library)
+    guard case .success = await commands.perform(.delete(id: "20261105T090000Z"), source: .library)
     else { preconditionFailure("Delete is accepted") }
     precondition(
-      manager.fileExists(atPath: trash.appendingPathComponent("2026-11-05 09.00 First.txt").path))
-    precondition(events.contains { $0 == (.meetingDeleted, "2026-11-05 09.00") })
+      manager.fileExists(atPath: trash.appendingPathComponent("20261105T090000Z.txt").path))
+    precondition(events.contains { $0 == (.meetingDeleted, "20261105T090000Z") })
     guard
       case .success = await commands.perform(
         .renameSpeakers(id: "Second", names: ["1": "Ada"]), source: .socket)
     else { preconditionFailure("Rename is accepted") }
-    let second = try library.load("2026-11-05 10.00")
+    let second = try library.load("20261105T100000Z")
     precondition(second.speakers[0].displayName == "Ada")
     guard
       case .success = await commands.perform(
@@ -336,35 +352,35 @@ enum MeetingSmoke {
     precondition(limits.audioBytes == 5_000_000_000)
     // Discarding a meeting while it transcribes stops the engine and publishes nothing.
     try Data().write(to: root.appendingPathComponent("slow"))
-    try write(library, "2026-11-05 16.00", .failed, title: "Gamma", audio: true, error: "Old")
-    try engine.retry("2026-11-05 16.00")
+    try write(library, "20261105T160000Z", .failed, title: "Gamma", audio: true, error: "Old")
+    try engine.retry("20261105T160000Z")
     await waitUntil { engine.queue.first?.stage == "Transcribing part 1 of 2" }
-    try write(library, "2026-11-05 16.30", .failed, title: "Queued deletion", audio: true)
-    try engine.retry("2026-11-05 16.30")
-    precondition(engine.queue.contains { $0.id == "2026-11-05 16.30" && $0.status == .queued })
-    guard case .success = await commands.perform(.delete(id: "2026-11-05 16.30"), source: .socket)
+    try write(library, "20261105T163000Z", .failed, title: "Queued deletion", audio: true)
+    try engine.retry("20261105T163000Z")
+    precondition(engine.queue.contains { $0.id == "20261105T163000Z" && $0.status == .queued })
+    guard case .success = await commands.perform(.delete(id: "20261105T163000Z"), source: .socket)
     else { preconditionFailure("Deleting queued work is accepted") }
-    precondition((try? library.load("2026-11-05 16.30")) == nil)
-    precondition(!engine.queue.contains { $0.id == "2026-11-05 16.30" })
+    precondition((try? library.load("20261105T163000Z")) == nil)
+    precondition(!engine.queue.contains { $0.id == "20261105T163000Z" })
     let discardStarted = Date()
-    guard case .success = await commands.perform(.delete(id: "2026-11-05 16.00"), source: .socket)
+    guard case .success = await commands.perform(.delete(id: "20261105T160000Z"), source: .socket)
     else { preconditionFailure("Discarding a transcribing meeting is accepted") }
     precondition(engine.queue.isEmpty)
     await waitUntil { engine.transcribingID == nil }
     precondition(Date().timeIntervalSince(discardStarted) < 10, "The engine stops right away")
-    precondition((try? library.load("2026-11-05 16.00")) == nil)
+    precondition((try? library.load("20261105T160000Z")) == nil)
     precondition(
       !manager.fileExists(
-        atPath: library.transcripts.appendingPathComponent("2026-11-05 16.00 Gamma.txt").path))
+        atPath: library.transcripts.appendingPathComponent("20261105T160000Z.txt").path))
     precondition(
-      manager.fileExists(atPath: trash.appendingPathComponent("2026-11-05 16.00 Gamma.m4a").path))
-    precondition(events.contains { $0 == (.meetingDiscarded, "2026-11-05 16.00") })
-    precondition(!events.contains { $0 == (.transcriptionFailed, "2026-11-05 16.00") })
+      manager.fileExists(atPath: trash.appendingPathComponent("20261105T160000Z.m4a").path))
+    precondition(events.contains { $0 == (.meetingDiscarded, "20261105T160000Z") })
+    precondition(!events.contains { $0 == (.transcriptionFailed, "20261105T160000Z") })
     try manager.removeItem(at: root.appendingPathComponent("slow"))
 
     let status = await commands.status()
     precondition(status.running && status.queue.isEmpty && status.recording == nil)
-    precondition(status.lastTranscriptId == "2026-11-05 14.00")
+    precondition(status.lastTranscriptId == "20261105T140000Z")
   }
 
   @MainActor
@@ -377,7 +393,7 @@ enum MeetingSmoke {
     try manager.createDirectory(at: trash, withIntermediateDirectories: true)
     for (index, state) in [MeetingStatus.recording, .transcribing].enumerated() {
       let record = try write(
-        library, "2026-11-05 19.0\(index)", state, title: "Discard failure", audio: true)
+        library, "20261105T190\(index)00Z", state, title: "Discard failure", audio: true)
       let audio = library.audioURL(of: record)!
       let original = try Data(contentsOf: audio)
       let engine = MeetingEngine(library: library, teams: TeamsMonitor())
@@ -411,7 +427,7 @@ enum MeetingSmoke {
     try manager.createDirectory(at: library.audios, withIntermediateDirectories: true)
     try manager.createDirectory(at: library.transcripts, withIntermediateDirectories: true)
     let record = try write(
-      library, "2026-11-05 18.00", .failed, title: "Save failure", audio: true)
+      library, "20261105T180000Z", .failed, title: "Save failure", audio: true)
     let capture = library.captureURL(for: record.id)
     try manager.createDirectory(at: capture, withIntermediateDirectories: true)
     let captureBytes = Data("original captured audio".utf8)
@@ -452,7 +468,7 @@ enum MeetingSmoke {
     precondition(manager.fileExists(atPath: library.audioURL(of: record)!.path))
     precondition(
       manager.fileExists(
-        atPath: MeetingFiles.transcript(for: record.fileStem, in: library.transcripts).path))
+        atPath: MeetingFiles.transcript(for: record.id, in: library.transcripts).path))
   }
 
   @MainActor
@@ -467,7 +483,7 @@ enum MeetingSmoke {
     let engine = MeetingEngine(library: library, teams: TeamsMonitor())
     engine.config = { config }
     engine.transcriberExecutable = helper
-    let failed = try write(library, "2026-11-07 09.00", .queued, audio: true)
+    let failed = try write(library, "20261107T090000Z", .queued, audio: true)
     let audio = library.audioURL(of: failed)!
     try Data().write(to: root.appendingPathComponent("fail"))
     engine.recover([failed])
@@ -484,7 +500,7 @@ enum MeetingSmoke {
     precondition(!manager.fileExists(atPath: audio.path))
     precondition(library.transcriptURL(of: completed) != nil)
     config.keepAudio = true
-    let kept = try write(library, "2026-11-07 10.00", .queued, audio: true)
+    let kept = try write(library, "20261107T100000Z", .queued, audio: true)
     engine.recover([kept])
     await waitUntil { engine.queue.isEmpty && engine.transcribingID == nil }
     precondition(library.audioURL(of: kept) != nil)
@@ -502,32 +518,32 @@ enum MeetingSmoke {
     func write(_ folder: URL, _ name: String, _ size: Int) throws {
       try Data(repeating: 1, count: size).write(to: folder.appendingPathComponent(name))
     }
-    try write(transcripts, "2026-01-01 10.00 Old.txt", 10)
-    try write(transcripts, "2026-01-01 10.00.json", 10)
-    try write(transcripts, "2026-01-01 10.00 Old.summary.md", 10)
-    try write(transcripts, "2026-01-02 10.00.txt", 10)
-    try write(transcripts, "2026-01-02 10.00.json", 10)
-    try write(transcripts, "2026-01-03 10.00.json", 5)
-    try write(transcripts, "2026-01-04 10.00 New.txt", 10)
-    try write(audios, "2026-01-01 10.00 Old.m4a", 30)
-    try write(audios, "2026-01-02 10.00.m4a", 30)
-    try write(audios, "2026-01-04 10.00 New.m4a", 30)
+    try write(transcripts, "20260101T100000Z.txt", 10)
+    try write(transcripts, "20260101T100000Z.json", 10)
+    try write(transcripts, "20260101T100000Z.summary.md", 10)
+    try write(transcripts, "20260102T100000Z.txt", 10)
+    try write(transcripts, "20260102T100000Z.json", 10)
+    try write(transcripts, "20260103T100000Z.json", 5)
+    try write(transcripts, "20260104T100000Z.txt", 10)
+    try write(audios, "20260101T100000Z.m4a", 30)
+    try write(audios, "20260102T100000Z.m4a", 30)
+    try write(audios, "20260104T100000Z.m4a", 30)
     let original = try Dictionary(
       uniqueKeysWithValues:
         FileManager.default.contentsOfDirectory(at: transcripts, includingPropertiesForKeys: nil)
         .map { ($0, try Data(contentsOf: $0)) })
     let plan = try RecordingRetention.plan(
-      root: root, protected: ["2026-01-02 10.00"], audioBudget: 40)
-    precondition(plan.audios.map(\.id) == ["2026-01-01 10.00"] && plan.bytes == 30)
+      root: root, protected: ["20260102T100000Z"], audioBudget: 40)
+    precondition(plan.audios.map(\.id) == ["20260101T100000Z"] && plan.bytes == 30)
     precondition(plan.summary.hasPrefix("This permanently deletes 1 recording ("))
     precondition(plan.files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
     let fits = try RecordingRetention.plan(root: root, audioBudget: 90)
     precondition(fits.isEmpty)
     let removed = try RecordingRetention.enforce(
-      root: root, protected: ["2026-01-02 10.00"], audioBudget: 40)
+      root: root, protected: ["20260102T100000Z"], audioBudget: 40)
     precondition(removed == plan.files)
     let audio = Set(try FileManager.default.contentsOfDirectory(atPath: audios.path))
-    precondition(audio == ["2026-01-02 10.00.m4a", "2026-01-04 10.00 New.m4a"])
+    precondition(audio == ["20260102T100000Z.m4a", "20260104T100000Z.m4a"])
     for (file, bytes) in original {
       let remaining = try Data(contentsOf: file)
       precondition(remaining == bytes, "Every transcript, record and note stays unchanged")
@@ -549,13 +565,13 @@ enum MeetingSmoke {
     var records: [MeetingRecord] = []
     var preserved: [URL: Data] = [:]
     for (index, status) in statuses.enumerated() {
-      let id = "2026-01-0\(index + 1) 10.00"
+      let id = "2026010\(index + 1)T100000Z"
       let record = try write(library, id, status, audio: true)
       records.append(record)
       let file = library.recordURL(for: id)
       preserved[file] = try Data(contentsOf: file)
       if status == .complete && index != 5 {
-        let transcript = MeetingFiles.transcript(for: record.fileStem, in: library.transcripts)
+        let transcript = MeetingFiles.transcript(for: record.id, in: library.transcripts)
         let data = Data("[00:00:00] Speaker 1: Keep this transcript.\n".utf8)
         try data.write(to: transcript)
         preserved[transcript] = data
@@ -591,10 +607,10 @@ enum MeetingSmoke {
     library.trash = { file in
       try manager.moveItem(at: file, to: trash.appendingPathComponent(file.lastPathComponent))
     }
-    let complete = try write(library, "2026-01-01 10.00", .complete, audio: true)
-    let transcript = MeetingFiles.transcript(for: complete.fileStem, in: library.transcripts)
+    let complete = try write(library, "20260101T100000Z", .complete, audio: true)
+    let transcript = MeetingFiles.transcript(for: complete.id, in: library.transcripts)
     try Data("[00:00:00] Speaker 1: Test.\n".utf8).write(to: transcript)
-    var pending = try write(library, "2026-01-02 10.00", .queued, audio: true)
+    var pending = try write(library, "20260102T100000Z", .queued, audio: true)
     let engine = MeetingEngine(library: library, teams: TeamsMonitor())
     do {
       try engine.deleteAllMeetings()

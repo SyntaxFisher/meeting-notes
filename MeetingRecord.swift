@@ -17,8 +17,8 @@ enum MeetingStatus: String, Codable, CaseIterable, Sendable {
   case failed
   /// Meeting Notes quit while recording or saving. Retry recovers what was captured.
   case interrupted
-  /// Audio without a record or transcript, for example from an older version. Transcribe or
-  /// discard it. The app never writes this status.
+  /// Audio an older version saved but never transcribed, recorded by the file migration.
+  /// Transcribe or discard it. New recordings never get this status.
   case untranscribed
 
   /// Work that still needs a decision from the user.
@@ -158,7 +158,8 @@ struct MeetingRecord: Codable, Equatable, Sendable {
   static let currentSchemaVersion = 1
 
   var schemaVersion = MeetingRecord.currentSchemaVersion
-  /// The timestamp stem, such as `2026-11-05 15.50`. Every file of the meeting starts with it.
+  /// The UTC start time, such as `20261105T145000Z`. Every file of the meeting is named
+  /// `<id>.<extension>`.
   var id: String
   var title: String?
   var titleSource: MeetingTitleSource
@@ -255,7 +256,6 @@ struct MeetingRecord: Codable, Equatable, Sendable {
   }
 
   var displayTitle: String { title ?? "Untitled meeting" }
-  var fileStem: String { MeetingFiles.fileStem(id: id, title: title) }
 
   func displayName(for label: String) -> String {
     speakers.first { $0.label == label }?.displayName ?? label

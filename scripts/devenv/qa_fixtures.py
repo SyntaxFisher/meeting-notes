@@ -53,7 +53,7 @@ PROMPTS = {
 
 def meeting(day, hour, title, turns, *, status="complete", title_source="user", names=None):
     started = dt.datetime.combine(day, dt.time(hour), ZONE)
-    identifier = started.strftime("%Y-%m-%d %H.%M")
+    identifier = started.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     segments = [
         {"start": index * 12.0, "end": index * 12.0 + 10, "speaker": speaker, "text": text}
         for index, (speaker, text) in enumerate(turns)

@@ -1,4 +1,3 @@
-import AVFoundation
 import Darwin
 import Foundation
 
@@ -75,9 +74,8 @@ enum TranscriptFormat: String, CaseIterable, Sendable {
 }
 
 /// The read model of the meetings folder, shared by the library window, the panel, the command
-/// line and the MCP server. Every meeting is described by its record; transcripts without one
-/// (from older versions) are parsed from their text, leftover audio becomes `untranscribed` and
-/// leftover capture folders `interrupted`. Reads work without the app running.
+/// line and the MCP server. Every meeting is described by its record, `transcripts/<id>.json`.
+/// Reads work without the app running.
 final class MeetingLibrary {
   let root: URL
   var timeZone: TimeZone = .current
@@ -86,8 +84,6 @@ final class MeetingLibrary {
     try FileManager.default.trashItem(at: $0, resultingItemURL: nil)
   }
   private var recordCache: [URL: (stamp: FileStamp, record: MeetingRecord?)] = [:]
-  private var legacyCache: [URL: (stamp: FileStamp, segments: [MeetingSegment])] = [:]
-  private var durationCache: [URL: (stamp: FileStamp, duration: Double?)] = [:]
 
   private struct FileStamp: Equatable {
     let modified: Date?
@@ -113,13 +109,13 @@ final class MeetingLibrary {
   func captureURL(for id: String) -> URL { MeetingFiles.capture(for: id, in: audios) }
 
   func audioURL(of record: MeetingRecord) -> URL? {
-    let names = [record.audioFile, record.fileStem + ".m4a", record.fileStem + ".mp3"]
+    let names = [record.audioFile, MeetingFiles.audio(for: record.id).lastPathComponent]
     return names.compactMap { $0 }.map { audios.appendingPathComponent($0) }
       .first { FileManager.default.fileExists(atPath: $0.path) }
   }
 
   func transcriptURL(of record: MeetingRecord) -> URL? {
-    let names = [record.transcriptFile, record.fileStem + ".txt"]
+    let names = [record.transcriptFile, MeetingFiles.transcript(for: record.id).lastPathComponent]
     return names.compactMap { $0 }.map { transcripts.appendingPathComponent($0) }
       .first { FileManager.default.fileExists(atPath: $0.path) }
   }
@@ -136,44 +132,11 @@ final class MeetingLibrary {
 
   /// Every meeting, newest first.
   func meetings() -> [MeetingRecord] {
-    var found: [String: MeetingRecord] = [:]
-    var legacyTranscripts: [String: URL] = [:]
-    for file in contents(of: transcripts) {
-      guard let id = MeetingFiles.id(fromFileName: file.lastPathComponent) else { continue }
-      switch file.pathExtension.lowercased() {
-      case "json" where file.lastPathComponent == id + ".json":
-        if let record = record(at: file) { found[id] = record }
-      case "txt":
-        legacyTranscripts[id] = file
-      default: break
-      }
-    }
-    for (id, transcript) in legacyTranscripts where found[id] == nil {
-      if let record = legacyRecord(id: id, transcript: transcript) { found[id] = record }
-    }
-    for file in contents(of: audios) {
+    contents(of: transcripts).compactMap { file -> MeetingRecord? in
       let name = file.lastPathComponent
-      if name.hasPrefix(".") {
-        guard name.hasSuffix(".recording") else { continue }
-        let id = String(name.dropFirst().dropLast(".recording".count))
-        guard found[id] == nil, let date = MeetingFiles.date(fromStem: id) else { continue }
-        var record = MeetingRecord(id: id, startedAt: date, status: .interrupted)
-        record.error = "The recording was interrupted before its audio was saved."
-        found[id] = record
-        continue
-      }
-      guard ["m4a", "mp3"].contains(file.pathExtension.lowercased()),
-        let id = MeetingFiles.id(fromFileName: name), found[id] == nil,
-        let date = MeetingFiles.date(fromStem: id)
-      else { continue }
-      let stem = file.deletingPathExtension().lastPathComponent
-      var record = MeetingRecord(
-        id: id, title: MeetingFiles.title(fromStem: stem), startedAt: date, status: .untranscribed)
-      record.audioFile = name
-      record.durationSeconds = duration(of: file)
-      found[id] = record
-    }
-    return found.values.sorted(by: Self.newestFirst)
+      guard let id = MeetingFiles.id(fromFileName: name), name == id + ".json" else { return nil }
+      return record(at: file)
+    }.sorted(by: Self.newestFirst)
   }
 
   static func newestFirst(_ lhs: MeetingRecord, _ rhs: MeetingRecord) -> Bool {
@@ -217,27 +180,23 @@ final class MeetingLibrary {
   static func resolve(_ reference: String, in all: [MeetingRecord]) throws -> String {
     let trimmed = reference.trimmingCharacters(in: .whitespaces)
     if all.contains(where: { $0.id == trimmed }) { return trimmed }
-    if let exact = all.first(where: { $0.fileStem == trimmed }) { return exact.id }
     if ["latest", "last", "newest"].contains(trimmed.lowercased()) {
       if let newest = all.first(where: { $0.status == .complete }) { return newest.id }
       throw MeetingError("There are no completed meetings yet.")
     }
-    let prefixed = all.filter { $0.id.hasPrefix(trimmed) || $0.fileStem.hasPrefix(trimmed) }
+    let prefixed = all.filter { $0.id.hasPrefix(trimmed) }
     if prefixed.count == 1 { return prefixed[0].id }
     let needle = Self.normalized(trimmed)
     let matches =
       prefixed.isEmpty
-      ? all.filter {
-        Self.normalized($0.fileStem).contains(needle)
-          || Self.normalized($0.title ?? "").contains(needle)
-      } : prefixed
+      ? all.filter { Self.normalized($0.title ?? "").contains(needle) } : prefixed
     if matches.count == 1 { return matches[0].id }
     if matches.isEmpty {
       throw MeetingError("No meeting matches \"\(reference)\". Use list to see meeting ids.")
     }
     throw MeetingError(
       "\"\(reference)\" matches \(matches.count) meetings: "
-        + matches.prefix(5).map { "\"\($0.fileStem)\"" }.joined(separator: ", ")
+        + matches.prefix(5).map { "\($0.id) \"\($0.displayTitle)\"" }.joined(separator: ", ")
         + (matches.count > 5 ? ", ..." : "") + ". Use an exact meeting ID or unique title.")
   }
 
@@ -410,7 +369,7 @@ final class MeetingLibrary {
     try updateMeeting(id, names: names).record
   }
 
-  /// Retitles a finished meeting. Its id and file names stay unchanged.
+  /// Retitles a finished meeting. File names contain only its id, so no file changes name.
   @discardableResult
   func setTitle(_ id: String, title: String?, titleSource: MeetingTitleSource = .user) throws
     -> MeetingRecord
@@ -418,8 +377,8 @@ final class MeetingLibrary {
     try updateMeeting(id, title: .some(title), titleSource: titleSource).record
   }
 
-  /// Every file and folder of a meeting: all files in both folders whose name starts with its
-  /// id, and its capture folder.
+  /// Every file and folder of a meeting: all files in both folders named `<id>.<anything>`, and
+  /// its capture folder.
   func files(of id: String) -> [URL] {
     var files: [URL] = []
     for directory in [transcripts, audios] {
@@ -566,44 +525,6 @@ final class MeetingLibrary {
     }
     recordCache[file] = (stamp, record)
     return record
-  }
-
-  private func legacyRecord(id: String, transcript: URL) -> MeetingRecord? {
-    guard let startedAt = MeetingFiles.date(fromStem: id, timeZone: timeZone),
-      let stamp = FileStamp(transcript)
-    else { return nil }
-    let segments: [MeetingSegment]
-    if let cached = legacyCache[transcript], cached.stamp == stamp {
-      segments = cached.segments
-    } else {
-      segments = Self.parseTranscript(
-        (try? String(contentsOf: transcript, encoding: .utf8)) ?? "")
-      legacyCache[transcript] = (stamp, segments)
-    }
-    let stem = transcript.deletingPathExtension().lastPathComponent
-    var record = MeetingRecord(
-      id: id, title: MeetingFiles.title(fromStem: stem), startedAt: startedAt, status: .complete)
-    record.transcriptFile = transcript.lastPathComponent
-    record.segments = segments
-    record.speakers = MeetingRecord.speakers(for: segments)
-    if let audio = audioURL(of: record) {
-      record.audioFile = audio.lastPathComponent
-      record.durationSeconds = duration(of: audio)
-    }
-    record.durationSeconds = (record.durationSeconds ?? segments.last?.end).map(
-      MeetingRecord.seconds)
-    record.endedAt = record.durationSeconds.map { startedAt.addingTimeInterval($0) }
-    return record
-  }
-
-  private func duration(of file: URL) -> Double? {
-    guard let stamp = FileStamp(file) else { return nil }
-    if let cached = durationCache[file], cached.stamp == stamp { return cached.duration }
-    let duration = (try? AVAudioFile(forReading: file)).map {
-      MeetingRecord.seconds(Double($0.length) / $0.processingFormat.sampleRate)
-    }
-    durationCache[file] = (stamp, duration)
-    return duration
   }
 
   // MARK: Text helpers

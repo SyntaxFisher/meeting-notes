@@ -42,6 +42,20 @@ final class LibraryReader: @unchecked Sendable {
     _ = try FileManager.default.contentsOfDirectory(atPath: root.path)
   }
 
+  /// Renames meetings from earlier versions before anything reads the folder.
+  static func migrateFiles(_ root: URL) {
+    do {
+      let result = try MeetingFilesMigration.run(root: root)
+      if !result.migrated.isEmpty || !result.skipped.isEmpty {
+        AppLog.event(
+          "library.migrated",
+          "\(result.migrated.count) meetings; skipped: \(result.skipped.joined(separator: ", "))")
+      }
+    } catch {
+      AppLog.event("library.migrationFailed", error.localizedDescription)
+    }
+  }
+
   /// A folder that does not exist yet is readable: it is created with the first recording.
   static func access(after error: Error) -> MeetingsFolderAccess {
     if let error = error as? CocoaError, error.code == .fileReadNoSuchFile { return .granted }
@@ -54,6 +68,7 @@ final class LibraryReader: @unchecked Sendable {
     return await run { _ in
       do {
         try probe(root)
+        Self.migrateFiles(root)
         return .granted
       } catch {
         return Self.access(after: error)

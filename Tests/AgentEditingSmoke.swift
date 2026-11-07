@@ -30,7 +30,7 @@ enum AgentEditingSmoke {
       }
     }
     precondition(call("get_meeting") == "No meetings yet.")
-    var record = MeetingRecord(id: "2026-11-06 08.00", startedAt: Date(), status: .complete)
+    var record = MeetingRecord(id: "20261106T080000Z", startedAt: Date(), status: .complete)
     record.segments = [
       .init(start: 0, end: 5, speaker: "Speaker 1", text: "We deploy the checkout on Tuesday."),
       .init(start: 5, end: 10, speaker: "Speaker 2", text: "Mira checks the payment flow."),
@@ -79,7 +79,7 @@ enum AgentEditingSmoke {
       _ = call("get_meeting")
       precondition(!FileManager.default.fileExists(atPath: openedURL.path))
       let pending = MeetingRecord(
-        id: "2026-11-06 08.01", startedAt: record.startedAt.addingTimeInterval(60),
+        id: "20261106T080100Z", startedAt: record.startedAt.addingTimeInterval(60),
         status: .transcribing)
       try library.save(pending)
       precondition(call("open_meeting").contains("meeting_id: " + pending.id))
@@ -154,7 +154,7 @@ enum AgentEditingSmoke {
     precondition(!server.instructions.contains("suggest_corrections"))
     precondition(!server.instructions.contains("suggest_topic"))
     var untitled = record
-    untitled.id = "2026-11-05 08.00"
+    untitled.id = "20261105T080000Z"
     untitled.startedAt = record.startedAt.addingTimeInterval(-86400)
     untitled.audioFile = nil
     untitled.transcriptFile = nil
@@ -179,7 +179,7 @@ enum AgentEditingSmoke {
     config.agentsMayNameMeetings = true
     try config.encoded().write(to: bridge.configFile)
     var teams = record
-    teams.id = "2026-11-06 09.00"
+    teams.id = "20261106T090000Z"
     teams.title = "Mittagspause"
     teams.titleSource = .teams
     teams.startedAt = record.startedAt.addingTimeInterval(3600)
@@ -266,7 +266,7 @@ enum AgentEditingSmoke {
     _ = call("list_meetings", ["status": "nonsense"], error: true)
     // Whole passages paginate without loss; exceptional giant Unicode passages split safely.
     var long = record
-    long.id = "2026-11-06 10.00"
+    long.id = "20261106T100000Z"
     long.title = "Long review"
     long.titleSource = .user
     long.startedAt = record.startedAt.addingTimeInterval(7200)

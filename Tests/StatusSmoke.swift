@@ -54,9 +54,9 @@ extension Smoke {
       microphone: true, systemAudioRequested: false, accessibility: false)
     let start = Date(timeIntervalSince1970: 1_000)
     let recording = MeetingRecord(
-      id: "2026-11-05 10.00", title: "Weekly Sync", startedAt: start, status: .recording)
+      id: "20261105T100000Z", title: "Weekly Sync", startedAt: start, status: .recording)
     var queued = MeetingRecord(
-      id: "2026-11-05 09.00", title: "Standup", startedAt: start, status: .transcribing)
+      id: "20261105T090000Z", title: "Standup", startedAt: start, status: .transcribing)
     queued.stage = "Transcribing part 3 of 11"
     var inputs = PanelStatus.Inputs(permissions: granted)
     let ready = PanelStatus.make(inputs)
@@ -210,16 +210,12 @@ extension Smoke {
     let transcripts = root.appendingPathComponent("transcripts")
     try manager.createDirectory(at: audios, withIntermediateDirectories: true)
     try manager.createDirectory(at: transcripts, withIntermediateDirectories: true)
-    for name in ["2026-11-03 09.00 Standup.txt", "2026-11-03 09.00.json", "notes.txt"] {
+    for name in ["20261103T090000Z.txt", "20261103T090000Z.json", "notes.txt"] {
       try Data(repeating: 65, count: 100).write(to: transcripts.appendingPathComponent(name))
     }
     try Data(repeating: 1, count: 1_000).write(
-      to: audios.appendingPathComponent("2026-11-05 10.00 Weekly Sync.m4a"))
+      to: audios.appendingPathComponent("20261105T100000Z.m4a"))
     try Data(repeating: 1, count: 500).write(to: audios.appendingPathComponent("keep-me.m4a"))
-    precondition(MeetingFiles.title(fromStem: "2026-11-05 10.00 Weekly Sync") == "Weekly Sync")
-    precondition(MeetingFiles.title(fromStem: "2026-11-05 10.00-3 A - B") == "A - B")
-    precondition(MeetingFiles.title(fromStem: "2026-11-05 10.00") == nil)
-    precondition(MeetingFiles.title(fromStem: "20261105T100000Z") == nil)
     let usage = RecordingRetention.usage(root: root)
     precondition(usage == RecordingRetention.Usage(audioBytes: 1_000, transcriptBytes: 200))
     precondition(

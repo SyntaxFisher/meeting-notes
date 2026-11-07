@@ -50,7 +50,7 @@ Every meeting has one record, `transcripts/<id>.json`, created when recording st
 | `complete` | The transcript is saved. |
 | `failed` | Saving or transcription failed; `error` and `failed_at` say why and when. |
 | `interrupted` | Meeting Notes quit while recording or saving. |
-| `untranscribed` | Audio without a record or transcript, for example from an older version. Never written by the app. |
+| `untranscribed` | Audio an older version saved but never transcribed. New recordings never get this status. |
 
 Transcription runs one meeting at a time in the order the meetings were queued. The queue is persistent: on launch, meetings left `transcribing` return to `queued` and continue, meetings left `saving` continue if their audio is complete and become `interrupted` otherwise, and meetings left `recording` become `interrupted`. Nothing is deleted on launch.
 
@@ -122,15 +122,17 @@ Meetings are always stored in `~/Documents/meeting-notes`; the location is not c
 ```
 ~/Documents/meeting-notes/
 ├── audios/
-│   ├── 2026-11-05 15.28 Weekly Sync.m4a
-│   └── .2026-11-05 16.00.recording/      capture tracks while recording or until transcribed
+│   ├── 20261105T142807Z.m4a
+│   └── .20261105T150012Z.recording/   capture tracks while recording or until transcribed
 └── transcripts/
-    ├── 2026-11-05 15.28 Weekly Sync.txt  the current transcript
-    ├── 2026-11-05 15.28.json             the meeting record
-    └── 2026-11-05 15.28 Weekly Sync.summary.md   any other file starting with the id, such as your own notes
+    ├── 20261105T142807Z.json          the meeting record
+    ├── 20261105T142807Z.txt           the current transcript
+    └── 20261105T142807Z.summary.md    any other <id>.<extension> file, such as your own notes
 ```
 
-The **meeting id** is the local start time, `YYYY-MM-DD HH.MM`, with `-2`, `-3`, … for recordings started in the same minute. Every file of a meeting starts with it, so it stays stable when the Teams title is added. The title comes from the Teams meeting window (without the trailing "| Microsoft Teams" and account information); generic titles such as "Calendar" are ignored. Older files named `YYYYMMDDTHHMMSSZ` (UTC) are still listed and covered by retention.
+The **meeting id** is the UTC start time in ISO 8601 basic format, `YYYYMMDDTHHMMSSZ`, with `-2`, `-3`, … for recordings started in the same second. Every file of a meeting is named `<id>.<extension>`; titles and speaker names live only in the record, so renaming a meeting never renames a file. The title comes from the Teams meeting window (without the trailing "| Microsoft Teams" and account information); generic titles such as "Calendar" are ignored.
+
+Meetings saved by earlier versions, named `YYYY-MM-DD HH.MM[ Title]` in local time, are renamed once to this scheme when the app or the command line first reads the folder. Meetings without a record (from 1.x) get one, keeping the title from the old file name. Other files keep what followed the old name, such as `.summary.md`; a file whose new name is already taken becomes `<id>.legacy.<extension>` instead of replacing anything.
 
 The **record** (`schema_version` 1) holds the meeting's status, dates, file names, title, speakers, timed transcript segments and transcription details. Its `source` is `teams`, `device-audio`, `app:<bundleID>` or `microphone`. Edits update the record and the `.txt` transcript directly; `revision` protects against stale writers. Markdown is rendered on demand from the current title, corrected text and speaker assignments. See the [record reference](mcp-and-cli.md#the-meeting-record).
 
