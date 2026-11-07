@@ -29,7 +29,7 @@ DISABLED_FEATURES = [
 
 def record(day, hour, title, turns, names=None, status="complete"):
     began = dt.datetime.combine(day, dt.time(hour), ZoneInfo("Europe/Berlin"))
-    identifier = began.strftime("%Y-%m-%d %H.%M")
+    identifier = began.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     segments = [
         {"start": index * 12.0, "end": index * 12.0 + 10, "speaker": speaker, "text": text}
         for index, (speaker, text) in enumerate(turns)

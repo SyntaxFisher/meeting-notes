@@ -106,7 +106,7 @@ enum SpeakerIdentitySmoke {
         TeamsParticipantSighting(name: "Sam Carter", role: "Meeting guest", source: .roster),
       ], at: 0)
     var metadata = MeetingRecord(
-      id: "1970-01-01 00.00", title: "Weekly Sync", startedAt: start, status: .transcribing)
+      id: "19700101T000000Z", title: "Weekly Sync", startedAt: start, status: .transcribing)
     metadata.speakers = [MeetingSpeaker(label: "Speaker 2", name: "Kept")]
     let text = TranscriptDocument.compose(
       separate, into: &metadata, localName: "Jona", roster: roster, timeZone: utc)
@@ -140,7 +140,7 @@ enum SpeakerIdentitySmoke {
         TeamsParticipantSighting(name: "Meeting Notes Dev", isLocal: true, source: .tile),
         TeamsParticipantSighting(name: "Sam Carter", tag: "Guest", source: .tile),
       ], at: 2)
-    var namedRecord = MeetingRecord(id: "1970-01-01 00.00", startedAt: start, status: .transcribing)
+    var namedRecord = MeetingRecord(id: "19700101T000000Z", startedAt: start, status: .transcribing)
     let named = TranscriptDocument.compose(
       separate, into: &namedRecord, localName: "Jona", roster: single, timeZone: utc)
     precondition(named.hasPrefix("Meeting\n"))
@@ -156,7 +156,7 @@ enum SpeakerIdentitySmoke {
       segments: [
         .init(start: 0.65, end: 3.87, source: .microphone, speaker: "local", text: "Hallo, Test.")
       ], engine: "fixture engine")
-    var soloRecord = MeetingRecord(id: "1970-01-01 00.00", startedAt: start, status: .transcribing)
+    var soloRecord = MeetingRecord(id: "19700101T000000Z", startedAt: start, status: .transcribing)
     let soloText = TranscriptDocument.compose(
       solo, into: &soloRecord, localName: "Muster, Alex (Engineering)", roster: nil, timeZone: utc)
     precondition(soloRecord.speakers.count == 1)
@@ -172,7 +172,7 @@ enum SpeakerIdentitySmoke {
         .init(start: 3, end: 5, source: .mix, speaker: "S2", text: "Two."),
       ], engine: "fixture engine")
     var mixedRecord = MeetingRecord(
-      id: "1970-01-01 00.00", title: "T", startedAt: start, status: .transcribing)
+      id: "19700101T000000Z", title: "T", startedAt: start, status: .transcribing)
     let anonymous = TranscriptDocument.compose(
       mixed, into: &mixedRecord, localName: "Jona", roster: single, timeZone: utc)
     precondition(anonymous.contains("[00:00:00] Speaker 1: One.\n\n[00:00:03] Speaker 2: Two."))
@@ -187,7 +187,7 @@ enum SpeakerIdentitySmoke {
         .init(start: 4, end: 6, source: .deviceAudio, speaker: "S1", text: "Hello from Zoom."),
       ], engine: "fixture engine")
     var deviceRecord = MeetingRecord(
-      id: "1970-01-01 00.00", startedAt: start, status: .transcribing, source: .deviceAudio)
+      id: "19700101T000000Z", startedAt: start, status: .transcribing, source: .deviceAudio)
     let deviceText = TranscriptDocument.compose(
       device, into: &deviceRecord, localName: "Jona", roster: single, timeZone: utc)
     precondition(deviceText.contains("[00:00:01] Jona: Hi.\n\n[00:00:04] Speaker 1: Hello"))
@@ -208,7 +208,7 @@ enum SpeakerIdentitySmoke {
         .init(start: 4, end: 6, source: .app, speaker: "S1", text: "Hello from the app."),
       ], engine: "fixture engine")
     var appRecord = MeetingRecord(
-      id: "1970-01-01 00.00", startedAt: start, status: .transcribing,
+      id: "19700101T000000Z", startedAt: start, status: .transcribing,
       source: .app("com.example.not-installed"))
     let appText = TranscriptDocument.compose(
       app, into: &appRecord, localName: "Jona", roster: single, timeZone: utc)
@@ -228,7 +228,7 @@ enum SpeakerIdentitySmoke {
     precondition(safariText.contains("remote voices in the com.apple.Safari audio"), safariText)
 
     var microphoneRecord = MeetingRecord(
-      id: "1970-01-01 00.00", startedAt: start, status: .transcribing, source: .microphone)
+      id: "19700101T000000Z", startedAt: start, status: .transcribing, source: .microphone)
     let microphoneText = TranscriptDocument.compose(
       mixed, into: &microphoneRecord, localName: "Jona", roster: nil, timeZone: utc)
     precondition(
@@ -282,9 +282,6 @@ enum SpeakerIdentitySmoke {
   }
 
   private static func testFilesAndRetention() throws {
-    precondition(MeetingFiles.title(fromStem: "2026-11-05 15.28 Weekly Sync") == "Weekly Sync")
-    precondition(MeetingFiles.title(fromStem: "2026-11-05 15.28-2 A | B") == "A | B")
-    precondition(MeetingFiles.title(fromStem: "2026-11-05 15.28") == nil)
     precondition(
       TranscribeCommand.parse(["a.m4a", "b.txt", "--capture", "dir", "--name", "Jona"])
         == .init(

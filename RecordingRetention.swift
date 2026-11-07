@@ -117,7 +117,7 @@ enum RecordingRetention {
       options: [.skipsHiddenFiles])
     {
       guard let id = MeetingFiles.id(fromFileName: file.lastPathComponent),
-        let date = MeetingFiles.date(fromStem: id)
+        let date = MeetingFiles.date(fromID: id)
       else { continue }
       let attributes = try file.resourceValues(forKeys: [
         .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,

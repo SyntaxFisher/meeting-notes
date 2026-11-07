@@ -15,20 +15,23 @@ enum MeetingFiles {
     try FileManager.default.createDirectory(at: audios, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: transcripts, withIntermediateDirectories: true)
   }
-  static func stem(
-    for date: Date, in audioDirectory: URL = audios, transcriptDirectory: URL = transcripts,
-    timeZone: TimeZone = .current
+
+  /// A new meeting id: the UTC start time in ISO 8601 basic format, such as `20261105T141700Z`,
+  /// with `-2`, `-3`, ... when that second is already taken in either folder.
+  static func id(
+    startingAt date: Date, in audioDirectory: URL = audios, transcriptDirectory: URL = transcripts
   ) -> String {
-    let base = formatter("yyyy-MM-dd HH.mm", timeZone).string(from: date)
-    let names = [audioDirectory, transcriptDirectory].flatMap {
-      (try? FileManager.default.contentsOfDirectory(atPath: $0.path)) ?? []
+    let names = Set(
+      [audioDirectory, transcriptDirectory].flatMap {
+        (try? FileManager.default.contentsOfDirectory(atPath: $0.path)) ?? []
+      })
+    return id(startingAt: date) { candidate in
+      names.contains { $0 == ".\(candidate).recording" || $0.hasPrefix(candidate + ".") }
     }
-    func isTaken(_ candidate: String) -> Bool {
-      names.contains {
-        $0 == ".\(candidate).recording" || $0.hasPrefix(candidate + ".")
-          || $0.hasPrefix(candidate + " ")
-      }
-    }
+  }
+
+  static func id(startingAt date: Date, isTaken: (String) -> Bool) -> String {
+    let base = idFormatter.string(from: date)
     var candidate = base
     var suffix = 2
     while isTaken(candidate) {
@@ -38,23 +41,16 @@ enum MeetingFiles {
     return candidate
   }
 
-  /// Parses the start time from a local `yyyy-MM-dd HH.mm` stem with optional collision suffix
-  /// and title, or from a legacy UTC `yyyyMMdd'T'HHmmss'Z'` stem.
-  static func date(fromStem stem: String, timeZone: TimeZone = .current) -> Date? {
-    if let match = stem.firstMatch(of: #/^(\d{4}-\d{2}-\d{2} \d{2}\.\d{2})(?:-\d+)?(?: .+)?$/#) {
-      return formatter("yyyy-MM-dd HH.mm", timeZone).date(from: String(match.1))
-    }
-    if let match = stem.firstMatch(of: #/^(\d{8}T\d{6}Z)(?:-\d+)?$/#) {
-      return formatter("yyyyMMdd'T'HHmmss'Z'", TimeZone(secondsFromGMT: 0)!).date(
-        from: String(match.1))
-    }
-    return nil
+  /// The start time encoded in a meeting id, to the second.
+  static func date(fromID id: String) -> Date? {
+    guard let match = id.wholeMatch(of: #/(\d{8}T\d{6}Z)(?:-[1-9]\d*)?/#) else { return nil }
+    return idFormatter.date(from: String(match.1))
   }
 
-  /// The meeting title part of a `yyyy-MM-dd HH.mm[-N] Title` stem.
-  static func title(fromStem stem: String) -> String? {
-    guard let match = stem.firstMatch(of: #/^\d{4}-\d{2}-\d{2} \d{2}\.\d{2}(?:-\d+)? (.+)$/#)
-    else { return nil }
+  /// The meeting id a file in the meetings folder belongs to: `<id>.<anything>`, such as
+  /// `20261105T141700Z` for `20261105T141700Z.summary.md`.
+  static func id(fromFileName name: String) -> String? {
+    guard let match = name.firstMatch(of: #/^(\d{8}T\d{6}Z(?:-[1-9]\d*)?)\./#) else { return nil }
     return String(match.1)
   }
 
@@ -68,15 +64,6 @@ enum MeetingFiles {
     try FileManager.default.moveItem(at: staging, to: destination)
   }
 
-  /// The timestamp part of a file stem, with its collision suffix but without the title.
-  static func id(fromFileStem stem: String) -> String? {
-    if let match = stem.firstMatch(of: #/^(\d{4}-\d{2}-\d{2} \d{2}\.\d{2}(?:-\d+)?)(?: .+)?$/#) {
-      return String(match.1)
-    }
-    if let match = stem.firstMatch(of: #/^(\d{8}T\d{6}Z(?:-\d+)?)$/#) { return String(match.1) }
-    return nil
-  }
-
   /// A meeting title as written, on one line, for records and every surface that shows it.
   static func displayTitle(_ title: String?) -> String? {
     guard let title else { return nil }
@@ -85,31 +72,11 @@ enum MeetingFiles {
     return cleaned.isEmpty ? nil : String(cleaned.prefix(200))
   }
 
-  /// A title made safe for file names: no path separators, no leading dots, limited length.
-  static func titleComponent(_ title: String?) -> String? {
-    guard let title else { return nil }
-    let separators = CharacterSet(charactersIn: "/:\\").union(.controlCharacters)
-    var cleaned = title.components(separatedBy: separators).joined(separator: "-")
-      .split(whereSeparator: \.isWhitespace).joined(separator: " ")
-    while cleaned.hasPrefix(".") { cleaned.removeFirst() }
-    cleaned = String(cleaned.prefix(80))
-    while cleaned.utf8.count > 150 { cleaned.removeLast() }
-    cleaned = cleaned.trimmingCharacters(in: .whitespaces)
-    return cleaned.isEmpty ? nil : cleaned
+  static func audio(for id: String, in directory: URL = audios) -> URL {
+    directory.appendingPathComponent(id + ".m4a")
   }
-
-  private static func formatter(_ format: String, _ timeZone: TimeZone) -> DateFormatter {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = timeZone
-    formatter.dateFormat = format
-    return formatter
-  }
-  static func audio(for stem: String, in directory: URL = audios) -> URL {
-    directory.appendingPathComponent(stem + ".m4a")
-  }
-  static func transcript(for stem: String, in directory: URL = transcripts) -> URL {
-    directory.appendingPathComponent(stem + ".txt")
+  static func transcript(for id: String, in directory: URL = transcripts) -> URL {
+    directory.appendingPathComponent(id + ".txt")
   }
   static func record(for id: String, in directory: URL = transcripts) -> URL {
     directory.appendingPathComponent(id + ".json")
@@ -118,19 +85,11 @@ enum MeetingFiles {
     directory.appendingPathComponent("." + id + ".recording", isDirectory: true)
   }
 
-  /// The file stem of a meeting: its id, followed by its file-safe title when it has one.
-  static func fileStem(id: String, title: String?) -> String {
-    titleComponent(title).map { "\(id) \($0)" } ?? id
-  }
-
-  /// The meeting id a file in the meetings folder belongs to, such as `2026-11-05 15.50` for
-  /// `2026-11-05 15.50 Weekly Sync.summary.md`.
-  static func id(fromFileName name: String) -> String? {
-    var stem = name
-    while let dot = stem.lastIndex(of: ".") {
-      stem = String(stem[..<dot])
-      if let id = id(fromFileStem: stem) { return id }
-    }
-    return nil
-  }
+  nonisolated(unsafe) private static let idFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+    return formatter
+  }()
 }

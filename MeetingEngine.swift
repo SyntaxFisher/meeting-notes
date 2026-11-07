@@ -142,8 +142,8 @@ final class MeetingEngine {
     let systemAudio = SystemAudioScope.forRecording(
       automatic: automatically, teamsMeeting: teamsMeeting)
     let now = Date()
-    let id = MeetingFiles.stem(
-      for: now, in: library.audios, transcriptDirectory: library.transcripts)
+    let id = MeetingFiles.id(
+      startingAt: now, in: library.audios, transcriptDirectory: library.transcripts)
     var record = MeetingRecord(
       id: id,
       title: MeetingFiles.displayTitle(title ?? (systemAudio == .teams ? teams.meetingTitle : nil)),
@@ -302,7 +302,7 @@ final class MeetingEngine {
   private func mix(_ id: String) async {
     guard var record = unfinished[id] else { return }
     let capture = library.captureURL(for: id)
-    let destination = MeetingFiles.audio(for: record.fileStem, in: library.audios)
+    let destination = MeetingFiles.audio(for: id, in: library.audios)
     do {
       if !FileManager.default.fileExists(atPath: destination.path) {
         guard hasCapturedAudio(id) else {
@@ -330,7 +330,7 @@ final class MeetingEngine {
       record.failedAt = nil
       try persist(record)
       AppLog.event("capture.saved", destination.path)
-      archiveCaptureForDevelopment(capture, stem: record.fileStem)
+      archiveCaptureForDevelopment(capture, id: id)
       enforceRetention()
       onEvent?(.transcriptionQueued, record, ["position": queue.count])
     } catch {
@@ -340,11 +340,11 @@ final class MeetingEngine {
 
   /// Copies the separate capture tracks to the `captureArchiveDirectory` development default so
   /// live recordings can be transcribed again offline.
-  private func archiveCaptureForDevelopment(_ directory: URL, stem: String) {
+  private func archiveCaptureForDevelopment(_ directory: URL, id: String) {
     guard let archive = UserDefaults.standard.string(forKey: "captureArchiveDirectory") else {
       return
     }
-    let target = URL(fileURLWithPath: archive, isDirectory: true).appendingPathComponent(stem)
+    let target = URL(fileURLWithPath: archive, isDirectory: true).appendingPathComponent(id)
     guard FileManager.default.fileExists(atPath: directory.path),
       !FileManager.default.fileExists(atPath: target.path)
     else { return }
@@ -399,7 +399,7 @@ final class MeetingEngine {
     }
     let capture = library.captureURL(for: id)
     let tracks = FileManager.default.fileExists(atPath: capture.path) ? capture : nil
-    let destination = MeetingFiles.transcript(for: record.fileStem, in: library.transcripts)
+    let destination = MeetingFiles.transcript(for: id, in: library.transcripts)
     do {
       try persist(record)
       onEvent?(.transcriptionStarted, record, [:])

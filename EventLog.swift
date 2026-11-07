@@ -19,7 +19,6 @@ enum LifecycleEvent: String, CaseIterable, Sendable {
 /// paths, without the transcript segments.
 struct MeetingInfo: Equatable {
   var id: String
-  var stem: String
   var title: String?
   var status: MeetingStatus
   var startedAt: Date?
@@ -36,7 +35,6 @@ struct MeetingInfo: Equatable {
 
   init(record: MeetingRecord, library: MeetingLibrary) {
     id = record.id
-    stem = record.fileStem
     title = record.title
     status = record.status
     startedAt = record.startedAt
@@ -57,7 +55,6 @@ struct MeetingInfo: Equatable {
     func value(_ optional: Any?) -> Any { optional ?? NSNull() }
     return [
       "id": id,
-      "stem": stem,
       "title": value(title),
       "status": status.rawValue,
       "startedAt": value(startedAt.map(AutomationFormat.timestamp)),

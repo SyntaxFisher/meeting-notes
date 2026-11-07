@@ -176,12 +176,12 @@ extension Smoke {
     let log = EventLog(file: file, maxBytes: 600)
     let time = Date(timeIntervalSince1970: 1_700_000_000)
     let line = try EventLog.line(
-      time: time, event: "transcript.ready", meeting: "2026-11-05 14.03",
+      time: time, event: "transcript.ready", meeting: "20261105T140300Z",
       details: ["transcriptPath": "/a/b.txt"])
     precondition(line.last == 0x0A)
     let object = try JSONSerialization.jsonObject(with: line) as! [String: Any]
     precondition(object["event"] as? String == "transcript.ready")
-    precondition(object["meeting"] as? String == "2026-11-05 14.03")
+    precondition(object["meeting"] as? String == "20261105T140300Z")
     precondition((object["details"] as? [String: Any])?["transcriptPath"] as? String == "/a/b.txt")
     precondition((object["time"] as? String)?.isEmpty == false)
     let anonymous = try EventLog.line(time: time, event: "app.started", meeting: nil, details: [:])
@@ -200,13 +200,9 @@ extension Smoke {
   }
 
   private static func testMeetingInfo() {
-    precondition(MeetingFiles.id(fromFileStem: "2026-11-05 14.03") == "2026-11-05 14.03")
-    precondition(MeetingFiles.id(fromFileStem: "2026-11-05 14.03-2 Weekly") == "2026-11-05 14.03-2")
-    precondition(MeetingFiles.id(fromFileStem: "20260102T030405Z") == "20260102T030405Z")
-    precondition(MeetingFiles.id(fromFileStem: "notes") == nil)
     let library = MeetingLibrary(root: URL(fileURLWithPath: "/m"))
     var record = MeetingRecord(
-      id: "2026-11-05 14.03", title: "Weekly",
+      id: "20261105T140300Z", title: "Weekly",
       startedAt: Date(timeIntervalSince1970: 1_700_000_000),
       status: .complete, trigger: .automatic)
     record.speakers = [
@@ -214,16 +210,16 @@ extension Smoke {
       MeetingSpeaker(label: "Speaker 1", name: "Ada"),
     ]
     var meeting = MeetingInfo(record: record, library: library)
-    precondition(meeting.stem == "2026-11-05 14.03 Weekly" && meeting.localSpeaker == "Jona")
+    precondition(meeting.localSpeaker == "Jona")
     precondition(meeting.speakers == ["Jona", "Ada"] && meeting.automatic == true)
     precondition(meeting.transcriptPath == nil && meeting.recordPath == nil)
     meeting.durationSeconds = 61.26
-    meeting.audioPath = "/m/audios/2026-11-05 14.03 Weekly.m4a"
-    meeting.transcriptPath = "/m/transcripts/2026-11-05 14.03 Weekly.txt"
+    meeting.audioPath = "/m/audios/20261105T140300Z.m4a"
+    meeting.transcriptPath = "/m/transcripts/20261105T140300Z.txt"
     meeting.speakers = ["Speaker 1", "Speaker 2"]
     let dictionary = meeting.dictionary
-    precondition(dictionary["id"] as? String == "2026-11-05 14.03")
-    precondition(dictionary["stem"] as? String == "2026-11-05 14.03 Weekly")
+    precondition(dictionary["id"] as? String == "20261105T140300Z")
+    precondition(dictionary["stem"] == nil)
     precondition(dictionary["durationSeconds"] as? Double == 61.3)
     let line = String(
       decoding: try! EventLog.line(
@@ -278,11 +274,11 @@ extension Smoke {
     precondition(command("meetingnotes:discard") == nil, "Discarding is never a URL command")
     for removed in ["retry", "open", "library", "config"] {
       precondition(command("meetingnotes://" + removed) == nil)
-      precondition(command("meetingnotes://" + removed + "?id=2026-11-05%2014.03") == nil)
+      precondition(command("meetingnotes://" + removed + "?id=20261105T140300Z") == nil)
     }
     precondition(
-      command("meetingnotes://meeting/2026-11-05%2014.03?t=12")
-        == .meeting(MeetingLink(meetingID: "2026-11-05 14.03", time: 12)))
+      command("meetingnotes://meeting/20261105T140300Z?t=12")
+        == .meeting(MeetingLink(meetingID: "20261105T140300Z", time: 12)))
     precondition(command("meetingnotes://reveal?id=") == .reveal(id: nil))
     precondition(command("meetingnotes://explode") == nil)
     precondition(command("https://start") == nil)

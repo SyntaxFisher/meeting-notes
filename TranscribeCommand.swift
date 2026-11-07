@@ -57,13 +57,12 @@ enum TranscribeCommand {
           ParticipantRoster.self,
           from: Data(contentsOf: $0.appendingPathComponent("participants.json")))
       }
-      let stem = options.audio.deletingPathExtension().lastPathComponent
       let startedAt =
-        MeetingFiles.date(fromStem: stem)
+        MeetingFiles.date(fromID: options.audio.deletingPathExtension().lastPathComponent)
         ?? (try? options.audio.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date()
       var record = MeetingRecord(
         id: options.output.deletingPathExtension().lastPathComponent,
-        title: options.title ?? MeetingFiles.title(fromStem: stem), startedAt: startedAt,
+        title: options.title, startedAt: startedAt,
         status: .complete)
       record.audioFile = options.audio.lastPathComponent
       record.source = options.capture.flatMap {

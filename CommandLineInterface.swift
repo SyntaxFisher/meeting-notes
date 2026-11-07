@@ -67,8 +67,8 @@ struct CommandLineInterface {
       teams-participants              Print the current Teams meeting's participants.
       check-teams-mute                Print the detected Teams mute state.
 
-    Meeting ids are the timestamp at the start of every file name, e.g. "2026-11-05 15.17".
-    The full file name, a unique prefix or title fragment also work, and `latest` means the
+    Meeting ids are the UTC start time that names every file of a meeting, e.g.
+    20261105T141700Z. A unique id prefix or title fragment also works, and `latest` means the
     newest transcript. Edit-text and merge-speakers require the exact meeting id.
     Dates: 2026-11-05, an ISO timestamp, today, yesterday, or an age such
     as 7d or 12h. Add --json to any command for machine-readable output.
@@ -187,6 +187,11 @@ struct CommandLineInterface {
 
   private func execute(_ command: String, _ arguments: Arguments) throws -> Int32 {
     let library = bridge.library
+    if !["help", "settings", "agent-setup", "teams-participants", "check-teams-mute"].contains(
+      command)
+    {
+      LibraryReader.migrateFiles(library.root)
+    }
     switch command {
     case "help":
       print(Self.usage)
