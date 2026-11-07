@@ -1,0 +1,9 @@
+{
+  "title": "Solo microphone check",
+  "speakers": {
+    "me": { "name": "Meeting Notes Dev", "voice": "Anna", "lang": "de", "via": "mic" }
+  },
+  "steps": [
+    { "speaker": "me", "text": "Hallo, hallo, Test eins, zwei, drei. Ich bin alleine in diesem Meeting und teste mein Mikrofon." }
+  ]
+}

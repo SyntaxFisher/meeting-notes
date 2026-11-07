@@ -44,21 +44,26 @@ enum TeamsMuteClassifier {
     "", "microsoft teams", "meeting", "calendar", "chat", "activity", "teams", "calls",
   ]
 
+  /// Teams can show the same meeting in more than one window (for example a compact view next
+  /// to the main window), so several meeting windows count as one state when they agree.
   static func classify(_ windows: [TeamsWindowSnapshot]) -> TeamsMuteState {
     let meetingWindows = windows.filter(isMeetingWindow)
-    guard meetingWindows.count == 1 else {
-      return .unavailable(meetingWindows.isEmpty ? .noMeeting : .ambiguous)
+    guard !meetingWindows.isEmpty else { return .unavailable(.noMeeting) }
+    var states: Set<TeamsMuteState> = []
+    for window in meetingWindows {
+      let windowStates = window.buttons.compactMap(classifyButton)
+      if windowStates.count > 1 { return .unavailable(.ambiguous) }
+      states.formUnion(windowStates)
     }
-    let states = meetingWindows[0].buttons.compactMap(classifyButton)
-    guard states.count == 1 else {
+    guard states.count == 1, let state = states.first else {
       return .unavailable(states.isEmpty ? .noControl : .ambiguous)
     }
-    return states[0]
+    return state
   }
 
   static func meetingTitle(_ windows: [TeamsWindowSnapshot]) -> String? {
-    let meetingWindows = windows.filter(isMeetingWindow)
-    guard meetingWindows.count == 1, var title = meetingWindows[0].title else { return nil }
+    let titles = Set(windows.filter(isMeetingWindow).map(\.title))
+    guard titles.count == 1, var title = titles.first ?? nil else { return nil }
     title = title.trimmingCharacters(in: .whitespacesAndNewlines)
     for suffix in [" | Microsoft Teams", " - Microsoft Teams"] where title.hasSuffix(suffix) {
       title.removeLast(suffix.count)

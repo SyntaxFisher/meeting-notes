@@ -1,0 +1,14 @@
+{
+  "description": "Short follow-up customer call with one external participant for the demo video, joined right after the product sync to show back-to-back recording.",
+  "speakers": {
+    "me": { "via": "mic", "voice": "Reed (German (Germany))", "lang": "de" },
+    "sophie": { "via": "guest", "display": "Sophie Wagner", "voice": "Sandy (German (Germany))", "lang": "de" }
+  },
+  "steps": [
+    { "speaker": "me", "text": "Hallo Frau Wagner, schön, dass es geklappt hat. Ich habe gute Nachrichten zum Export." },
+    { "speaker": "sophie", "text": "Hallo! Da bin ich gespannt. Unser Team wartet vor allem auf die PDF-Berichte für die Quartalsauswertung." },
+    { "speaker": "me", "text": "Genau die kommen nächste Woche. Die Excel-Variante folgt etwa zwei Wochen später." },
+    { "speaker": "sophie", "text": "Das passt gut. Können Sie mir bis Freitag eine kurze Anleitung schicken, damit ich mein Team vorbereiten kann?" },
+    { "speaker": "me", "text": "Mache ich. Sie bekommen die Anleitung bis Freitag per Mail. Vielen Dank und bis bald." }
+  ]
+}

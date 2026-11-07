@@ -1,0 +1,27 @@
+[Unit]
+Description=Meeting Notes Universal Link association and fallback
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/srv/meeting-notes-links
+ExecStart=/usr/bin/python3 -B /srv/meeting-notes-links/server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

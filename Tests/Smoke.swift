@@ -6,6 +6,17 @@ import Foundation
 struct Smoke {
   @MainActor
   static func main() async throws {
+    setvbuf(stdout, nil, _IOLBF, 0)
+    if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--mcp-fixture" {
+      try AgentFixture.run(root: URL(fileURLWithPath: CommandLine.arguments[2]))
+      return
+    }
+    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--edit-fixture-writer" {
+      try TranscriptEditsSmoke.writeFixture(
+        root: URL(fileURLWithPath: CommandLine.arguments[2]), text: CommandLine.arguments[3])
+      return
+    }
+
     if CommandLine.arguments.count == 4,
       CommandLine.arguments[1] == "--permission-setup-fixture"
     {
@@ -26,6 +37,11 @@ struct Smoke {
       precondition(defaults.synchronize())
       return
     }
+    if CommandLine.arguments.count == 4, CommandLine.arguments[1] == captureUntilKilledFlag {
+      try await captureUntilKilled(
+        directory: URL(fileURLWithPath: CommandLine.arguments[2]),
+        ready: URL(fileURLWithPath: CommandLine.arguments[3]))
+    }
     let permissionSuite = "com.jona.meeting-notes.tests.\(UUID().uuidString)"
     defer {
       UserDefaults(suiteName: permissionSuite)?.removePersistentDomain(forName: permissionSuite)
@@ -39,6 +55,14 @@ struct Smoke {
       precondition(process.terminationReason == .exit && process.terminationStatus == 0)
     }
     print("System audio setup survives relaunches and build changes; explicit denial clears it: OK")
+    SoundSmoke.run()
+    try SpeakerIdentitySmoke.run()
+    try AgentSmoke.run()
+    try TranscriptEditsSmoke.run()
+    try MeetingTitlesSmoke.run()
+    try AgentEditingSmoke.run()
+    TranscriptScrollSmoke.run()
+    try testPausedMeetingLinks()
     let updateGate = UpdateInstallationGate()
     var installs = 0
     precondition(updateGate.postpone(whileBusy: true) { installs += 1 })
@@ -69,22 +93,7 @@ struct Smoke {
     updateGate.resumeIfIdle(true)
     precondition(installs == 2 && !updateGate.installationStarted)
     print("Update installation waits for work, resumes once, and clears failed attempts: OK")
-    for rate in [16_000.0, 44_100.0, 48_000.0] {
-      let total = Int64(30.289 * rate)
-      precondition(TranscriptionAudio.frameCount(remaining: total, sampleRate: rate) == total)
-      let long = Int64(60.289 * rate)
-      let first = TranscriptionAudio.frameCount(remaining: long, sampleRate: rate)
-      precondition(first == Int64(30 * rate))
-      precondition(
-        TranscriptionAudio.frameCount(remaining: long - first, sampleRate: rate) == long - first)
-    }
-    let short: [Float] = [0.25, -0.25]
-    let padded = TranscriptionAudio.pad(short, minimumCount: 4_800)
-    precondition(padded.count == 4_800)
-    precondition(Array(padded.prefix(short.count)) == short)
-    precondition(padded.dropFirst(short.count).allSatisfy { $0 == 0 })
-    precondition(TranscriptionAudio.pad(padded, minimumCount: 4_800) == padded)
-    print("Transcription preserves short tails and pads short speaker turns: OK")
+    SpeechPlanSmoke.run()
     for microphone in [false, true] {
       for systemAudioRequested in [false, true] {
         for accessibility in [false, true] {
@@ -96,6 +105,11 @@ struct Smoke {
           precondition(permissions.missing.contains(.microphone) == !microphone)
           precondition(permissions.missing.contains(.systemAudio) == !systemAudioRequested)
           precondition(permissions.missing.contains(.accessibility) == !accessibility)
+          precondition(
+            permissions.missingForRecording().isEmpty == (microphone && systemAudioRequested))
+          precondition(
+            permissions.missingForRecording(automatically: true).isEmpty
+              == permissions.recordingGranted)
         }
       }
     }
@@ -104,6 +118,24 @@ struct Smoke {
         .missing
         == [.microphone, .systemAudio, .accessibility])
     var setupSteps: [String] = []
+    let permissionModel = AppModel()
+    for permission in MeetingPermission.setupOrder {
+      precondition(permissionModel.statusText(for: permission) == "Not allowed")
+    }
+    permissionModel.permissions = PermissionSnapshot(
+      microphone: true, systemAudioRequested: true, accessibility: true)
+    precondition(!permissionModel.allPermissionsGranted)
+    permissionModel.folderAccess = .denied("Access denied")
+    precondition(!permissionModel.allPermissionsGranted)
+    permissionModel.folderAccess = .granted
+    precondition(permissionModel.allPermissionsGranted)
+    for permission in MeetingPermission.setupOrder {
+      precondition(permissionModel.statusText(for: permission) == "Allowed")
+    }
+    permissionModel.systemAudioBlocked = true
+    precondition(!permissionModel.allPermissionsGranted)
+    precondition(permissionModel.statusText(for: .systemAudio) == "Not allowed")
+    precondition(MeetingPermission.documents.settingsURL.query == "Privacy_FilesAndFolders")
     try await PermissionAccess.requestInOrder(
       microphone: {
         setupSteps.append("microphone")
@@ -177,18 +209,6 @@ struct Smoke {
       "meeting-tests-\(UUID().uuidString)")
     try manager.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? manager.removeItem(at: root) }
-    let stateDirectory = root.appendingPathComponent("state")
-    let state = try StateStore(directory: stateDirectory)
-    let date = Date(timeIntervalSince1970: 0)
-    try state.update { $0.session = MeetingSession(startedAt: date, stem: "19700101T000000Z") }
-    let recovered = try StateStore(directory: stateDirectory)
-    precondition(recovered.state.session?.stem == "19700101T000000Z")
-    try recovered.update {
-      $0.session = nil
-      $0.pendingAudio = "test.m4a"
-    }
-    let retried = try StateStore(directory: stateDirectory)
-    precondition(retried.state.pendingAudio == "test.m4a")
     let audios = root.appendingPathComponent("audios")
     let transcripts = root.appendingPathComponent("transcripts")
     try manager.createDirectory(at: audios, withIntermediateDirectories: true)
@@ -200,23 +220,24 @@ struct Smoke {
     let unrelated = audios.appendingPathComponent("keep-me.m4a")
     try Data(repeating: 1, count: 200).write(to: unrelated)
     try testNaming(root: root.appendingPathComponent("naming"))
+    try await MeetingSmoke.run(root: root.appendingPathComponent("meetings"))
     print("Local-time filenames, meeting titles, and mixed-format retention order: OK")
     func exists(_ folder: URL, _ name: String) -> Bool {
       manager.fileExists(atPath: folder.appendingPathComponent(name).path)
     }
     try RecordingRetention.enforce(
-      root: root, protectedStem: "19700101T000000Z", audioBudget: 40, transcriptBudget: 1_000)
+      root: root, protected: ["19700101T000000Z"], audioBudget: 40)
     precondition(exists(audios, "19700101T000000Z.m4a"))
     precondition(!exists(audios, "19700101T000001Z.m4a"))
     precondition(exists(audios, "19700101T000002Z.m4a"))
     for stem in ["19700101T000000Z", "19700101T000001Z", "19700101T000002Z"] {
       precondition(exists(transcripts, stem + ".txt"))
     }
-    try RecordingRetention.enforce(root: root, audioBudget: 10, transcriptBudget: 15)
+    try RecordingRetention.enforce(root: root, audioBudget: 10)
     precondition(!exists(audios, "19700101T000000Z.m4a"))
     precondition(exists(audios, "19700101T000002Z.m4a"))
-    precondition(!exists(transcripts, "19700101T000000Z.txt"))
-    precondition(!exists(transcripts, "19700101T000001Z.txt"))
+    precondition(exists(transcripts, "19700101T000000Z.txt"))
+    precondition(exists(transcripts, "19700101T000001Z.txt"))
     precondition(exists(transcripts, "19700101T000002Z.txt"))
     precondition(manager.fileExists(atPath: unrelated.path))
     precondition(TeamsMuteState.muted.microphoneMuted)
@@ -228,6 +249,7 @@ struct Smoke {
       precondition(!TeamsMuteState.unavailable(reason).microphoneMuted)
     }
     try await testAudioCapture(root: root.appendingPathComponent("audio-capture"))
+    try await testCaptureRecovery(root: root.appendingPathComponent("capture-recovery"))
     testTeamsDetection()
     print("English and German Teams meeting, mute, and title detection: OK")
     precondition(TeamsMuteState.muted.meetingPresence == .inMeeting)
@@ -236,11 +258,16 @@ struct Smoke {
     precondition(TeamsMuteState.unavailable(.accessibilityError).meetingPresence == .unknown)
     testAutoRecordPolicy()
     print("Teams auto-record: starts, stops after grace, respects manual control: OK")
+    try testAutomation(root: root.appendingPathComponent("automation"))
+    testMeetingLinks()
+    print("HTTPS and native meeting links: origins, encoding, times and segments: OK")
+    try testStatus(root: root.appendingPathComponent("status"))
+    try await testNonBlockingStartup(root: root.appendingPathComponent("startup"))
 
     let capture = root.appendingPathComponent("capture")
     try manager.createDirectory(at: capture, withIntermediateDirectories: true)
-    try writeTrack(at: capture.appendingPathComponent("system.caf"), muted: false)
-    try writeTrack(at: capture.appendingPathComponent("microphone.caf"), muted: true)
+    try writeTrack(at: capture.appendingPathComponent("system.aac"), muted: false)
+    try writeTrack(at: capture.appendingPathComponent("microphone.aac"), muted: true)
     try JSONEncoder().encode(CaptureManifest(systemStart: 100, microphoneStart: 100.5)).write(
       to: capture.appendingPathComponent("capture.json"))
     let mixed = root.appendingPathComponent("mixed.m4a")
@@ -268,7 +295,7 @@ struct Smoke {
     } catch {}
     let microphoneOnly = root.appendingPathComponent("microphone-only")
     try manager.createDirectory(at: microphoneOnly, withIntermediateDirectories: true)
-    try writeTrack(at: microphoneOnly.appendingPathComponent("microphone.caf"), muted: false)
+    try writeTrack(at: microphoneOnly.appendingPathComponent("microphone.aac"), muted: false)
     try JSONEncoder().encode(CaptureManifest(microphoneStart: 100)).write(
       to: microphoneOnly.appendingPathComponent("capture.json"))
     let microphoneOutput = root.appendingPathComponent("microphone-only.m4a")
@@ -287,21 +314,14 @@ struct Smoke {
     print("Optional Teams capture, missing mute detection, and microphone-only mixing: OK")
     print("Native AAC conversion, mute, mixing, timestamps, retention, recovery, and filenames: OK")
     if [4, 5].contains(CommandLine.arguments.count) && CommandLine.arguments[1] == "--transcribe" {
-      let text = try await NativeTranscriber().transcribe(
+      let result = try await NativeTranscriber().transcribe(
         file: URL(fileURLWithPath: CommandLine.arguments[2]),
         executable: URL(fileURLWithPath: CommandLine.arguments[3]))
-      precondition(text.contains("Speaker 1:"))
+      precondition(result.mode == .mixed && !result.segments.isEmpty)
       if CommandLine.arguments.count == 5 {
         let expected = Int(CommandLine.arguments[4])!
-        let labels = Set(
-          text.split(separator: "\n").compactMap { line -> String? in
-            guard let start = line.range(of: "Speaker "),
-              let end = line[start.upperBound...].firstIndex(of: ":")
-            else { return nil }
-            return String(line[start.upperBound..<end])
-          })
-        precondition(
-          labels == Set((1...expected).map(String.init)), "Unexpected speaker count: \(labels)")
+        let labels = Set(result.segments.map(\.speaker))
+        precondition(labels.count == expected, "Unexpected speaker count: \(labels)")
         print("Expected speaker count \(expected): OK")
       }
       print("Native transcription with timestamps and speaker labels: OK")
@@ -339,11 +359,24 @@ struct Smoke {
     precondition(MeetingFiles.titleComponent("   ") == nil)
     precondition(MeetingFiles.titleComponent(String(repeating: "a", count: 200))?.count == 80)
     precondition(
-      MeetingSession(startedAt: epoch, stem: "1970-01-01 00.00", title: "Weekly Sync").fileStem
+      MeetingFiles.displayTitle("  Produkt-Sync:\n Export-Launch ") == "Produkt-Sync: Export-Launch"
+    )
+    precondition(MeetingFiles.displayTitle(" \n ") == nil)
+    precondition(
+      MeetingFiles.fileStem(id: "2026-11-05 10.00", title: "Produkt-Sync: Export-Launch")
+        == "2026-11-05 10.00 Produkt-Sync- Export-Launch")
+    precondition(
+      MeetingFiles.fileStem(id: "1970-01-01 00.00", title: "Weekly Sync")
         == "1970-01-01 00.00 Weekly Sync")
-    let legacyState = #"{"session":{"startedAt":0,"stem":"19700101T000000Z"}}"#
-    let decoded = try JSONDecoder().decode(MeetingState.self, from: Data(legacyState.utf8))
-    precondition(decoded.session?.title == nil && decoded.session?.fileStem == "19700101T000000Z")
+    precondition(MeetingFiles.fileStem(id: "19700101T000000Z", title: nil) == "19700101T000000Z")
+    precondition(
+      MeetingFiles.id(fromFileName: "1970-01-01 00.00-2 Weekly Sync.summary.md")
+        == "1970-01-01 00.00-2")
+    precondition(MeetingFiles.id(fromFileName: "1970-01-01 00.00.json") == "1970-01-01 00.00")
+    precondition(MeetingFiles.id(fromFileName: "19700101T000000Z.m4a") == "19700101T000000Z")
+    precondition(
+      MeetingFiles.id(fromFileName: "1970-01-01 00.00 v1.2 review.txt") == "1970-01-01 00.00")
+    precondition(MeetingFiles.id(fromFileName: "keep-me.m4a") == nil)
 
     let calendar = TeamsWindowSnapshot(title: "Calendar | Microsoft Teams", buttons: [["Chat"]])
     let meeting = TeamsWindowSnapshot(
@@ -420,9 +453,18 @@ struct Smoke {
               TeamsWindowSnapshot(buttons: [[leave.uppercased()], labels])
             ]) == expected)
         }
+        let compactView = TeamsWindowSnapshot(
+          title: "Mittagspause | Microsoft Teams", buttons: [[leave]])
+        precondition(TeamsMuteClassifier.classify([meeting, meeting]) == expected)
+        precondition(TeamsMuteClassifier.classify([compactView, meeting]) == expected)
         precondition(
-          TeamsMuteClassifier.classify([meeting, meeting]) == .unavailable(.ambiguous))
-        precondition(TeamsMuteClassifier.meetingTitle([meeting, meeting]) == nil)
+          TeamsMuteClassifier.meetingTitle([compactView, meeting]) == "Mittagspause")
+        let otherMeeting = TeamsWindowSnapshot(
+          title: "Kundencall | Microsoft Teams",
+          buttons: [[leave], [action == mute ? unmute : mute]])
+        precondition(
+          TeamsMuteClassifier.classify([meeting, otherMeeting]) == .unavailable(.ambiguous))
+        precondition(TeamsMuteClassifier.meetingTitle([meeting, otherMeeting]) == nil)
 
         let prejoin = TeamsWindowSnapshot(
           title: "Mittagspause | Microsoft Teams", buttons: [[action]])
@@ -448,6 +490,28 @@ struct Smoke {
   private static func testAutoRecordPolicy() {
     let start = Date(timeIntervalSince1970: 0)
     let grace = TeamsAutoRecordPolicy.leaveGracePeriod
+    var manual = TeamsAutoRecordPolicy()
+    _ = manual.observe(.noMeeting, at: start, isRecording: false, canStart: true)
+    _ = manual.observe(.noMeeting, at: start + grace, isRecording: false, canStart: true)
+    manual.recordingStarted(automatically: false)
+    manual.recordingEnded()
+    precondition(
+      !manual.waitingForMeetingEnd, "A manual recording outside Teams must not pause auto-record")
+    precondition(
+      manual.observe(.inMeeting, at: start + 1, isRecording: false, canStart: true) == .start)
+
+    var quickLeave = TeamsAutoRecordPolicy()
+    quickLeave.recordingStarted(automatically: true)
+    precondition(
+      quickLeave.observe(.noMeeting, at: start, isRecording: true, canStart: false) == nil)
+    precondition(
+      quickLeave.observe(.noMeeting, at: start + 0.4, isRecording: true, canStart: false) == nil)
+    precondition(
+      quickLeave.observe(.unknown, at: start + 0.6, isRecording: true, canStart: false) == nil)
+    precondition(
+      quickLeave.observe(.noMeeting, at: start + 1, isRecording: true, canStart: false) == nil)
+    precondition(
+      quickLeave.observe(.noMeeting, at: start + 2, isRecording: true, canStart: false) == .stop)
     var policy = TeamsAutoRecordPolicy()
     precondition(policy.observe(.noMeeting, at: start, isRecording: false, canStart: true) == nil)
     precondition(policy.observe(.inMeeting, at: start, isRecording: false, canStart: false) == nil)
@@ -519,5 +583,6 @@ struct Smoke {
       }
       try track.append(buffer, timestamp: 100 + Double(block) / 10, muted: muted)
     }
+    try track.finish()
   }
 }

@@ -1,72 +1,72 @@
 # Meeting Notes
 
-Record a meeting from your menu bar and turn it into a timestamped transcript on your Mac. Meeting Notes captures your microphone and Microsoft Teams audio, then transcribes locally with speaker labels.
+Meeting Notes records your Microsoft Teams meetings from the menu bar and turns each one into a timestamped transcript on your Mac. Connect your coding agent once, and after a meeting you just ask it: "Summarize my last meeting."
 
 [Download the latest release](https://github.com/SyntaxFisher/meeting-notes/releases/latest)
 
+## How it works
+
+1. Install the app and allow the permissions it asks for. Nothing else needs to be set up.
+2. Join a Teams meeting. Meeting Notes starts recording on its own and transcribes the meeting a few seconds after you leave. You can go straight into your next meeting; earlier meetings wait in a queue.
+3. Ask your agent (Codex, Claude Code or pi) about "my last meeting", or open the transcript from the menu bar.
+
+Recording and transcription run on your Mac. Connected agents receive the transcript content you ask them to work with.
+
 ## Features
 
-- Start recording and transcribe when you finish, directly from the menu bar.
-- Capture Teams playback alongside your microphone, or record your microphone on its own.
-- Get timestamps and anonymous speaker labels in a plain-text transcript.
-- Optionally start and stop recording automatically with Teams meetings.
-- Mirror your Teams mute state to exclude your microphone while muted.
+- **Automatic recording** of Teams meetings, including back-to-back meetings. Manual recording is one click away.
+- **Local transcription** with timestamps by OpenAI Whisper large-v3-turbo, in German, English and the other languages Whisper knows, also when a meeting switches between them. Everything your microphone recorded carries your name, the Teams participant list is saved with the meeting, and a remote voice gets a name when Teams listed only one other participant.
+- **Agent access** through a built-in MCP server. **Settings > Agents** connects Codex, Claude Code or pi with one click; `get_meeting` answers "my last meeting" in a single call.
+- **Nothing is lost silently.** A failed or interrupted recording stays visible until you retry or discard it, even after a crash. Discarded and deleted meetings go to the Trash.
+- **Optional extras** for people who want them: a Library window with search, playback from any timestamp and speaker renaming; a command-line tool; an event log, a `meetingnotes://` URL scheme and Shortcuts actions; every setting in the Settings window, stored in `~/.config/meeting-notes/config.json`.
 
 ## Requirements
 
 - An Apple silicon Mac running macOS 26 or later.
-- Microphone, System Audio Recording, and Accessibility permissions.
-- Internet access for the initial transcription model download. Transcription and speaker detection run locally after the models are installed.
+- Documents, Microphone, System Audio Recording and Accessibility permissions.
+- Internet access for the first transcription, which downloads the models (about 600 MB). Afterwards transcription runs offline.
 
 ## Install
 
 1. Download the DMG from the [latest release](https://github.com/SyntaxFisher/meeting-notes/releases/latest).
 2. Open it and drag **Meeting Notes** to **Applications**.
-3. Open Meeting Notes from Applications.
-4. Choose **Grant Permissions…** in its menu and follow the setup prompts.
+3. Open Meeting Notes. A short setup window asks for the permissions; it is the only window that ever opens by itself.
 
-The release app is signed with Developer ID and notarized by Apple. No developer tools are needed. Models download on your first transcription.
+The release app is signed with Developer ID and notarized by Apple.
 
 ## Use
 
-1. Open Teams before starting if you want to include its playback. Without Teams, the recording uses only your microphone.
-2. Choose **Start Recording** in the Meeting Notes menu.
-3. Choose **Stop & Transcribe** when you finish, or **Stop & Discard** to delete the recording immediately. Both actions pause auto-record until you leave the Teams meeting and join again.
-4. Use **Show in Finder** or **Copy Last Transcript Path** to find the result.
+Click the menu bar icon to see the recording control, the last three meetings with transcription progress, and whether an agent is connected.
 
-Headphones help avoid echo between meeting playback and your microphone. Sounds from other apps are not captured in place of Teams audio, although your microphone can pick up sounds in the room.
+- **Recording**: auto-record starts when you join a Teams meeting and stops about a second after you leave. **Record** in the panel records anything else, for example a call in Zoom or Google Meet: without a Teams meeting it captures your microphone and everything the Mac plays. While recording, the panel offers **Stop & Transcribe** and **Discard Recording**.
+- **Transcripts**: a quiet sound signals when a transcript is ready. **Last Meetings** and **Open App** in the panel open the meeting library, which also opens when you launch Meeting Notes again from Finder or Spotlight. The panel stays ready for a new recording while earlier meetings transcribe below.
+- **Problems**: if a recording or transcription fails, the panel lists the meeting under **Needs attention** with **Retry** and **Discard**. Several meetings can wait there at once; each is handled on its own. Nothing is deleted until you choose Discard, and Discard moves the files to the Trash. Recordings under one minute without any speech are moved to the Trash automatically.
 
-The menu bar icon pulses red while recording, turns orange during processing, and briefly turns green when the transcript is ready.
+**Mirror Teams mute** (on by default) leaves your microphone out of the recording while you are muted in Teams. Headphones avoid echo between the meeting playback and your microphone.
 
-If transcription fails, choose **Retry Transcription** the first time you open the menu after the error. Closing that menu without choosing Retry deletes the failed audio. Recordings shorter than one minute with no detected speech are also deleted automatically.
+In a Teams meeting, your microphone and the Teams audio are transcribed separately. Everything you said is labeled with your Teams display name once Meeting Notes has seen it (otherwise your macOS name; change it in **Settings > General**). Remote voices are labeled **Speaker 1**, **Speaker 2** and so on, told apart by sound; the transcript lists the participants Teams showed, so you or an agent can match them. Recordings without Teams audio label every voice anonymously.
 
-**Mirror Teams Mute** is on by default. When the app detects that you are muted in Teams, it excludes your microphone from the recording. Detection supports the English and German Teams interfaces. If mute status cannot be determined, the microphone is recorded.
+## Use with coding agents
 
-**Auto-Record Teams Meetings** is off by default. Turn it on to record when you join a Teams meeting and transcribe shortly after you leave. Manually started recordings stay under your control. **Launch at Login** is also optional and off by default.
+Open **Settings > Agents** (or **Connect an Agent…** in the panel) and click **Connect…** next to Codex, Claude Code or pi. Meeting Notes shows the exact command it runs and then checks the result. Afterwards, ask your agent things like "Fass mein letztes Meeting zusammen", "What did we decide about the budget last week?" or "Record this call and send me the action items". See [using Meeting Notes with coding agents](docs/mcp-and-cli.md).
 
-Transcripts include timestamps and labels such as **Speaker 1** and **Speaker 2**. These are estimates, not participants' names; short clips and overlapping voices can reduce accuracy. The app produces a transcript without an AI summary or cleanup.
+## Files and privacy
 
-## Privacy and permissions
+Meetings are saved in `~/Documents/meeting-notes/`: audio in `audios/`, and in `transcripts/` the plain-text transcript plus one JSON record per meeting with its status, speakers, summary, Teams participants and timed segments. Transcript corrections update the saved text directly; no original copy or edit history is retained.
 
-Audio and transcripts are processed and saved on your Mac. Models download on first use, and release builds contact GitHub for updates.
+**Transcripts are always kept.** Saved audio has a configurable 10 GB limit. The newest recording and unfinished or failed meetings are protected. See [files and retention](docs/usage.md#files-and-retention).
 
-Microphone permission allows voice capture. System Audio Recording allows Teams playback capture. Accessibility supports Teams meeting and mute detection and is required even for microphone-only recording. The app does not record video or request a screen-sharing session.
-
-Files are saved under `~/Documents/meeting-notes/` in the `audios` and `transcripts` folders, named by recording time and the Teams meeting title when available.
-
-**Older files are automatically deleted:** audio has a 100 MB storage budget and transcripts have a separate 10 GB budget. The newest recording and newest transcript are always kept, even if either exceeds its budget. Copy files you want to keep outside these folders. See [files and retention](docs/usage.md#files-and-retention) for details.
+Documents access saves your meetings, Microphone captures your voice, System Audio Recording captures Teams playback (or all device audio for manual recordings outside Teams), and Accessibility detects Teams meetings, titles, participants and your mute state. Release builds contact GitHub for updates.
 
 ## Updates and uninstall
 
-Release builds check for updates roughly hourly while running and download them automatically. Downloaded updates install and restart the app automatically once recording, transcription, and permission setup have finished. If auto-record is waiting for a Teams meeting you stopped recording to end, updates wait too, so restarting cannot resume that recording. Checks also wait while the app is busy; sleep and network availability can delay them. Use **Check for Updates…** or **Automatic Updates** in the menu to manage them.
+Release builds check for updates about every hour and install them only when nothing is recording, waiting for transcription or transcribing, and no permission setup is running. **Settings > About** has the controls.
 
-To uninstall, finish recording or transcription, turn off **Launch at Login** if enabled, quit the app, and delete it from Applications. Your recordings and transcripts remain in `~/Documents/meeting-notes/`. Downloaded models remain in the shared `~/Library/Application Support/FluidAudio/Models` cache.
+To uninstall, quit Meeting Notes and delete it from Applications. Your meetings stay in `~/Documents/meeting-notes/`, the settings in `~/.config/meeting-notes/`, and the models in `~/Library/Application Support/Meeting Notes/Models` and `~/Library/Application Support/FluidAudio/Models`. If you connected an agent, remove it there too, for example with `codex mcp remove meeting-notes`.
 
 ## Support
 
-[Open an issue](https://github.com/SyntaxFisher/meeting-notes/issues/new) with your macOS version, Mac model, app version, and steps to reproduce the problem. Include whether Teams was open and which microphone or headset you used. Avoid posting private meeting audio or transcripts.
-
-For permission troubleshooting, recording recovery, and detailed behavior, see the [usage reference](docs/usage.md).
+[Open an issue](https://github.com/SyntaxFisher/meeting-notes/issues/new) with your macOS version, Mac model, app version and steps to reproduce the problem. Avoid posting private meeting audio or transcripts. For details, see the [usage reference](docs/usage.md) and [automation guide](docs/automation.md).
 
 ## Development
 

@@ -8,6 +8,8 @@ struct NoSpeechDetected: LocalizedError {
 @MainActor
 final class NativeTranscriber {
   private var process: Process?
+  /// Receives each new helper stage, such as "Transcribing part 3/11".
+  var onProgress: ((String) -> Void)?
 
   nonisolated static func duration(of file: URL) throws -> TimeInterval {
     let audio = try AVAudioFile(forReading: file)
@@ -18,7 +20,7 @@ final class NativeTranscriber {
     if status["noSpeech"] == "true" { return NoSpeechDetected() }
     return MeetingError(
       status["error"]
-        ?? "Local transcription stopped during \(status["stage"] ?? "startup") (code \(code)). Retry Transcription."
+        ?? "Local transcription stopped during \(status["stage"] ?? "startup") (code \(code)). Choose Retry to try again."
     )
   }
 
@@ -26,7 +28,11 @@ final class NativeTranscriber {
     if let process, process.isRunning { process.terminate() }
   }
 
-  func transcribe(file: URL, executable: URL? = nil) async throws -> String {
+  /// Transcribes `file`. With a `capture` directory that holds separate microphone and Teams
+  /// tracks, the helper transcribes each track on its own.
+  func transcribe(file: URL, capture: URL? = nil, executable: URL? = nil) async throws
+    -> TranscriptSegments
+  {
     let executable =
       executable
       ?? Bundle.main.bundleURL
@@ -39,11 +45,11 @@ final class NativeTranscriber {
     try FileManager.default.createDirectory(
       at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: temporary) }
-    let output = temporary.appendingPathComponent("transcript.txt")
+    let output = temporary.appendingPathComponent("segments.json")
     let progress = temporary.appendingPathComponent("progress.json")
     let task = Process()
     task.executableURL = executable
-    task.arguments = [file.path, output.path, progress.path]
+    task.arguments = [file.path, output.path, progress.path] + (capture.map { [$0.path] } ?? [])
     task.standardOutput = FileHandle.nullDevice
     task.standardError = FileHandle.nullDevice
     process = task
@@ -60,6 +66,7 @@ final class NativeTranscriber {
       if let message = status["stage"], message != lastProgress {
         AppLog.event("native.progress", message)
         lastProgress = message
+        onProgress?(message)
       }
       return status
     }
@@ -77,10 +84,12 @@ final class NativeTranscriber {
     guard task.terminationStatus == 0 else {
       throw Self.failure(status: status, code: task.terminationStatus)
     }
-    let text = try String(contentsOf: output, encoding: .utf8)
-    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw NoSpeechDetected()
-    }
-    return text
+    let result = try JSONDecoder().decode(TranscriptSegments.self, from: Data(contentsOf: output))
+    guard !result.segments.isEmpty else { throw NoSpeechDetected() }
+    AppLog.event(
+      "native.result",
+      "mode=\(result.mode.rawValue); segments=\(result.segments.count); echoCoupling=\(result.echo.map { String(format: "%.3f", $0.coupling) } ?? "n/a")"
+    )
+    return result
   }
 }

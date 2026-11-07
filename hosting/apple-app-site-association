@@ -1,0 +1,10 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["94DW6CHJD7.com.jona.meeting-notes"],
+        "components": [{"/": "/meeting/*"}]
+      }
+    ]
+  }
+}
