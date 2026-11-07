@@ -202,7 +202,7 @@ enum MeetingSmoke {
     let config = ConfigStore(file: root.appendingPathComponent("config.json"))
     config.load()
     var permissions = PermissionSnapshot(
-      microphone: true, systemAudioRequested: true, accessibility: true)
+      microphone: true, systemAudio: true, accessibility: true)
     var openedLinks: [MeetingLink] = []
     let commands = CommandCenter(
       engine: engine, config: config, teams: TeamsMonitor(),
@@ -246,7 +246,7 @@ enum MeetingSmoke {
     precondition(
       commands.startBlockedReason(automatically: true)?.contains("Accessibility")
         == true)
-    permissions.systemAudioRequested = false
+    permissions.systemAudio = false
     precondition(commands.startBlockedReason?.contains("System Audio") == true)
     let automaticStatus = await commands.status()
     precondition(!automaticStatus.canStartRecording)
@@ -256,7 +256,7 @@ enum MeetingSmoke {
     precondition(start.contains("Missing permissions: Microphone, System Audio"))
     precondition(!start.contains("Accessibility"))
     permissions.microphone = true
-    permissions.systemAudioRequested = true
+    permissions.systemAudio = true
     permissions.accessibility = true
     precondition(commands.startBlockedReason == nil, "Queued work never blocks a recording")
     for source: JSONValue in ["auto", "microphone", "us.zoom.xos", .null, .number(42)] {

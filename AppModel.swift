@@ -84,7 +84,7 @@ final class AppModel {
   var paths = AutomationPaths.standard
   var launchAtLogin = false
   var permissions = PermissionSnapshot(
-    microphone: false, systemAudioRequested: false, accessibility: false)
+    microphone: false, systemAudio: false, accessibility: false)
   var microphone = MicrophoneAuthorization.notDetermined
   var systemAudioBlocked = false
   var requestingPermissions = false
@@ -127,7 +127,7 @@ final class AppModel {
   func granted(_ permission: MeetingPermission) -> Bool {
     switch permission {
     case .microphone: return permissions.microphone
-    case .systemAudio: return permissions.systemAudioRequested && !systemAudioBlocked
+    case .systemAudio: return permissions.systemAudio && !systemAudioBlocked
     case .accessibility: return permissions.accessibility
     case .documents: return folderAccess == .granted
     }

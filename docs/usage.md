@@ -6,7 +6,7 @@
 
 The setup window lists **Documents → Microphone → System Audio Recording → Accessibility**, each with an **Allowed** or **Not allowed** status. Use each row's **Allow** button to grant access; macOS may ask directly or open System Settings. Documents access is requested when the meetings folder is first read. You can also manage these permissions in **Settings > Permissions**.
 
-No screen recording permission is requested and no screen-sharing session is created. macOS does not let apps preflight System Audio Recording, so the System Audio Recording "Allowed" label reflects a completed setup step; if Teams voices are missing, check **System Settings > Privacy & Security > Screen & System Audio Recording**. An explicit Core Audio denial blocks automatic recording until setup runs again. Accessibility detects Teams meetings, titles, participants and your mute state; automatic Teams recording requires it.
+No screen recording permission is requested and no screen-sharing session is created. The System Audio Recording status is the decision macOS has stored for the app, and **Allow** shows the macOS prompt even when no app is playing audio. After a denial, change it in **System Settings > Privacy & Security > Screen & System Audio Recording**. A Core Audio denial during capture blocks automatic recording until setup runs again. Accessibility detects Teams meetings, titles, participants and your mute state; automatic Teams recording requires it.
 
 ## The panel
 

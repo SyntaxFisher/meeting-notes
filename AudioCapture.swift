@@ -452,24 +452,6 @@ final class SystemAudioCapture: AudioCaptureInput, @unchecked Sendable {
     }
   }
 
-  static func requestAccess() async throws {
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-      DispatchQueue.global(qos: .userInitiated).async {
-        let capture = SystemAudioCapture(scope: .teams)
-        do {
-          try capture.queue.sync {
-            try capture.configure(receive: nil, onFailure: { _ in })
-          }
-          try capture.stop()
-          continuation.resume()
-        } catch {
-          try? capture.stop()
-          continuation.resume(throwing: error)
-        }
-      }
-    }
-  }
-
   /// The processes whose output the tap covers: the app's processes, or all others.
   private func processes() throws -> [AudioProcessStatus] {
     switch scope {

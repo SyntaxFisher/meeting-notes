@@ -17,44 +17,13 @@ struct Smoke {
       return
     }
 
-    if CommandLine.arguments.count == 4,
-      CommandLine.arguments[1] == "--permission-setup-fixture"
-    {
-      let defaults = UserDefaults(suiteName: CommandLine.arguments[2])!
-      switch CommandLine.arguments[3] {
-      case "setup":
-        precondition(!PermissionAccess.systemAudioWasRequested(defaults: defaults))
-        defaults.set("28", forKey: "systemAudioSetupBuild")
-      case "relaunch":
-        precondition(PermissionAccess.systemAudioWasRequested(defaults: defaults))
-      case "deny":
-        precondition(PermissionAccess.systemAudioWasRequested(defaults: defaults))
-        PermissionAccess.invalidateSystemAudioRequest(defaults: defaults)
-      case "denied-relaunch":
-        precondition(!PermissionAccess.systemAudioWasRequested(defaults: defaults))
-      default: preconditionFailure("Unknown permission fixture action")
-      }
-      precondition(defaults.synchronize())
-      return
-    }
     if CommandLine.arguments.count == 4, CommandLine.arguments[1] == captureUntilKilledFlag {
       try await captureUntilKilled(
         directory: URL(fileURLWithPath: CommandLine.arguments[2]),
         ready: URL(fileURLWithPath: CommandLine.arguments[3]))
     }
-    let permissionSuite = "com.jona.meeting-notes.tests.\(UUID().uuidString)"
-    defer {
-      UserDefaults(suiteName: permissionSuite)?.removePersistentDomain(forName: permissionSuite)
-    }
-    for action in ["setup", "relaunch", "relaunch", "deny", "denied-relaunch"] {
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
-      process.arguments = ["--permission-setup-fixture", permissionSuite, action]
-      try process.run()
-      process.waitUntilExit()
-      precondition(process.terminationReason == .exit && process.terminationStatus == 0)
-    }
-    print("System audio setup survives relaunches and build changes; explicit denial clears it: OK")
+    precondition(SystemAudioAuthorization.isReadable)
+    print("System audio permission is read from macOS: OK")
     SoundSmoke.run()
     try SpeakerIdentitySmoke.run()
     try AgentSmoke.run()
@@ -96,18 +65,18 @@ struct Smoke {
     print("Update installation waits for work, resumes once, and clears failed attempts: OK")
     SpeechPlanSmoke.run()
     for microphone in [false, true] {
-      for systemAudioRequested in [false, true] {
+      for systemAudio in [false, true] {
         for accessibility in [false, true] {
           let permissions = PermissionSnapshot(
-            microphone: microphone, systemAudioRequested: systemAudioRequested,
+            microphone: microphone, systemAudio: systemAudio,
             accessibility: accessibility)
           precondition(
-            permissions.recordingGranted == (microphone && systemAudioRequested && accessibility))
+            permissions.recordingGranted == (microphone && systemAudio && accessibility))
           precondition(permissions.missing.contains(.microphone) == !microphone)
-          precondition(permissions.missing.contains(.systemAudio) == !systemAudioRequested)
+          precondition(permissions.missing.contains(.systemAudio) == !systemAudio)
           precondition(permissions.missing.contains(.accessibility) == !accessibility)
           precondition(
-            permissions.missingForRecording().isEmpty == (microphone && systemAudioRequested))
+            permissions.missingForRecording().isEmpty == (microphone && systemAudio))
           precondition(
             permissions.missingForRecording(automatically: true).isEmpty
               == permissions.recordingGranted)
@@ -115,7 +84,7 @@ struct Smoke {
       }
     }
     precondition(
-      PermissionSnapshot(microphone: false, systemAudioRequested: false, accessibility: false)
+      PermissionSnapshot(microphone: false, systemAudio: false, accessibility: false)
         .missing
         == [.microphone, .systemAudio, .accessibility])
     var setupSteps: [String] = []
@@ -124,7 +93,7 @@ struct Smoke {
       precondition(permissionModel.statusText(for: permission) == "Not allowed")
     }
     permissionModel.permissions = PermissionSnapshot(
-      microphone: true, systemAudioRequested: true, accessibility: true)
+      microphone: true, systemAudio: true, accessibility: true)
     precondition(!permissionModel.allPermissionsGranted)
     permissionModel.folderAccess = .denied("Access denied")
     precondition(!permissionModel.allPermissionsGranted)

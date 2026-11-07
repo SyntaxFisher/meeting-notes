@@ -85,7 +85,7 @@ enum MeetingFiles {
     directory.appendingPathComponent("." + id + ".recording", isDirectory: true)
   }
 
-  nonisolated(unsafe) private static let idFormatter: DateFormatter = {
+  private static let idFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.timeZone = TimeZone(secondsFromGMT: 0)
