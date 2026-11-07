@@ -1,0 +1,12 @@
+:root { color-scheme: light dark; font: 17px/1.55 -apple-system, BlinkMacSystemFont, sans-serif; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: light-dark(#f7f7f8, #151617); color: light-dark(#202124, #ededee); }
+main { max-width: 470px; padding: 48px 28px; }
+.app-name { font-weight: 600; }
+h1 { font-size: clamp(30px, 6vw, 40px); line-height: 1.15; letter-spacing: -0.035em; margin: 28px 0 20px; }
+p { margin: 18px 0; }
+a { color: light-dark(#075fcd, #79b7ff); }
+.button { display: inline-block; margin: 12px 0; padding: 12px 20px; border-radius: 12px; background: #0866d9; color: white; text-decoration: none; font-weight: 600; }
+.button:hover { background: #0759bd; }
+.button:focus-visible { outline: 3px solid light-dark(#202124, #ededee); outline-offset: 4px; }
+.secondary { font-size: 14px; color: light-dark(#65666a, #a3a5aa); }
+[hidden] { display: none; }

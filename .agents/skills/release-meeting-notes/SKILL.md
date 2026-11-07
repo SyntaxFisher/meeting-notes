@@ -10,7 +10,7 @@ Read [AGENTS.md](../../../AGENTS.md), [README Releasing](../../../README.md#rele
 ## App-specific constraints
 
 - Repository `SyntaxFisher/meeting-notes`; app `Meeting Notes.app`; executable `MeetingNotes`; bundle ID and Sparkle account `com.jona.meeting-notes`. Preserve identity and Apple signing team.
-- Apple silicon and macOS 26+ only. Swift Package Manager builds the pinned FluidAudio transcription helper; package its resources and license as well as Sparkle's.
+- Apple silicon and macOS 26+ only. Swift Package Manager builds the pinned transcription helper (whisper.cpp XCFramework and FluidAudio); package the whisper framework, FluidAudio resources and all licenses (`NativeTranscription/Licenses/`, FluidAudio, Sparkle).
 - `make build` creates an ad-hoc app with updates disabled. `make install` installs/launches that development build and refuses a running app. Use the DMG to test release installation.
 - Run `make lint` before every commit, plus `make test` and `make build` for release changes. Tests must not open microphones, capture system audio, or join calls. Live recording requires separate explicit user approval. Fixture processing is allowed.
 - Updates defer checks/restarts while work or permission setup is active. Keep that protection intact. Do not overwrite recordings/transcripts or change retention as part of release work.

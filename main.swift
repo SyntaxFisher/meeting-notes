@@ -1,29 +1,24 @@
 import AppKit
 
-if CommandLine.arguments.contains("--check-teams-mute") {
-  let reading = TeamsMuteReader.read()
-  let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "unknown"
-  print("Teams meeting title: \(reading.meetingTitle ?? "none")")
-  switch reading.state {
-  case .muted: print("Teams mic: muted; frontmost app: \(frontmost)")
-  case .unmuted: print("Teams mic: unmuted; frontmost app: \(frontmost)")
-  case .unavailable(let reason):
-    print("Teams mic: unavailable (\(reason.message)); frontmost app: \(frontmost)")
+let arguments = CommandLine.arguments
+if arguments.count > 1, arguments[1] == "transcribe" {
+  guard let options = TranscribeCommand.parse(Array(arguments.dropFirst(2))) else {
+    FileHandle.standardError.write(Data((TranscribeCommand.usage + "\n").utf8))
+    exit(2)
   }
-  exit(0)
+  Task { @MainActor in exit(await TranscribeCommand.run(options)) }
+  dispatchMain()
 }
 
-do {
-  let store = try StateStore()
-  MainActor.assumeIsolated {
-    let app = NSApplication.shared
-    app.setActivationPolicy(.accessory)
-    let delegate = MeetingAppDelegate(store: store)
-    app.delegate = delegate
-    withExtendedLifetime(delegate) { app.run() }
-  }
-} catch {
-  AppLog.event("app.startFailed", error.localizedDescription)
-  NSLog("Meeting Notes could not start: \(error.localizedDescription)")
-  exit(1)
+// Any first argument that is not a flag is a command; the app itself only receives flags.
+if arguments.count > 1, !arguments[1].hasPrefix("-") {
+  exit(CommandLineInterface.run(Array(arguments.dropFirst())))
+}
+
+MainActor.assumeIsolated {
+  let app = NSApplication.shared
+  app.setActivationPolicy(.accessory)
+  let delegate = MeetingAppDelegate()
+  app.delegate = delegate
+  withExtendedLifetime(delegate) { app.run() }
 }

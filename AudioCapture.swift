@@ -5,6 +5,85 @@ enum CaptureSource: String {
   case system, microphone
 }
 
+/// Whose playback the system track records. It is chosen once when a recording starts; a
+/// microphone-only recording has no scope. It is stored as `teams`, `device-audio` or
+/// `app:<bundle id>`.
+enum SystemAudioScope: RawRepresentable, Codable, Hashable, Sendable {
+  /// Only Teams' processes, so notifications and music stay out of Teams meetings.
+  case teams
+  /// Everything this Mac plays except Meeting Notes, for calls in any other app.
+  case deviceAudio
+  /// Only the processes of the app with this bundle ID and its helpers.
+  case app(String)
+
+  init?(rawValue: String) {
+    switch rawValue {
+    case "teams": self = .teams
+    case "device-audio": self = .deviceAudio
+    default:
+      guard rawValue.hasPrefix(Self.appPrefix),
+        let bundleID = Self.bundleID(
+          String(rawValue.dropFirst(Self.appPrefix.count)))
+      else { return nil }
+      self = .app(bundleID)
+    }
+  }
+
+  var rawValue: String {
+    switch self {
+    case .teams: "teams"
+    case .deviceAudio: "device-audio"
+    case .app(let bundleID): Self.appPrefix + bundleID
+    }
+  }
+
+  private static let appPrefix = "app:"
+
+  /// The scope is fixed at recording start. Unknown Teams state captures all device audio,
+  /// which includes Teams, so a call is never lost.
+  static func forRecording(automatic: Bool, teamsMeeting: TeamsMeetingPresence) -> Self {
+    automatic || teamsMeeting == .inMeeting ? .teams : .deviceAudio
+  }
+
+  private static func bundleID(_ text: String) -> String? {
+    let allowed = CharacterSet(
+      charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+    guard text.contains("."),
+      !text.split(separator: ".", omittingEmptySubsequences: false).contains(""),
+      text.unicodeScalars.allSatisfy(allowed.contains)
+    else { return nil }
+    return text
+  }
+
+  /// The bundle IDs whose processes an app tap covers, together with their helpers' bundle IDs
+  /// that start with one of them; nil for the global device-audio tap.
+  var bundleIDs: [String]? {
+    switch self {
+    case .teams: [AudioProcessStatus.teamsBundleID]
+    case .deviceAudio: nil
+    case .app(let bundleID): [bundleID]
+    }
+  }
+
+  /// Whether a process with this bundle ID plays audio for the scope.
+  func covers(_ bundleID: String) -> Bool {
+    guard let bundleIDs else { return true }
+    return bundleIDs.contains { bundleID == $0 || bundleID.hasPrefix($0 + ".") }
+  }
+
+  /// The capture mode in logs.
+  var mode: String { "microphone-and-\(rawValue)" }
+
+  /// The system track's name in messages, such as "Zoom audio".
+  var label: String {
+    switch self {
+    case .teams: "Teams audio"
+    case .deviceAudio: "device audio"
+    case .app(let bundleID): "\(bundleID) audio"
+    }
+  }
+}
+
 typealias AudioCaptureHandler = @Sendable (CapturedAudio, UInt64) -> Void
 typealias AudioCaptureFailureHandler = @Sendable (Error) -> Void
 
@@ -274,48 +353,63 @@ final class MicrophoneCapture: AudioCaptureInput, @unchecked Sendable {
   }
 }
 
-final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
-  static let bundleID = "com.microsoft.teams2"
+/// Captures the system track: the playback of one app (Teams or another), or everything the Mac
+/// plays except Meeting Notes.
+final class SystemAudioCapture: AudioCaptureInput, @unchecked Sendable {
   let source = CaptureSource.system
-  private let queue = DispatchQueue(label: "com.jona.meeting-notes.teams-audio")
+  let scope: SystemAudioScope
+  private let queue = DispatchQueue(label: "com.jona.meeting-notes.system-audio")
   private let resources = AudioCaptureResources()
   private var generation = UUID()
   private var running = false
   private var watchdog: DispatchSourceTimer?
   private var pendingRestart: DispatchWorkItem?
-  private var health = TeamsCaptureHealth()
+  private var health = SystemCaptureHealth()
   private var lastProcesses: [AudioProcessStatus]?
   private var tappedProcesses: [AudioObjectID] = []
   private var bufferRecoveryAttempts = 0
 
-  /// Teams audio process objects to tap. Taps target process objects rather than bundle IDs:
-  /// when several Teams helpers share a bundle ID (for example an idle and an active module
-  /// host), a bundle-ID tap can miss the instance that plays the meeting and deliver nothing.
-  static func tapTargets(for processes: [AudioProcessStatus]) -> [AudioObjectID] {
-    Set(processes.filter { AudioProcessStatus.isTeams(bundleID: $0.bundleID) }.map(\.id))
-      .sorted()
+  init(scope: SystemAudioScope) {
+    self.scope = scope
+    label = scope.label
+  }
+
+  private let label: String
+
+  /// The app's audio process objects to tap. Taps target process objects rather than bundle
+  /// IDs: when several helpers share a bundle ID (for example an idle and an active Teams module
+  /// host), a bundle-ID tap can miss the instance that plays the call and deliver nothing.
+  static func tapTargets(of scope: SystemAudioScope, in processes: [AudioProcessStatus])
+    -> [AudioObjectID]
+  {
+    Set(processes.filter { scope.covers($0.bundleID) }.map(\.id)).sorted()
   }
 
   static func needsRestart(
-    tappedProcesses: [AudioObjectID], previous: [AudioProcessStatus]?,
+    scope: SystemAudioScope, tappedProcesses: [AudioObjectID], previous: [AudioProcessStatus]?,
     current: [AudioProcessStatus]
   ) -> Bool {
-    // A process tap does not follow new or replaced processes, so rebuild it when they change.
-    if tapTargets(for: current) != tappedProcesses { return true }
+    // A global tap already covers every process on every output, so only an app tap, which
+    // does not follow new or replaced processes, is rebuilt when the app's processes change.
+    guard scope.bundleIDs != nil else { return false }
+    if tapTargets(of: scope, in: current) != tappedProcesses { return true }
     let oldDevices = Set((previous ?? []).flatMap(\.outputDevices))
     let newDevices = Set(current.flatMap(\.outputDevices))
     return previous != nil && !newDevices.isEmpty && newDevices != oldDevices
   }
 
-  static func tapDescription(processes: [AudioProcessStatus]) -> CATapDescription {
+  /// A tap of one app's processes. `scope` must name an app.
+  static func appTapDescription(scope: SystemAudioScope, processes: [AudioProcessStatus])
+    -> CATapDescription
+  {
     let description = CATapDescription()
     description.uuid = UUID()
-    description.name = "Meeting Notes Teams audio"
-    let targets = tapTargets(for: processes)
+    description.name = "Meeting Notes \(scope.label)"
+    let targets = tapTargets(of: scope, in: processes)
     if targets.isEmpty {
-      // Teams has no audio process object until it first opens audio; the health check
-      // switches to process targets as soon as one appears.
-      description.bundleIDs = [bundleID]
+      // An app has no audio process object until it first opens audio, and it may not even be
+      // running yet; the health check switches to process targets as soon as one appears.
+      description.bundleIDs = scope.bundleIDs ?? []
       description.isProcessRestoreEnabled = true
     } else {
       description.processes = targets
@@ -323,6 +417,18 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
     description.isExclusive = false
     description.isMixdown = true
     description.isMono = true
+    description.isPrivate = true
+    description.muteBehavior = .unmuted
+    return description
+  }
+
+  /// A global tap of every process except Meeting Notes, so Library playback during a recording
+  /// stays out of it. It needs no permission beyond System Audio Recording.
+  static func deviceTapDescription(ownProcess: AudioObjectID?) -> CATapDescription {
+    let excluded = ownProcess.map { [$0] } ?? []
+    let description = CATapDescription(monoGlobalTapButExcludeProcesses: excluded)
+    description.uuid = UUID()
+    description.name = "Meeting Notes device audio"
     description.isPrivate = true
     description.muteBehavior = .unmuted
     return description
@@ -349,7 +455,7 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
   static func requestAccess() async throws {
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
       DispatchQueue.global(qos: .userInitiated).async {
-        let capture = TeamsAudioCapture()
+        let capture = SystemAudioCapture(scope: .teams)
         do {
           try capture.queue.sync {
             try capture.configure(receive: nil, onFailure: { _ in })
@@ -364,26 +470,50 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
     }
   }
 
+  /// The processes whose output the tap covers: the app's processes, or all others.
+  private func processes() throws -> [AudioProcessStatus] {
+    switch scope {
+    case .teams, .app: return try AudioHardwareInfo.processes { [scope] in scope.covers($0) }
+    case .deviceAudio:
+      let own = ProcessInfo.processInfo.processIdentifier
+      return try AudioHardwareInfo.processes { _ in true }.filter { $0.pid != own }
+    }
+  }
+
   private func configure(
     receive: AudioCaptureHandler?, onFailure: @escaping AudioCaptureFailureHandler
   ) throws {
     generation = UUID()
     let currentGeneration = generation
     try resources.release()
-    let processes = try AudioHardwareInfo.teamsProcesses()
-    let description = Self.tapDescription(processes: processes)
+    let processes = try processes()
+    let description: CATapDescription
+    var ownProcess: AudioObjectID?
+    switch scope {
+    case .teams, .app:
+      description = Self.appTapDescription(scope: scope, processes: processes)
+    case .deviceAudio:
+      ownProcess = try? AudioHardwareInfo.processObject(
+        pid: ProcessInfo.processInfo.processIdentifier)
+      if ownProcess == nil {
+        AppLog.event("capture.ownProcessUnknown", "Meeting Notes playback is not excluded")
+      }
+      description = Self.deviceTapDescription(ownProcess: ownProcess)
+    }
     var tap = AudioObjectID(kAudioObjectUnknown)
-    try CoreAudioFailure.check(AudioHardwareCreateProcessTap(description, &tap), "Create Teams tap")
+    try CoreAudioFailure.check(
+      AudioHardwareCreateProcessTap(description, &tap), "Create \(label) tap")
     let tapID = tap
+    let label = label
     resources.add {
-      try CoreAudioFailure.check(AudioHardwareDestroyProcessTap(tapID), "Destroy Teams tap")
+      try CoreAudioFailure.check(AudioHardwareDestroyProcessTap(tapID), "Destroy \(label) tap")
     }
 
     let tapUID = try AudioHardwareInfo.string(tapID, kAudioTapPropertyUID)
-    guard !tapUID.isEmpty else { throw MeetingError("The Teams audio tap has no identifier.") }
+    guard !tapUID.isEmpty else { throw MeetingError("The \(label) tap has no identifier.") }
 
     let aggregateDescription: [String: Any] = [
-      kAudioAggregateDeviceNameKey: "Meeting Notes Teams audio",
+      kAudioAggregateDeviceNameKey: "Meeting Notes \(label)",
       kAudioAggregateDeviceUIDKey: UUID().uuidString,
       kAudioAggregateDeviceIsPrivateKey: true,
       kAudioAggregateDeviceIsStackedKey: false,
@@ -398,15 +528,16 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
     var aggregate = AudioObjectID(kAudioObjectUnknown)
     try CoreAudioFailure.check(
       AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &aggregate),
-      "Create Teams audio device")
+      "Create \(label) device")
     let deviceID = aggregate
     resources.add {
       try CoreAudioFailure.check(
-        AudioHardwareDestroyAggregateDevice(deviceID), "Destroy Teams audio device")
+        AudioHardwareDestroyAggregateDevice(deviceID), "Destroy \(label) device")
     }
     let format = try waitForInputFormat(deviceID)
     AppLog.event(
-      "capture.teamsFormat", "rate=\(format.sampleRate); channels=\(format.channelCount)")
+      "capture.systemFormat",
+      "\(scope.rawValue); rate=\(format.sampleRate); channels=\(format.channelCount)")
     var ioProc: AudioDeviceIOProcID?
     try CoreAudioFailure.check(
       AudioDeviceCreateIOProcIDWithBlock(&ioProc, deviceID, nil) {
@@ -418,7 +549,7 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
         }
         do {
           guard time.pointee.mFlags.contains(.hostTimeValid) else {
-            throw MeetingError("Teams audio has no host timestamp.")
+            throw MeetingError("System audio has no host timestamp.")
           }
           let owned = try CapturedAudio.copy(data, format: format)
           let hostTime = time.pointee.mHostTime
@@ -432,7 +563,7 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
           self?.queue.async { [weak self] in
             guard let self, self.running, self.generation == currentGeneration else { return }
             guard self.pendingRestart == nil else { return }
-            AppLog.event("capture.teamsBufferFailed", error.localizedDescription)
+            AppLog.event("capture.systemBufferFailed", error.localizedDescription)
             if self.bufferRecoveryAttempts < 2 {
               self.bufferRecoveryAttempts += 1
               self.scheduleRestart(receive: receive, onFailure: onFailure)
@@ -441,11 +572,11 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
             }
           }
         }
-      }, "Create Teams audio callback")
+      }, "Create \(label) callback")
     guard let ioProc else { throw MeetingError("Core Audio did not create an audio callback.") }
     resources.add {
       try CoreAudioFailure.check(
-        AudioDeviceDestroyIOProcID(deviceID, ioProc), "Destroy Teams audio callback")
+        AudioDeviceDestroyIOProcID(deviceID, ioProc), "Destroy \(label) callback")
     }
 
     let restart: (Bool) -> Void = { [weak self] formatOnly in
@@ -477,14 +608,24 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
         restart(false)
       }
     }
-    try CoreAudioFailure.check(AudioDeviceStart(deviceID, ioProc), "Start Teams audio")
-    tappedProcesses = description.processes
-    let targets = processes.filter { tappedProcesses.contains($0.id) }
-      .map { "\($0.bundleID)[\($0.pid)]" }
-    let summary = targets.isEmpty ? description.bundleIDs : targets
-    AppLog.event("capture.teamsTargets", summary.joined(separator: ","))
+    try CoreAudioFailure.check(AudioDeviceStart(deviceID, ioProc), "Start \(label)")
+    switch scope {
+    case .teams, .app:
+      tappedProcesses = description.processes
+      let targets = processes.filter { tappedProcesses.contains($0.id) }
+        .map { "\($0.bundleID)[\($0.pid)]" }
+      let summary = targets.isEmpty ? description.bundleIDs : targets
+      AppLog.event(
+        "capture.systemTargets", "\(scope.rawValue); \(summary.joined(separator: ","))")
+    case .deviceAudio:
+      tappedProcesses = []
+      AppLog.event(
+        "capture.systemTargets",
+        "device-audio; all processes except Meeting Notes (process object \(ownProcess.map(String.init) ?? "unknown"))"
+      )
+    }
     resources.add {
-      try CoreAudioFailure.check(AudioDeviceStop(deviceID, ioProc), "Stop Teams audio")
+      try CoreAudioFailure.check(AudioDeviceStop(deviceID, ioProc), "Stop \(label)")
     }
   }
 
@@ -494,7 +635,7 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
       if let format = try inputFormat(deviceID) { return format }
       Thread.sleep(forTimeInterval: 0.1)
     }
-    throw MeetingError("The Teams audio device did not publish a usable input stream.")
+    throw MeetingError("The \(label) device did not publish a usable input stream.")
   }
 
   private func inputFormat(_ deviceID: AudioObjectID) throws -> AVAudioFormat? {
@@ -505,7 +646,7 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
       deviceID, kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeInput)
     guard let stream = streams.first else { return nil }
     guard streams.count == 1 else {
-      throw MeetingError("The Teams audio device has an unexpected input layout.")
+      throw MeetingError("The \(label) device has an unexpected input layout.")
     }
     var description = AudioStreamBasicDescription()
     try AudioHardwareInfo.read(stream, kAudioStreamPropertyVirtualFormat, into: &description)
@@ -518,13 +659,16 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
   ) {
     guard running, pendingRestart == nil else { return }
     do {
-      let processes = try AudioHardwareInfo.teamsProcesses()
+      let processes = try processes()
       let needsRestart = Self.needsRestart(
-        tappedProcesses: tappedProcesses, previous: lastProcesses, current: processes)
-      if processes != lastProcesses {
-        AppLog.event("capture.teamsProcesses", processes.map(\.summary).joined(separator: " | "))
-        lastProcesses = processes
+        scope: scope, tappedProcesses: tappedProcesses, previous: lastProcesses,
+        current: processes)
+      if scope.bundleIDs != nil, processes != lastProcesses {
+        AppLog.event(
+          "capture.appProcesses",
+          "\(scope.rawValue); \(processes.map(\.summary).joined(separator: " | "))")
       }
+      lastProcesses = processes
       if needsRestart {
         scheduleRestart(receive: receive, onFailure: onFailure)
         return
@@ -535,15 +679,22 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
       {
       case .wait: break
       case .restart:
-        AppLog.event("capture.teamsNoBuffers", "restart=\(health.restarts)")
+        AppLog.event("capture.systemNoBuffers", "\(scope.rawValue); restart=\(health.restarts)")
         scheduleRestart(receive: receive, onFailure: onFailure)
       case .fail:
+        let playing =
+          switch scope {
+          case .teams: "Teams has active audio output"
+          case .app(let bundleID):
+            "\(bundleID) has active audio output"
+          case .deviceAudio: "Audio is playing"
+          }
         fail(
           MeetingError(
-            "Teams has active audio output, but no Teams audio buffers are arriving. Recording stopped; captured audio is available through Retry Transcription. Check System Audio Recording access and your audio devices before trying again."
+            "\(playing), but no \(label) buffers are arriving. Recording stopped; captured audio is available through Retry Transcription. Check System Audio Recording access and your audio devices before trying again."
           ), onFailure: onFailure)
       }
-    } catch { AppLog.event("capture.teamsStatusFailed", error.localizedDescription) }
+    } catch { AppLog.event("capture.systemStatusFailed", error.localizedDescription) }
   }
 
   private func scheduleRestart(
@@ -555,7 +706,7 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
       guard let self, self.running, self.pendingRestart != nil else { return }
       self.pendingRestart = nil
       do {
-        AppLog.event("capture.teamsRestart", "attempt=\(attempt + 1)")
+        AppLog.event("capture.systemRestart", "\(self.scope.rawValue); attempt=\(attempt + 1)")
         try self.configure(receive: receive, onFailure: onFailure)
       } catch {
         try? self.resources.release()
@@ -577,7 +728,7 @@ final class TeamsAudioCapture: AudioCaptureInput, @unchecked Sendable {
     watchdog = nil
     pendingRestart?.cancel()
     pendingRestart = nil
-    AppLog.event("capture.teamsFailed", error.localizedDescription)
+    AppLog.event("capture.systemFailed", error.localizedDescription)
     onFailure(error)
   }
 

@@ -2,6 +2,7 @@
 """Build, sign, notarize, and publish Meeting Notes. Invoke via make."""
 
 import hashlib
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -69,6 +70,36 @@ def dependencies():
     run("tar", "-xJf", archive, "-C", SPARKLE)
 
 
+# Protocols whose conformances Xcode extracts for App Intents (SWIFT_EMIT_CONST_VALUE_PROTOCOLS).
+APP_INTENTS_PROTOCOLS = [
+    "AppIntent", "EntityQuery", "AppEntity", "TransientEntity", "AppEnum", "AppShortcutProviding",
+    "AppShortcutsProvider", "AnyResolverProviding", "AppIntentsPackage", "DynamicOptionsProvider",
+    "_IntentValueRepresentable", "_AssistantIntentsProvider", "_GenerativeFunctionExtractable",
+    "IntentValueQuery", "Resolver",
+]
+
+
+def app_intents_metadata(info, sources, const_values, contents, work):
+    """Write Contents/Resources/Metadata.appintents, which Xcode's ExtractAppIntentsMetadata
+    step would produce, so Shortcuts and Spotlight discover the app's intents."""
+    swiftc = Path(run("xcrun", "--find", "swiftc", capture=True).strip())
+    xcode_build = run("xcodebuild", "-version", capture=True).split()[-1]
+    (work / "sources.txt").write_text("".join(f"{path}\n" for path in sources))
+    (work / "const-values.txt").write_text(f"{const_values}\n")
+    run("xcrun", "appintentsmetadataprocessor", "--toolchain-dir", swiftc.parents[2],
+        "--module-name", "MeetingNotes", "--sdk-root", run("xcrun", "--show-sdk-path", capture=True).strip(),
+        "--xcode-version", xcode_build, "--platform-family", "macOS",
+        "--deployment-target", info["LSMinimumSystemVersion"],
+        "--bundle-identifier", info["CFBundleIdentifier"], "--output", contents / "Resources",
+        "--target-triple", "arm64-apple-macos26.0", "--binary-file", contents / "MacOS/MeetingNotes",
+        "--source-file-list", work / "sources.txt", "--swift-const-vals-list", work / "const-values.txt",
+        "--compile-time-extraction", "--deployment-aware-processing", "--validate-assistant-intents",
+        "--no-app-shortcuts-localization")
+    metadata = json.loads((contents / "Resources/Metadata.appintents/extract.actionsdata").read_text())
+    require(sorted(metadata["actions"]) == ["GetLatestTranscriptIntent", "StartRecordingIntent", "StopRecordingIntent"],
+            "App Intents metadata is missing actions.")
+
+
 def sign(path, identity, release, entitlements=None):
     options = ["--options", "runtime", "--timestamp"] if release else ["--timestamp=none"]
     if entitlements:
@@ -91,7 +122,54 @@ def create_dmg(app, dmg):
     run(python, ROOT / "scripts/dmg-layout.py", app, dmg)
 
 
+def updater_enabled(release, identity, option):
+    require(option in {"0", "1"}, "ENABLE_UPDATER must be 0 or 1.")
+    enabled = release or option == "1"
+    require(not enabled or identity != "-", "Updates require a signing identity; ad-hoc builds cannot enable them.")
+    return enabled
+
+
+def signing_entitlements(contents, identity):
+    entitlements = plistlib.loads((ROOT / "Release.entitlements").read_bytes())
+    if identity == "-":
+        entitlements.pop("com.apple.developer.associated-domains", None)
+    else:
+        configured = os.environ.get("PROVISIONING_PROFILE") or local_configuration().get(
+            "signing", {}).get("provisioning_profile")
+        require(configured, "Signed builds require PROVISIONING_PROFILE or signing.provisioning_profile.")
+        profile = Path(configured).expanduser()
+        require(profile.is_file(), "The configured provisioning profile is missing.")
+        decoded = plistlib.loads(subprocess.check_output(["security", "cms", "-D", "-i", str(profile)]))
+        permitted = decoded.get("Entitlements", {})
+        app_id = permitted.get("com.apple.application-identifier", "")
+        require(app_id == "94DW6CHJD7." + ACCOUNT, "Provisioning profile does not match this app and team.")
+        require(decoded["ExpirationDate"].replace(tzinfo=timezone.utc) > datetime.now(timezone.utc),
+                "Provisioning profile has expired.")
+        allowed = permitted.get("com.apple.developer.associated-domains", [])
+        require(allowed == "*" or all(domain in allowed for domain in entitlements[
+            "com.apple.developer.associated-domains"]), "Provisioning profile does not allow Associated Domains.")
+        entitlements["com.apple.application-identifier"] = app_id
+        entitlements["com.apple.developer.team-identifier"] = permitted["com.apple.developer.team-identifier"]
+        shutil.copyfile(profile, contents / "embedded.provisionprofile")
+    path = contents.parent.parent / "Signing.entitlements"
+    path.write_bytes(plistlib.dumps(entitlements))
+    return path
+
+
+def verify_provisioned_certificate(app):
+    profile = app / "Contents/embedded.provisionprofile"
+    if not profile.exists():
+        return
+    decoded = plistlib.loads(subprocess.check_output(["security", "cms", "-D", "-i", str(profile)]))
+    with tempfile.TemporaryDirectory() as temporary:
+        prefix = str(Path(temporary) / "certificate")
+        run("codesign", "-d", "--extract-certificates=" + prefix, app)
+        require(Path(prefix + "0").read_bytes() in decoded["DeveloperCertificates"],
+                "Signing identity is not included in the provisioning profile.")
+
+
 def build(info, release=False, identity="-"):
+    enable_updater = updater_enabled(release, identity, os.environ.get("ENABLE_UPDATER", "0"))
     directory = BUILD / ("release" if release else "local")
     app = directory / "Meeting Notes.app"
     if app.exists():
@@ -99,7 +177,8 @@ def build(info, release=False, identity="-"):
     contents = app / "Contents"
     for name in ("MacOS", "Resources", "Frameworks"):
         (contents / name).mkdir(parents=True)
-    bundled_info = dict(info, MNEnableUpdater=release)
+    entitlements = signing_entitlements(contents, identity)
+    bundled_info = dict(info, MNEnableUpdater=enable_updater)
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump(bundled_info, stream)
     flags = shlex.split(os.environ.get("SWIFT_FLAGS", ""))
@@ -109,9 +188,15 @@ def build(info, release=False, identity="-"):
                       "-c", "release", "--arch", "arm64", "--show-bin-path", capture=True).strip())
     shutil.copy2(native / "MeetingTranscriber", contents / "MacOS/MeetingTranscriber")
     run("ditto", native / "FluidAudio_FluidAudio.bundle", contents / "Resources/FluidAudio_FluidAudio.bundle")
-    shutil.copy2(ROOT / "NativeTranscription/.build/checkouts/FluidAudio/LICENSE", contents / "Resources/FluidAudio-LICENSE.txt")
+    whisper = contents / "Frameworks/whisper.framework"
+    run("ditto", "--arch", "arm64", native / "whisper.framework", whisper)
+    licenses = contents / "Resources/Licenses"
+    licenses.mkdir()
+    shutil.copy2(ROOT / "NativeTranscription/.build/checkouts/FluidAudio/LICENSE", licenses / "FluidAudio-LICENSE.txt")
     run("ditto", ROOT / "NativeTranscription/.build/checkouts/FluidAudio/ThirdPartyLicenses",
-        contents / "Resources/ThirdPartyLicenses")
+        licenses / "ThirdPartyLicenses")
+    for license in sorted((ROOT / "NativeTranscription/Licenses").glob("*.txt")):
+        shutil.copy2(license, licenses / license.name)
     run("xcrun", "swiftc", *flags, "-O", "-target", "arm64-apple-macos26.0",
         ROOT / "GenerateIcon.swift", "-o", directory / "GenerateIcon")
     icons = directory / "AppIcon.iconset"
@@ -119,7 +204,7 @@ def build(info, release=False, identity="-"):
         shutil.rmtree(icons)
     run(directory / "GenerateIcon", icons)
     run("iconutil", "-c", "icns", "-o", contents / "Resources/AppIcon.icns", icons)
-    shutil.copy2(SPARKLE / "LICENSE", contents / "Resources/Sparkle-LICENSE.txt")
+    shutil.copy2(SPARKLE / "LICENSE", licenses / "Sparkle-LICENSE.txt")
     if release:
         artwork = BUILD / "dmg-artwork"
         run("xcrun", "swift", ROOT / "scripts/dmg-background.swift", artwork)
@@ -131,16 +216,31 @@ def build(info, release=False, identity="-"):
     shutil.rmtree(framework / "Versions/B/XPCServices")
     (framework / "XPCServices").unlink()
     sources = sorted(path for path in ROOT.glob("*.swift") if path.name != "GenerateIcon.swift")
-    run("xcrun", "swiftc", *flags, "-O", "-target", "arm64-apple-macos26.0",
+    # The helper's result format is shared with the app.
+    sources.append(ROOT / "NativeTranscription/Sources/MeetingTranscriber/TranscriptSegments.swift")
+    intents = directory / "intents"
+    if intents.exists():
+        shutil.rmtree(intents)
+    intents.mkdir()
+    const_values = intents / "MeetingNotes.swiftconstvalues"
+    (intents / "protocols.json").write_text(json.dumps(APP_INTENTS_PROTOCOLS))
+    # Whole-module compilation emits one const-values file for the App Intents metadata.
+    run("xcrun", "swiftc", *flags, "-O", "-wmo", "-module-name", "MeetingNotes",
+        "-target", "arm64-apple-macos26.0",
+        "-emit-const-values-path", const_values,
+        "-Xfrontend", "-const-gather-protocols-file", "-Xfrontend", intents / "protocols.json",
         "-F", SPARKLE, "-framework", "Sparkle", "-Xlinker", "-rpath",
         "-Xlinker", "@executable_path/../Frameworks", *sources, "-o", contents / "MacOS/MeetingNotes")
-    for component in (contents / "MacOS/MeetingTranscriber", framework / "Versions/B/Autoupdate",
+    app_intents_metadata(info, sources, const_values, contents, intents)
+    for component in (whisper, contents / "MacOS/MeetingTranscriber", framework / "Versions/B/Autoupdate",
                       framework / "Versions/B/Updater.app", framework):
         sign(component, identity, release)
-    sign(app, identity, release, entitlements=ROOT / "Release.entitlements")
+    sign(app, identity, release, entitlements=entitlements)
+    verify_provisioned_certificate(app)
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", app)
-    for name in ("MeetingNotes", "MeetingTranscriber"):
-        run("lipo", contents / "MacOS" / name, "-verify_arch", "arm64")
+    for binary in (contents / "MacOS/MeetingNotes", contents / "MacOS/MeetingTranscriber",
+                   whisper / "Versions/A/whisper"):
+        run("lipo", binary, "-verify_arch", "arm64")
     return app
 
 

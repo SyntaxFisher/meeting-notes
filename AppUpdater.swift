@@ -13,31 +13,23 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
     if enabled { controller.startUpdater() }
   }
 
-  func addMenuItems(to menu: NSMenu) {
-    guard enabled else { return }
-    menu.addItem(.separator())
-    let check = NSMenuItem(
-      title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
-    check.target = self
-    check.isEnabled = controller.updater.canCheckForUpdates && !isBusy()
-    menu.addItem(check)
-    let automatic = NSMenuItem(
-      title: "Automatic Updates", action: #selector(toggleAutomaticUpdates), keyEquivalent: "")
-    automatic.target = self
-    automatic.state =
-      controller.updater.automaticallyChecksForUpdates
-        && controller.updater.automaticallyDownloadsUpdates ? .on : .off
-    menu.addItem(automatic)
-    menu.addItem(.separator())
+  var isEnabled: Bool { enabled }
+  var canCheckForUpdates: Bool { enabled && controller.updater.canCheckForUpdates && !isBusy() }
+
+  var automaticUpdates: Bool {
+    get {
+      enabled && controller.updater.automaticallyChecksForUpdates
+        && controller.updater.automaticallyDownloadsUpdates
+    }
+    set {
+      guard enabled else { return }
+      controller.updater.automaticallyDownloadsUpdates = newValue
+      controller.updater.automaticallyChecksForUpdates = newValue
+    }
   }
 
-  @objc private func checkForUpdates() { controller.checkForUpdates(nil) }
-
-  @objc private func toggleAutomaticUpdates() {
-    let updater = controller.updater
-    let enabled = !(updater.automaticallyChecksForUpdates && updater.automaticallyDownloadsUpdates)
-    updater.automaticallyDownloadsUpdates = enabled
-    updater.automaticallyChecksForUpdates = enabled
+  func checkForUpdates() {
+    if canCheckForUpdates { controller.checkForUpdates(nil) }
   }
 
   func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {

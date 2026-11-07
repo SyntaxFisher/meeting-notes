@@ -1,0 +1,21 @@
+{
+  "description": "Realistic product sync for the demo video: three people, mostly German with an English stretch, a decision, action items and a muted aside.",
+  "speakers": {
+    "me": { "via": "mic", "voice": "Reed (German (Germany))", "lang": "de" },
+    "lena": { "via": "guest", "display": "Lena Hoffmann", "voice": "Anna", "lang": "de" },
+    "marco": { "via": "guest", "display": "Marco Rossi", "voice": "Daniel", "lang": "en" }
+  },
+  "steps": [
+    { "speaker": "me", "text": "Hallo zusammen, danke, dass ihr so kurzfristig Zeit habt. Es geht heute um den Launch der neuen Exportfunktion." },
+    { "speaker": "lena", "text": "Gerne. Aus Produktsicht sind wir fast durch. Die Kunden in der Beta wollen vor allem den PDF-Export, die Excel-Variante ist für sie zweitrangig." },
+    { "speaker": "me", "voice": "Reed (English (US))", "lang": "en", "text": "Marco, from the engineering side, can we ship the PDF export by the end of next week?" },
+    { "speaker": "marco", "text": "Yes, PDF is ready, we only need the load test. Excel would take another two weeks, so I would ship PDF first and Excel in the following release." },
+    { "speaker": "me", "voice": "Reed (English (US))", "lang": "en", "text": "Sounds good. Let's do exactly that." },
+    { "action": "mute" },
+    { "speaker": "me", "text": "Kurz unter uns, ich hole mir schnell einen Kaffee, das gehört nicht ins Protokoll." },
+    { "action": "unmute" },
+    { "speaker": "lena", "text": "Dann schreibe ich bis Mittwoch die Release Notes und informiere die Beta-Kunden." },
+    { "speaker": "marco", "text": "And I will run the load test on Monday and share the results in the channel." },
+    { "speaker": "me", "text": "Perfekt. Entscheidung also: PDF-Export geht nächste Woche live, Excel folgt im nächsten Release. Danke euch, bis morgen." }
+  ]
+}

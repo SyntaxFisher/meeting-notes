@@ -24,7 +24,7 @@ extension TeamsMuteState {
 struct TeamsAutoRecordPolicy {
   enum Action { case start, stop }
 
-  static let leaveGracePeriod: TimeInterval = 5
+  static let leaveGracePeriod: TimeInterval = 0.8
   private(set) var ownsRecording = false
   private(set) var waitingForMeetingEnd = false
   private var meetingHasEnded = false
@@ -41,7 +41,7 @@ struct TeamsAutoRecordPolicy {
     case .noMeeting:
       let since = absentSince ?? now
       absentSince = since
-      guard now.timeIntervalSince(since) >= Self.leaveGracePeriod else { return nil }
+      guard now >= since + Self.leaveGracePeriod else { return nil }
       meetingHasEnded = true
       waitingForMeetingEnd = false
       return isRecording && ownsRecording ? .stop : nil
@@ -53,8 +53,10 @@ struct TeamsAutoRecordPolicy {
 
   mutating func recordingStarted(automatically: Bool) {
     ownsRecording = automatically
-    absentSince = nil
-    meetingHasEnded = false
+    if automatically {
+      absentSince = nil
+      meetingHasEnded = false
+    }
   }
 
   mutating func recordingEnded() {

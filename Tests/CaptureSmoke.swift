@@ -78,11 +78,16 @@ private final class FixtureAudioInput: AudioCaptureInput {
 
 extension Smoke {
   static func testAudioCapture(root: URL) async throws {
-    precondition(NativeRecorder.captureInputs(teamsRunning: false).map(\.source) == [.microphone])
-    precondition(
-      NativeRecorder.captureInputs(teamsRunning: true).map(\.source) == [.microphone, .system])
+    testSystemAudioScope()
+    testStoredAudioScopes()
+    precondition(NativeRecorder.captureInputs(systemAudio: nil).map(\.source) == [.microphone])
+    for scope in [SystemAudioScope.teams, .deviceAudio, .app("us.zoom.xos")] {
+      let inputs = NativeRecorder.captureInputs(systemAudio: scope)
+      precondition(inputs.map(\.source) == [.microphone, .system])
+      precondition((inputs[1] as? SystemAudioCapture)?.scope == scope)
+    }
     // Before Teams opens audio there is no process object, so the tap falls back to the bundle.
-    let description = TeamsAudioCapture.tapDescription(processes: [])
+    let description = SystemAudioCapture.appTapDescription(scope: .teams, processes: [])
     precondition(description.bundleIDs == ["com.microsoft.teams2"])
     precondition(description.processes.isEmpty && !description.isExclusive)
     precondition(description.isPrivate && description.isMixdown && description.isMono)
@@ -129,7 +134,8 @@ extension Smoke {
     microphone.samples = [(tone(rate: 44_100), 100.5)]
     let directory = root.appendingPathComponent("mixed")
     let recorder = NativeRecorder(
-      directory: directory, makeInputs: { [system, microphone] }, checkPermission: {})
+      directory: directory, systemAudio: .deviceAudio, makeInputs: { [system, microphone] },
+      checkPermission: {})
     recorder.setMicrophoneMuted(true)
     try await recorder.start()
     recorder.setMicrophoneMuted(false)
@@ -138,22 +144,27 @@ extension Smoke {
     try await recorder.stop()
     precondition(system.starts == 1 && microphone.starts == 1)
     precondition(system.stops == 1 && microphone.stops == 1)
+    let manifestJSON = try String(
+      contentsOf: directory.appendingPathComponent("capture.json"), encoding: .utf8)
+    precondition(manifestJSON.contains("\"systemAudio\":\"device-audio\""))
     let manifest = try JSONDecoder().decode(
       CaptureManifest.self, from: Data(contentsOf: directory.appendingPathComponent("capture.json"))
     )
     precondition(abs(manifest.systemStart! - 100) < 0.0001)
     precondition(abs(manifest.microphoneStart! - 100.5) < 0.0001)
-    let systemAudio = try readSamples(directory.appendingPathComponent("system.caf"))
-    let microphoneAudio = try readSamples(directory.appendingPathComponent("microphone.caf"))
+    precondition(manifest.systemAudio == .deviceAudio)
+    let systemAudio = try readSamples(directory.appendingPathComponent("system.aac"))
+    let microphoneAudio = try readSamples(directory.appendingPathComponent("microphone.aac"))
     precondition(energy(systemAudio, from: 5_000, to: 40_000) > 100)
     precondition(energy(microphoneAudio, from: 5_000, to: 40_000) < 0.01)
     precondition(energy(microphoneAudio, from: 55_000, to: 85_000) > 100)
     precondition(abs(microphoneAudio.count - 96_000) < 2_000)
-    let savedTrack = try Data(contentsOf: directory.appendingPathComponent("microphone.caf"))
+    try await testAppCapture(root: root)
+    let savedTrack = try Data(contentsOf: directory.appendingPathComponent("microphone.aac"))
     microphone.emit(tone(rate: 48_000), at: 103)
     microphone.fail?(MeetingError("Late callback"))
     try await recorder.stop()
-    let unchanged = try Data(contentsOf: directory.appendingPathComponent("microphone.caf"))
+    let unchanged = try Data(contentsOf: directory.appendingPathComponent("microphone.aac"))
     precondition(unchanged == savedTrack)
     let output = root.appendingPathComponent("mixed.m4a")
     try NativeRecorder.mix(directory: directory, destination: output)
@@ -167,7 +178,7 @@ extension Smoke {
       preconditionFailure("Existing capture files must be protected")
     } catch {}
     precondition(microphone.starts == 1)
-    let protectedTrack = try Data(contentsOf: directory.appendingPathComponent("microphone.caf"))
+    let protectedTrack = try Data(contentsOf: directory.appendingPathComponent("microphone.aac"))
     precondition(protectedTrack == savedTrack)
 
     let alone = FixtureAudioInput(.microphone)
@@ -176,10 +187,11 @@ extension Smoke {
     let aloneRecorder = NativeRecorder(
       directory: aloneDirectory, makeInputs: { [alone] }, checkPermission: {})
     try await aloneRecorder.start()
+    precondition(aloneRecorder.meetingSource == .microphone)
     try await aloneRecorder.stop()
     precondition(
       !FileManager.default.fileExists(
-        atPath: aloneDirectory.appendingPathComponent("system.caf").path))
+        atPath: aloneDirectory.appendingPathComponent("system.aac").path))
     try NativeRecorder.mix(
       directory: aloneDirectory, destination: root.appendingPathComponent("alone.m4a"))
 
@@ -297,7 +309,7 @@ extension Smoke {
     try await recorder.stop()
     try await recorder.stop()
     precondition(engines.allSatisfy { $0.starts == 1 && $0.stops == 1 })
-    let audio = try readSamples(directory.appendingPathComponent("microphone.caf"))
+    let audio = try readSamples(directory.appendingPathComponent("microphone.aac"))
     precondition(abs(audio.count - 96_000) < 2_000)
     precondition(energy(audio, from: 5_000, to: 40_000) > 100)
     precondition(energy(audio, from: 55_000, to: 85_000) > 100)
@@ -380,8 +392,9 @@ extension Smoke {
     let similarName = AudioProcessStatus(
       id: 104, pid: 70001, bundleID: "com.microsoft.teams20",
       outputActive: true, outputDevices: [96])
-    let description = TeamsAudioCapture.tapDescription(
-      processes: [moduleHost, helper, unrelated, similarName])
+    let description = SystemAudioCapture.appTapDescription(
+      scope: .teams, processes: [moduleHost, helper, unrelated, similarName])
+    precondition(description.name == "Meeting Notes Teams audio")
     precondition(description.processes == [101, 102] && description.bundleIDs.isEmpty)
     precondition(!description.isExclusive && description.muteBehavior == .unmuted)
     precondition(description.isMixdown && description.isMono && description.isPrivate)
@@ -390,44 +403,189 @@ extension Smoke {
     let idleHost = AudioProcessStatus(
       id: 99, pid: 50320, bundleID: moduleHost.bundleID, outputActive: false, outputDevices: [])
     precondition(
-      TeamsAudioCapture.tapTargets(for: [moduleHost, idleHost, helper]) == [99, 101, 102])
+      SystemAudioCapture.tapTargets(of: .teams, in: [moduleHost, idleHost, helper]) == [
+        99, 101, 102,
+      ])
 
-    let initial = TeamsAudioCapture.tapTargets(for: [helper])
-    let joined = TeamsAudioCapture.tapTargets(for: [helper, moduleHost])
+    let initial = SystemAudioCapture.tapTargets(of: .teams, in: [helper])
+    let joined = SystemAudioCapture.tapTargets(of: .teams, in: [helper, moduleHost])
     precondition(initial == [102] && joined == [101, 102])
-    precondition(TeamsAudioCapture.tapTargets(for: [helper, helper]) == initial)
+    precondition(SystemAudioCapture.tapTargets(of: .teams, in: [helper, helper]) == initial)
     precondition(
-      TeamsAudioCapture.needsRestart(
-        tappedProcesses: [], previous: nil, current: [helper]))
+      SystemAudioCapture.needsRestart(
+        scope: .teams, tappedProcesses: [], previous: nil, current: [helper]))
     precondition(
-      !TeamsAudioCapture.needsRestart(tappedProcesses: [], previous: nil, current: [unrelated]))
+      !SystemAudioCapture.needsRestart(
+        scope: .teams, tappedProcesses: [], previous: nil, current: [unrelated]))
     precondition(
-      TeamsAudioCapture.needsRestart(
-        tappedProcesses: initial, previous: [helper], current: [helper, moduleHost]))
+      SystemAudioCapture.needsRestart(
+        scope: .teams, tappedProcesses: initial, previous: [helper], current: [helper, moduleHost]))
     precondition(
-      !TeamsAudioCapture.needsRestart(
-        tappedProcesses: joined, previous: [helper, moduleHost], current: [helper, moduleHost]))
+      !SystemAudioCapture.needsRestart(
+        scope: .teams, tappedProcesses: joined, previous: [helper, moduleHost],
+        current: [helper, moduleHost]))
     precondition(
-      TeamsAudioCapture.needsRestart(
-        tappedProcesses: joined, previous: [helper, moduleHost], current: [helper]))
+      SystemAudioCapture.needsRestart(
+        scope: .teams, tappedProcesses: joined, previous: [helper, moduleHost], current: [helper]))
     let restartedHost = AudioProcessStatus(
       id: 105, pid: 70002, bundleID: moduleHost.bundleID,
       outputActive: false, outputDevices: [])
     precondition(
-      TeamsAudioCapture.needsRestart(
-        tappedProcesses: joined, previous: [helper, moduleHost], current: [helper, restartedHost]))
+      SystemAudioCapture.needsRestart(
+        scope: .teams, tappedProcesses: joined, previous: [helper, moduleHost],
+        current: [helper, restartedHost]))
     let reroutedHost = AudioProcessStatus(
       id: moduleHost.id, pid: moduleHost.pid, bundleID: moduleHost.bundleID,
       outputActive: true, outputDevices: [148])
     precondition(
-      TeamsAudioCapture.needsRestart(
-        tappedProcesses: joined, previous: [helper, moduleHost], current: [helper, reroutedHost]))
+      SystemAudioCapture.needsRestart(
+        scope: .teams, tappedProcesses: joined, previous: [helper, moduleHost],
+        current: [helper, reroutedHost]))
     print(
       "Teams process taps, duplicate module hosts, helper changes and app isolation: OK")
   }
 
+  private static func testSystemAudioScope() {
+    // Auto-record only starts in a Teams meeting and always taps Teams alone.
+    for presence in [TeamsMeetingPresence.inMeeting, .noMeeting, .unknown] {
+      precondition(SystemAudioScope.forRecording(automatic: true, teamsMeeting: presence) == .teams)
+    }
+    precondition(
+      SystemAudioScope.forRecording(automatic: false, teamsMeeting: .inMeeting) == .teams)
+    precondition(
+      SystemAudioScope.forRecording(automatic: false, teamsMeeting: .noMeeting) == .deviceAudio)
+    precondition(
+      SystemAudioScope.forRecording(automatic: false, teamsMeeting: .unknown) == .deviceAudio)
+    // Teams running without a meeting, or closed, counts as no meeting.
+    for state in [TeamsMuteState.unavailable(.noMeeting), .unavailable(.teamsClosed)] {
+      precondition(
+        SystemAudioScope.forRecording(automatic: false, teamsMeeting: state.meetingPresence)
+          == .deviceAudio)
+    }
+    precondition(
+      SystemAudioScope.forRecording(
+        automatic: false, teamsMeeting: TeamsMuteState.muted.meetingPresence)
+        == .teams)
+    precondition(SystemAudioScope.teams.mode == "microphone-and-teams")
+    precondition(SystemAudioScope.deviceAudio.mode == "microphone-and-device-audio")
+    precondition(MeetingSource(.deviceAudio) == .deviceAudio && MeetingSource(nil) == .microphone)
+
+    let global = SystemAudioCapture.deviceTapDescription(ownProcess: 42)
+    precondition(global.isExclusive && global.processes == [42], "Taps all but this app")
+    precondition(global.bundleIDs.isEmpty && global.isMono && global.isMixdown)
+    precondition(global.isPrivate && global.muteBehavior == .unmuted)
+    precondition(global.name == "Meeting Notes device audio")
+    let unexcluded = SystemAudioCapture.deviceTapDescription(ownProcess: nil)
+    precondition(unexcluded.isExclusive && unexcluded.processes.isEmpty)
+
+    // Teams process changes never rebuild a global tap.
+    let teams = AudioProcessStatus(
+      id: 101, pid: 61878, bundleID: "com.microsoft.teams2.modulehost",
+      outputActive: true, outputDevices: [96])
+    let music = AudioProcessStatus(
+      id: 103, pid: 70000, bundleID: "com.apple.Music", outputActive: true, outputDevices: [148])
+    precondition(
+      !SystemAudioCapture.needsRestart(
+        scope: .deviceAudio, tappedProcesses: [], previous: [music], current: [music, teams]))
+    precondition(
+      !SystemAudioCapture.needsRestart(
+        scope: .deviceAudio, tappedProcesses: [], previous: [teams], current: []))
+    print("Recording source decision, global device-audio tap excluding this app: OK")
+  }
+
+  private static func testStoredAudioScopes() {
+    for scope in [SystemAudioScope.teams, .deviceAudio, .app("us.zoom.xos")] {
+      precondition(SystemAudioScope(rawValue: scope.rawValue) == scope)
+      precondition(MeetingSource(rawValue: MeetingSource(scope).rawValue) == MeetingSource(scope))
+    }
+    precondition(SystemAudioScope.app("us.zoom.xos").rawValue == "app:us.zoom.xos")
+    precondition(SystemAudioScope.app("us.zoom.xos").mode == "microphone-and-app:us.zoom.xos")
+    for invalid in ["app:", "app:zoom", "zoom", "app:us zoom.xos", "microphone"] {
+      precondition(SystemAudioScope(rawValue: invalid) == nil, invalid)
+    }
+    precondition(MeetingSource(rawValue: "microphone") == .microphone)
+    precondition(MeetingSource(rawValue: "app:us.zoom.xos")?.systemAudio == .app("us.zoom.xos"))
+    precondition(MeetingSource.microphone.summary == "microphone only")
+    precondition(
+      MeetingSource.app("com.example.call").summary == "com.example.call audio + microphone")
+
+    // An app tap covers the app and its helpers, never a lookalike bundle ID.
+    let call = AudioProcessStatus(
+      id: 201, pid: 800, bundleID: "com.example.call", outputActive: true, outputDevices: [96])
+    let helper = AudioProcessStatus(
+      id: 202, pid: 801, bundleID: "com.example.call.helper", outputActive: false,
+      outputDevices: [])
+    let lookalike = AudioProcessStatus(
+      id: 203, pid: 802, bundleID: "com.example.caller", outputActive: true, outputDevices: [96])
+    let music = AudioProcessStatus(
+      id: 204, pid: 803, bundleID: "com.apple.Music", outputActive: true, outputDevices: [96])
+    let scope = SystemAudioScope.app("com.example.call")
+    let tap = SystemAudioCapture.appTapDescription(
+      scope: scope, processes: [call, helper, lookalike, music])
+    precondition(tap.processes == [201, 202] && tap.bundleIDs.isEmpty)
+    precondition(!tap.isExclusive && tap.isMixdown && tap.isMono && tap.isPrivate)
+    precondition(tap.muteBehavior == .unmuted)
+    precondition(tap.name == "Meeting Notes com.example.call audio")
+    // Before the app runs or opens audio, the tap waits for its bundle ID.
+    let waiting = SystemAudioCapture.appTapDescription(scope: scope, processes: [music])
+    precondition(waiting.bundleIDs == ["com.example.call"] && waiting.processes.isEmpty)
+    precondition(waiting.isProcessRestoreEnabled)
+    precondition(
+      SystemAudioScope.app("com.apple.Safari").bundleIDs
+        == ["com.apple.Safari"])
+    let webKit = AudioProcessStatus(
+      id: 205, pid: 804, bundleID: "com.apple.WebKit.GPU", outputActive: true, outputDevices: [96])
+    precondition(
+      SystemAudioCapture.tapTargets(of: .app("com.apple.Safari"), in: [webKit, call]).isEmpty)
+    let sharedCall = AudioProcessStatus(
+      id: 206, pid: 805, bundleID: "com.apple.avconferenced", outputActive: true,
+      outputDevices: [96])
+    precondition(
+      SystemAudioCapture.tapTargets(of: .app("com.apple.FaceTime"), in: [sharedCall, call]).isEmpty)
+    precondition(
+      SystemAudioCapture.needsRestart(
+        scope: scope, tappedProcesses: [], previous: nil, current: [call]))
+    precondition(
+      !SystemAudioCapture.needsRestart(
+        scope: scope, tappedProcesses: [], previous: nil, current: [music]))
+    precondition(
+      !SystemAudioCapture.needsRestart(
+        scope: scope, tappedProcesses: [201], previous: [call], current: [call]))
+    precondition(
+      SystemAudioCapture.needsRestart(
+        scope: scope, tappedProcesses: [201], previous: [call], current: [call, helper]))
+    print("Recording source choices, app helpers and exclusion of shared audio services: OK")
+  }
+
+  /// An app recording names the app in capture.json and in the meeting source.
+  private static func testAppCapture(root: URL) async throws {
+    let system = FixtureAudioInput(.system)
+    let microphone = FixtureAudioInput(.microphone)
+    let directory = root.appendingPathComponent("app")
+    let recorder = NativeRecorder(
+      directory: directory, systemAudio: .app("us.zoom.xos"),
+      makeInputs: { [system, microphone] }, checkPermission: {})
+    try await recorder.start()
+    precondition(recorder.meetingSource == .app("us.zoom.xos"))
+    system.emit(tone(rate: 48_000), at: 200)
+    microphone.emit(tone(rate: 48_000), at: 200)
+    try await recorder.stop()
+    let data = try Data(contentsOf: directory.appendingPathComponent("capture.json"))
+    precondition(
+      String(decoding: data, as: UTF8.self).contains("\"systemAudio\":\"app:us.zoom.xos\""))
+    let manifest = try JSONDecoder().decode(CaptureManifest.self, from: data)
+    precondition(manifest.systemAudio == .app("us.zoom.xos"))
+
+    let microphoneOnly = NativeRecorder(
+      directory: root.appendingPathComponent("microphone-only"), systemAudio: nil,
+      makeInputs: { [FixtureAudioInput(.microphone)] }, checkPermission: {})
+    try await microphoneOnly.start()
+    precondition(microphoneOnly.meetingSource == .microphone)
+    try await microphoneOnly.stop()
+  }
+
   private static func testCaptureHealth() {
-    var health = TeamsCaptureHealth()
+    var health = SystemCaptureHealth()
     precondition(health.check(outputActive: false, at: 0) == .wait)
     precondition(health.check(outputActive: false, at: 100) == .wait)
     precondition(health.check(outputActive: true, at: 101) == .wait)
@@ -467,12 +625,7 @@ extension Smoke {
   }
 
   private static func readSamples(_ url: URL) throws -> [Float] {
-    let file = try AVAudioFile(forReading: url)
-    let buffer = AVAudioPCMBuffer(
-      pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length))!
-    try file.read(into: buffer)
-    return Array(
-      UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength)))
+    try trackSamples(url)
   }
 
   private static func energy(_ samples: [Float], from start: Int, to end: Int) -> Float {

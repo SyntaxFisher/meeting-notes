@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Meeting Notes config.json",
+  "description": "Settings in ~/.config/meeting-notes/config.json, edited by the Settings window, the command line, MCP or by hand. Missing keys use their defaults. See docs/automation.md.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "autoRecordTeamsMeetings": {
+      "type": "boolean",
+      "default": true,
+      "description": "Record when a Teams meeting is joined and transcribe after leaving it."
+    },
+    "mirrorTeamsMute": {
+      "type": "boolean",
+      "default": true,
+      "description": "Exclude the microphone while Teams shows you as muted, for recordings of Teams audio."
+    },
+    "localSpeakerName": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null,
+      "pattern": "^[^:]*\\S[^:]*$",
+      "description": "Label for everything the microphone records. null uses the Teams display name once seen, otherwise the macOS full name."
+    },
+    "retention": {
+      "type": "object",
+      "properties": {
+        "audioBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000000000
+        }
+      },
+      "additionalProperties": false,
+      "description": "Audio storage budget; the oldest eligible recordings above it are deleted. Transcripts are always kept."
+    },
+    "agentsMayNameMeetings": {
+      "type": "boolean",
+      "default": true,
+      "description": "Allow connected agents to name meetings without a title when reading them. Existing titles stay unchanged."
+    },
+    "agentsMaySummarizeMeetings": {
+      "type": "boolean",
+      "default": true,
+      "description": "Nudge connected agents to save a short summary while reading a complete meeting."
+    },
+    "keepAudio": {
+      "type": "boolean",
+      "default": true,
+      "description": "Keep audio after successful transcription. When false, newly completed audio is deleted and failed work is kept for retry. Settings also offers to delete existing completed audio."
+    },
+    "agentsMayCorrectTranscripts": {
+      "type": "boolean",
+      "default": false,
+      "description": "Nudge connected agents to fix clear transcription errors while reading, without rewriting or guessing. Explicitly requested corrections remain available when disabled."
+    }
+  },
+  "additionalProperties": false
+}

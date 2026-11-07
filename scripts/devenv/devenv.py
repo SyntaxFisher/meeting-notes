@@ -207,9 +207,16 @@ def synthesize(step, voice, rate, output, scenario_path):
         source.unlink()
 
 
-def mix(truth, output):
-    """The recording the app should produce: every turn except microphone speech while muted."""
-    audible = [event for event in truth["events"] if "clip" in event and not event["muted"]]
+def mix(truth, output, include=lambda event: True, codec=()):
+    """The recording the app should produce: every turn except microphone speech while muted.
+    `include` selects the turns, for example one side of the call."""
+    audible = [event for event in truth["events"]
+               if "clip" in event and not event["muted"] and include(event)]
+    if not audible:
+        run("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+            "-i", f"anullsrc=r={RATE}:cl=mono", "-t", str(truth["duration"]),
+            *codec, output, quiet=True)
+        return
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
     filters = []
     for index, event in enumerate(audible):
@@ -220,8 +227,21 @@ def mix(truth, output):
     filters.append(f"{labels}amix=inputs={len(audible)}:normalize=0,"
                    f"apad=whole_dur={truth['duration']}[out]")
     command += ["-filter_complex", ";".join(filters), "-map", "[out]", "-ar", str(RATE),
-                "-ac", "1", str(output)]
+                "-ac", "1", *codec, str(output)]
     subprocess.run(command, check=True)
+
+
+def synthetic_capture(scenario, truth, directory):
+    """A capture folder as the app writes it during a Teams call: the local speaker's unmuted
+    turns in the microphone track and the guests in the Teams track, both starting together."""
+    capture = directory / "capture"
+    capture.mkdir(exist_ok=True)
+    local = {key for key, speaker in scenario["speakers"].items() if speaker.get("via") == "mic"}
+    adts = ("-c:a", "aac", "-b:a", "96k", "-f", "adts")
+    mix(truth, capture / "microphone.aac", lambda event: event["speaker"] in local, adts)
+    mix(truth, capture / "system.aac", lambda event: event["speaker"] not in local, adts)
+    (capture / "capture.json").write_text(json.dumps({"microphoneStart": 0, "systemStart": 0, "systemAudio": "teams"}))
+    return capture
 
 
 def render_command(args):
@@ -232,7 +252,8 @@ def render_command(args):
 
 # MARK: scoring
 
-TRANSCRIPT_LINE = re.compile(r"^\[(\d+):(\d+):(\d+)\] Speaker (\d+): (.*)$")
+# Header lines never start with a timestamp; labels are "Speaker N" or a name.
+TRANSCRIPT_LINE = re.compile(r"^\[(\d+):(\d+):(\d+)\] ([^:]+?): (.*)$")
 
 
 def words(text):
@@ -267,10 +288,53 @@ def align(reference, hypothesis):
     return pairs[::-1]
 
 
+def claimed_identities(transcript_path, truth):
+    """Maps transcript labels that claim an identity to the scripted speaker they name.
+
+    The local label comes from the meeting record (`is_local_user`); other labels count
+    as names when they equal a guest's display name. "Speaker N" labels claim nothing.
+    """
+    claims = {}
+    path = Path(transcript_path)
+    sidecar = path.with_suffix(".json")
+    match = re.match(r"^(\d{4}-\d{2}-\d{2} \d{2}\.\d{2}(?:-\d+)?)", path.stem)
+    if not sidecar.exists() and match:
+        sidecar = path.parent / f"{match[1]}.json"
+    local = next((key for key, speaker in truth["speakers"].items()
+                  if speaker.get("via") == "mic"), None)
+    if sidecar.exists():
+        for speaker in json.loads(sidecar.read_text()).get("speakers", []):
+            if (speaker.get("is_local_user") or speaker.get("identity") == "local-user") and local:
+                claims[speaker["label"]] = local
+    for key, speaker in truth["speakers"].items():
+        if speaker.get("display"):
+            claims.setdefault(speaker["display"], key)
+    return claims
+
+
+def best_assignment(confusion, labels, speakers):
+    """Words attributed under the best one-to-one mapping of labels to scripted speakers."""
+    import itertools
+    labels, speakers = sorted(labels), sorted(speakers)
+    if len(labels) > 7 or len(speakers) > 7:
+        used, total = set(), 0
+        for (label, speaker), count in sorted(confusion.items(), key=lambda item: -item[1]):
+            if label not in used and speaker not in used:
+                used |= {label, speaker}
+                total += count
+        return total
+    best = 0
+    slots = speakers + [None] * max(0, len(labels) - len(speakers))
+    for permutation in itertools.permutations(slots, len(labels)):
+        best = max(best, sum(confusion.get((label, speaker), 0)
+                             for label, speaker in zip(labels, permutation) if speaker))
+    return best
+
+
 def score(transcript_path, truth):
     lines = [TRANSCRIPT_LINE.match(line.strip())
              for line in Path(transcript_path).read_text().splitlines() if line.strip()]
-    segments = [(int(m[4]), m[5]) for m in lines if m]
+    segments = [(m[4], m[5]) for m in lines if m]
     expected = [event for event in truth["events"] if "clip" in event and not event["muted"]]
     reference = [(word, event["lang"], event["speaker"])
                  for event in expected for word in words(event["text"])]
@@ -293,6 +357,11 @@ def score(transcript_path, truth):
     attributed = sum(max((n for (label, _), n in confusion.items() if label == hyp_label),
                          default=0) for hyp_label in labels)
     matched = sum(confusion.values())
+    claims = claimed_identities(transcript_path, truth)
+    named = sum(n for (label, _), n in confusion.items() if label in claims)
+    named_right = sum(n for (label, speaker), n in confusion.items()
+                      if claims.get(label) == speaker)
+    one_to_one = best_assignment(confusion, labels, {event["speaker"] for event in expected})
     other_words = {word for word, _, _ in reference}
     leaks = []
     for event in truth["events"]:
@@ -309,6 +378,9 @@ def score(transcript_path, truth):
         "speakersExpected": len({event["speaker"] for event in expected}),
         "speakersDetected": len(labels),
         "speakerAttribution": round(attributed / max(1, matched), 3),
+        "speakerAttributionOneToOne": round(one_to_one / max(1, matched), 3),
+        "namedWords": round(named / max(1, matched), 3),
+        "nameAccuracy": round(named_right / named, 3) if named else None,
         "mutedSpeechLeaked": round(max(leaks), 3) if leaks else None,
     }
     return report
@@ -322,6 +394,11 @@ def print_report(report):
     print(f"Speakers:              {report['speakersDetected']} detected, "
           f"{report['speakersExpected']} expected")
     print(f"Speaker attribution:   {report['speakerAttribution']:.1%} of aligned words")
+    print(f"  one label per person {report['speakerAttributionOneToOne']:.1%}")
+    named = report["namedWords"]
+    accuracy = report["nameAccuracy"]
+    print(f"Named words:           {named:.1%}" +
+          (f", {accuracy:.1%} with the right name" if accuracy is not None else ""))
     if report["mutedSpeechLeaked"] is not None:
         print(f"Muted speech leaked:   {report['mutedSpeechLeaked']:.0%} of distinctive words")
 
@@ -336,30 +413,117 @@ def score_command(args):
         print(json.dumps(report, indent=2))
 
 
-def transcriber():
-    for candidate in (APP / "Contents/MacOS/MeetingTranscriber",
-                      ROOT / "NativeTranscription/.build/arm64-apple-macosx/release/MeetingTranscriber"):
-        if candidate.exists():
-            return candidate
-    fail("MeetingTranscriber not found; run `make build` first.")
+def app_binary():
+    binary = APP / "Contents/MacOS/MeetingNotes"
+    if not binary.exists():
+        fail(f"{binary} not found; run `make build` first.")
+    return binary
 
 
 def offline(args):
-    """Transcribes the scenario's ideal mix directly, without Teams or live capture."""
+    """Transcribes the scenario's ideal mix like the app, without Teams or live capture."""
     scenario = load_scenario(args.scenario)
     directory, truth = render(scenario)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    output = directory / f"offline-{stamp}.txt"
-    progress = directory / f"offline-{stamp}.progress.json"
+    output = directory / f"offline-{stamp}{'-tracks' if args.tracks else ''}.txt"
+    command = [str(app_binary()), "transcribe", str(directory / "mix.wav"), str(output)]
+    if args.tracks:
+        command += ["--capture", str(synthetic_capture(scenario, truth, directory))]
     started = time.monotonic()
-    result = subprocess.run([str(transcriber()), str(directory / "mix.wav"), str(output),
-                             str(progress)])
+    result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
-        fail(f"Transcription failed: {progress.read_text() if progress.exists() else result}")
+        fail(f"Transcription failed: {result.stderr.strip() or result.stdout.strip()}")
+    if args.tracks:
+        audible = [event for event in truth["events"] if "clip" in event and not event["muted"]]
+        if audible and all(event["via"] == "mic" for event in audible):
+            record = json.loads(output.with_suffix(".json").read_text())
+            if (record["transcription"]["mode"] != "separate-tracks"
+                    or not record["speakers"]
+                    or any(not speaker["is_local_user"] or speaker["source"] != "microphone"
+                           for speaker in record["speakers"])):
+                fail("Solo call lost its microphone speaker identity")
     print(f"Transcribed {truth['duration']:.0f} s of audio in {time.monotonic() - started:.0f} s")
     report = score(output, truth)
     (directory / f"offline-{stamp}.report.json").write_text(json.dumps(report, indent=2) + "\n")
     print_report(report)
+
+
+def shift_filter(seconds):
+    """An ffmpeg filter that moves a track later (positive) or earlier (negative) in time."""
+    if seconds >= 0:
+        delay = int(round(seconds * 1000))
+        return f"adelay={delay}|{delay}"
+    return f"atrim=start={-seconds:.4f},asetpts=PTS-STARTPTS"
+
+
+def replay(args):
+    """Transcribes an archived live capture with the tracks mixed (as before) and separately.
+
+    Live captures are archived when the app's `captureArchiveDirectory` default is set. With
+    `--echo`, a delayed, filtered copy of the Teams track is added to the microphone track, which
+    simulates a call without headphones.
+    """
+    scenario = load_scenario(args.scenario)
+    truth_path = WORK / "scenarios" / scenario["name"] / "truth.json"
+    truth = json.loads(truth_path.read_text()) if truth_path.exists() else render(scenario)[1]
+    capture = Path(args.capture).expanduser()
+    manifest = json.loads((capture / "capture.json").read_text())
+    if manifest.get("systemStart") is None or manifest.get("microphoneStart") is None:
+        fail("The capture needs both a microphone and a Teams track.")
+    suffix = f"-echo{args.echo:g}" if args.echo else ""
+    directory = WORK / "replays" / f"{scenario['name']}{suffix}-{time.strftime('%Y%m%d-%H%M%S')}"
+    tracks = directory / "capture"
+    tracks.mkdir(parents=True)
+    for name in ("capture.json", "system.aac", "participants.json"):
+        if (capture / name).exists():
+            shutil.copy2(capture / name, tracks / name)
+    ffmpeg = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    microphone, system = capture / "microphone.aac", capture / "system.aac"
+    if args.echo:
+        lag = manifest["systemStart"] - manifest["microphoneStart"] + args.echo_delay
+        run(*ffmpeg, "-i", microphone, "-i", system, "-filter_complex",
+            f"[1]{shift_filter(lag)},lowpass=f=3800,highpass=f=150,volume={args.echo}[echo];"
+            "[0][echo]amix=inputs=2:normalize=0:duration=first[out]",
+            "-map", "[out]", "-ar", RATE, "-ac", "1", "-c:a", "aac", "-b:a", "96k", "-f", "adts",
+            tracks / "microphone.aac", quiet=True)
+    else:
+        shutil.copy2(microphone, tracks / "microphone.aac")
+    origin = min(manifest["systemStart"], manifest["microphoneStart"])
+    mix_path = directory / f"{capture.name}.wav"
+    run(*ffmpeg, "-i", tracks / "microphone.aac", "-i", tracks / "system.aac", "-filter_complex",
+        f"[0]{shift_filter(manifest['microphoneStart'] - origin)}[m];"
+        f"[1]{shift_filter(manifest['systemStart'] - origin)}[s];"
+        "[m][s]amix=inputs=2:normalize=0:duration=longest[out]",
+        "-map", "[out]", "-ar", RATE, "-ac", "1", mix_path, quiet=True)
+    binary = app_binary()
+    reports = {}
+    for mode in args.modes.split(","):
+        output = directory / f"{mode}.txt"
+        command = [binary, "transcribe", mix_path, output, "--name", args.name]
+        if mode == "separate":
+            command += ["--capture", tracks]
+        started = time.monotonic()
+        run(*command, quiet=True)
+        print(f"{mode}: transcribed in {time.monotonic() - started:.0f} s")
+        reports[mode] = score(output, truth)
+        (directory / f"{mode}.report.json").write_text(json.dumps(reports[mode], indent=2) + "\n")
+    print_comparison(reports)
+    print(f"Results: {directory}")
+
+
+def print_comparison(reports):
+    rows = [("WER", "wer", "{:.1%}"), ("Speakers detected", "speakersDetected", "{}"),
+            ("Speakers expected", "speakersExpected", "{}"),
+            ("Attribution", "speakerAttribution", "{:.1%}"),
+            ("Attribution, one label per person", "speakerAttributionOneToOne", "{:.1%}"),
+            ("Named words", "namedWords", "{:.1%}"), ("Name accuracy", "nameAccuracy", "{:.1%}"),
+            ("Muted speech leaked", "mutedSpeechLeaked", "{:.0%}")]
+    modes = list(reports)
+    print(f"{'':36}" + "".join(f"{mode:>12}" for mode in modes))
+    for title, key, form in rows:
+        values = [reports[mode].get(key) for mode in modes]
+        print(f"{title:36}" + "".join(
+            f"{form.format(value) if value is not None else '-':>12}" for value in values))
 
 
 # MARK: Teams desktop
@@ -403,6 +567,8 @@ def desktop_join(url):
         if teams_control("press", r"^(Join now|Jetzt teilnehmen)$").returncode == 0:
             print("Teams desktop joined the meeting.")
             time.sleep(4)
+            # Teams can join muted (for example after a large meeting); scenarios start unmuted.
+            desktop_set_muted(False)
             return
     fail("Teams desktop did not show Join now; check the Teams window.")
 
@@ -507,13 +673,17 @@ def meeting(args):
     scenario = load_scenario(args.scenario)
     directory, truth = render(scenario)
     ensure_audio_routing()
+    # Auto-record starts when the desktop joins, long before every guest is admitted.
+    joined = time.time() - (30 if args.no_desktop else 5)
     if not args.no_desktop:
         desktop_join(url)
     guests = {key: value for key, value in truth["speakers"].items() if value.get("via") != "mic"}
     sys.path.insert(0, str(next((VENV / "lib").glob("python*/site-packages"))))
     from playwright.sync_api import sync_playwright
     ffmpeg_index = audiotoolbox_index(MIC_DEVICE)
-    started = time.time()
+    rounds = max(1, int(args.repeat))
+    if rounds > 1 and (not args.leave or args.no_desktop):
+        fail("--repeat needs --leave and the Teams desktop, which leaves and rejoins.")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=not args.headed, channel="chromium", args=GUEST_ARGS)
@@ -527,46 +697,74 @@ def meeting(args):
             start_guest(page, url, speaker.get("display", key))
             pages[key] = page
         wait_for_guests(pages, admit=not args.no_desktop)
-        frames = {}
-        for key, page in pages.items():
-            frames[key] = guest_frames(page) or [page.main_frame]
-        for event in truth["events"]:
-            if event.get("via") == "guest":
-                data = base64.b64encode(Path(event["clip"]).read_bytes()).decode()
-                for frame in frames[event["speaker"]]:
-                    frame.evaluate("([id, data]) => __meetingNotesGuest.load(id, data)",
-                                   [event["clip"], data])
-        print(f"Everyone joined. Playing {scenario['name']} ({truth['duration']:.0f} s)…",
-              flush=True)
-        time.sleep(float(args.settle))
-        origin = time.monotonic()
-        players = []
-        for event in truth["events"]:
-            delay = origin + event["at"] - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-            label = event.get("action") or f"{event['speaker']}: {event['text'][:60]}"
-            print(f"  [{event['at']:6.1f}s] {label}", flush=True)
-            if event.get("action"):
-                desktop_set_muted(event["action"] == "mute")
-            elif event["via"] == "mic":
-                players.append(subprocess.Popen(
-                    ["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-i", event["clip"],
-                     "-f", "audiotoolbox", "-audio_device_index", str(ffmpeg_index), "-"]))
-            else:
-                for frame in frames[event["speaker"]]:
-                    frame.evaluate("(id) => __meetingNotesGuest.play(id)", event["clip"])
-        remaining = origin + truth["duration"] - time.monotonic()
-        if remaining > 0:
-            time.sleep(remaining)
-        for player in players:
-            player.wait()
-        if args.leave and not args.no_desktop:
-            desktop_leave()
+        starts = []
+        for round_index in range(rounds):
+            if round_index:
+                # Back to back: the desktop leaves, the app stops and transcribes, and the
+                # desktop rejoins the same call while that transcription is still running.
+                time.sleep(float(args.rejoin_delay))
+                joined = time.time() - 5
+                desktop_join(url)
+                for key, page in pages.items():
+                    if not guest_in_call(page):
+                        print(f"Rejoining guest {guests[key].get('display', key)}…", flush=True)
+                        start_guest(page, url, guests[key].get("display", key))
+                wait_for_guests(pages, admit=True)
+                print(f"Round {round_index + 1}: {app_status_line()}", flush=True)
+            frames = {}
+            for key, page in pages.items():
+                frames[key] = guest_frames(page) or [page.main_frame]
+            for event in truth["events"]:
+                if event.get("via") == "guest":
+                    data = base64.b64encode(Path(event["clip"]).read_bytes()).decode()
+                    for frame in frames[event["speaker"]]:
+                        frame.evaluate("([id, data]) => __meetingNotesGuest.load(id, data)",
+                                       [event["clip"], data])
+            print(f"Everyone joined. Playing {scenario['name']} ({truth['duration']:.0f} s)…",
+                  flush=True)
+            time.sleep(float(args.settle))
+            starts.append(joined)
+            origin = time.monotonic()
+            players = []
+            for event in truth["events"]:
+                delay = origin + event["at"] - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+                label = event.get("action") or f"{event['speaker']}: {event['text'][:60]}"
+                print(f"  [{event['at']:6.1f}s] {label}", flush=True)
+                if event.get("action"):
+                    desktop_set_muted(event["action"] == "mute")
+                elif event["via"] == "mic":
+                    players.append(subprocess.Popen(
+                        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-i",
+                         event["clip"], "-f", "audiotoolbox", "-audio_device_index",
+                         str(ffmpeg_index), "-"]))
+                else:
+                    for frame in frames[event["speaker"]]:
+                        frame.evaluate("(id) => __meetingNotesGuest.play(id)", event["clip"])
+            remaining = origin + truth["duration"] - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
+            for player in players:
+                player.wait()
+            if args.leave and not args.no_desktop:
+                desktop_leave()
+        # Guests that close the browser without leaving stay listed in Teams for a while.
+        for page in pages.values():
+            try:
+                page.get_by_role("button", name=re.compile(r"^(Leave|Verlassen)")).first.click(
+                    timeout=5000)
+            except Exception:
+                pass
         browser.close()
     print("Scenario finished.")
     if args.score:
-        wait_and_score(started, truth, directory, float(args.score_timeout))
+        scored = []
+        for start in starts:
+            scored.append(wait_and_score(start, truth, directory, float(args.score_timeout),
+                                         skip=scored))
+        if len(scored) > 1:
+            report_back_to_back(scored)
 
 
 def audiotoolbox_index(name):
@@ -580,22 +778,85 @@ def audiotoolbox_index(name):
     fail(f"Audio device {name} not found.")
 
 
-def wait_and_score(started, truth, directory, timeout):
-    print("Waiting for Meeting Notes to write the transcript…", flush=True)
+def meeting_records():
+    """Meeting records (transcripts/<id>.json) written by the app, newest last."""
+    records = []
+    for path in TRANSCRIPTS.glob("*.json"):
+        if not RECORD_NAME.match(path.name):
+            continue
+        try:
+            record = json.loads(path.read_text())
+        except ValueError:
+            continue
+        if record.get("schema_version") == 1 and record.get("id") == path.stem:
+            records.append(record)
+    return sorted(records, key=lambda record: record["started_at"])
+
+
+RECORD_NAME = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}\.\d{2}(-\d+)?\.json$")
+
+
+def record_started(record):
+    from datetime import datetime
+    return datetime.fromisoformat(record["started_at"]).timestamp()
+
+
+def app_status_line():
+    binary = APP / "Contents/MacOS/MeetingNotes"
+    result = subprocess.run([binary, "status"], capture_output=True, text=True)
+    return " ".join(result.stdout.split())
+
+
+def wait_and_score(started, truth, directory, timeout, skip=()):
+    """Waits for the first meeting that started after `started` to be transcribed, scores it,
+    and returns its id."""
+    print("Waiting for Meeting Notes to finish the transcript…", flush=True)
     deadline = time.time() + timeout
     while time.time() < deadline:
-        fresh = [path for path in TRANSCRIPTS.glob("*.txt") if path.stat().st_mtime > started]
-        if fresh:
-            transcript = max(fresh, key=lambda path: path.stat().st_mtime)
-            time.sleep(1)
-            report = score(transcript, truth)
-            stamp = time.strftime("%Y%m%d-%H%M%S")
-            (directory / f"live-{stamp}.report.json").write_text(json.dumps(report, indent=2) + "\n")
-            print_report(report)
-            return
+        candidates = [record for record in meeting_records()
+                      if record_started(record) >= started and record["id"] not in skip]
+        if candidates:
+            record = candidates[0]
+            if record["status"] == "complete" and record.get("transcript_file"):
+                transcript = TRANSCRIPTS / record["transcript_file"]
+                report = score(transcript, truth)
+                report["meeting"] = record["id"]
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                (directory / f"live-{stamp}.report.json").write_text(
+                    json.dumps(report, indent=2) + "\n")
+                print(f"Meeting {record['id']} ({record.get('title') or 'untitled'}):")
+                print_report(report)
+                return record["id"]
+            if record["status"] in ("failed", "interrupted"):
+                fail(f"Meeting {record['id']} {record['status']}: {record.get('error')}")
         time.sleep(3)
     fail(app_error_since(started) or
-         "No new transcript appeared. Is Auto-Record on, or did you start recording manually?")
+         "No new transcript appeared. Is auto-record on, or did you start recording manually?")
+
+
+def report_back_to_back(ids):
+    """Shows from events.jsonl that each meeting started recording before the previous one's
+    transcript was ready."""
+    events = Path.home() / "Library/Logs/Meeting Notes/events.jsonl"
+    times = {}
+    for line in events.read_text(errors="replace").splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("meeting") in ids:
+            times.setdefault((entry["meeting"], entry["event"]), entry["time"])
+    from datetime import datetime
+    for previous, current in zip(ids, ids[1:]):
+        ready = times.get((previous, "transcript.ready"))
+        started = times.get((current, "recording.started"))
+        if not ready or not started:
+            print(f"Back to back: events for {previous} / {current} not found.")
+            continue
+        lead = datetime.fromisoformat(ready).timestamp() - datetime.fromisoformat(started).timestamp()
+        verdict = "while the previous one was still being transcribed" if lead > 0 else \
+            "after the previous transcript was ready (not back to back)"
+        print(f"Back to back: {current} started recording {abs(lead):.0f} s {verdict} ({previous}).")
 
 
 def app_error_since(started):
@@ -631,10 +892,22 @@ def main():
     command.add_argument("scenario")
     command = commands.add_parser("offline", help="transcribe a scenario mix without Teams")
     command.add_argument("scenario")
+    command.add_argument("--tracks", action="store_true",
+                         help="transcribe separate microphone and Teams tracks, as in a Teams call")
     command = commands.add_parser("score", help="score a transcript against a scenario")
     command.add_argument("scenario")
     command.add_argument("transcript")
     command.add_argument("--json", action="store_true")
+    command = commands.add_parser(
+        "replay", help="transcribe an archived live capture mixed and as separate tracks")
+    command.add_argument("scenario")
+    command.add_argument("capture", help="archived capture directory (see captureArchiveDirectory)")
+    command.add_argument("--modes", default="mixed,separate")
+    command.add_argument("--name", default="Me", help="local speaker label")
+    command.add_argument("--echo", type=float, default=0.0,
+                         help="add Teams playback to the microphone at this gain, e.g. 0.3")
+    command.add_argument("--echo-delay", type=float, default=0.06,
+                         help="acoustic delay of the simulated echo in seconds")
     command = commands.add_parser("meeting", help="play a scenario in a live Teams meeting")
     command.add_argument("scenario")
     command.add_argument("--url", help="Teams meeting link (defaults to the saved one)")
@@ -645,11 +918,17 @@ def main():
     command.add_argument("--score", action="store_true", help="wait for the transcript and score it")
     command.add_argument("--score-timeout", default=600)
     command.add_argument("--settle", default=4, help="seconds to wait after everyone joined")
+    command.add_argument("--repeat", default=1,
+                         help="play the scenario this many times back to back; the desktop "
+                              "leaves and rejoins between rounds (needs --leave)")
+    command.add_argument("--rejoin-delay", default=8,
+                         help="seconds between leaving and rejoining with --repeat")
     command = commands.add_parser("config", help="show or save local settings")
     command.add_argument("--url", help="default Teams meeting link")
     args = parser.parse_args()
     handlers = {"setup": setup, "audio": audio, "render": render_command, "offline": offline,
-                "score": score_command, "meeting": meeting, "config": config_command}
+                "score": score_command, "meeting": meeting, "config": config_command,
+                "replay": replay}
     handlers[args.command](args)
 
 

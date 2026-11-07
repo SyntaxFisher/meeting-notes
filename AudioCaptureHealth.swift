@@ -1,7 +1,7 @@
 import CoreAudio
 import Foundation
 
-struct TeamsCaptureHealth {
+struct SystemCaptureHealth {
   enum Action { case wait, restart, fail }
   private var waitingSince: TimeInterval?
   private(set) var restarts = 0
@@ -59,9 +59,7 @@ struct AudioProcessStatus: Equatable {
   let outputActive: Bool
   let outputDevices: [AudioObjectID]
 
-  static func isTeams(bundleID: String) -> Bool {
-    bundleID == TeamsAudioCapture.bundleID || bundleID.hasPrefix(TeamsAudioCapture.bundleID + ".")
-  }
+  static let teamsBundleID = "com.microsoft.teams2"
 
   var summary: String {
     "pid=\(pid); bundle=\(bundleID); outputActive=\(outputActive); devices=\(outputDevices)"
@@ -116,13 +114,13 @@ enum AudioHardwareInfo {
     return device
   }
 
-  static func teamsProcesses() throws -> [AudioProcessStatus] {
+  /// Core Audio process objects whose bundle ID matches, ordered by PID.
+  static func processes(matching bundle: (String) -> Bool) throws -> [AudioProcessStatus] {
     let objects = try objects(
       AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList)
     return objects.compactMap { object in
       // A process can exit between enumeration and reading its properties.
-      guard let bundle = try? string(object, kAudioProcessPropertyBundleID),
-        AudioProcessStatus.isTeams(bundleID: bundle)
+      guard let bundleID = try? string(object, kAudioProcessPropertyBundleID), bundle(bundleID)
       else { return nil }
       var pid: Int32 = 0
       var active: UInt32 = 0
@@ -132,10 +130,26 @@ enum AudioHardwareInfo {
         let devices = try self.objects(
           object, kAudioProcessPropertyDevices, scope: kAudioObjectPropertyScopeOutput)
         return AudioProcessStatus(
-          id: object, pid: pid, bundleID: bundle, outputActive: active != 0,
+          id: object, pid: pid, bundleID: bundleID, outputActive: active != 0,
           outputDevices: devices)
       } catch { return nil }
     }.sorted { $0.pid < $1.pid }
+  }
+
+  /// The Core Audio process object of a process that has used Core Audio.
+  static func processObject(pid: pid_t) throws -> AudioObjectID {
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
+      mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var pid = pid
+    var object = AudioObjectID(kAudioObjectUnknown)
+    var size = UInt32(MemoryLayout<AudioObjectID>.size)
+    try CoreAudioFailure.check(
+      AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject), &address, UInt32(MemoryLayout<pid_t>.size), &pid,
+        &size, &object), "Find audio process")
+    guard object != kAudioObjectUnknown else { throw MeetingError("No audio process for \(pid).") }
+    return object
   }
 
   static func logDevice(_ id: AudioObjectID) {
