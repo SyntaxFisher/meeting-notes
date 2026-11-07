@@ -8,7 +8,7 @@ Agents should use the [release-meeting-notes skill](../.agents/skills/release-me
 
 ### Signing setup
 
-Full Xcode, Python 3, GitHub CLI access to `SyntaxFisher/meeting-notes`, and a valid Developer ID Application certificate with its private key in the login Keychain are required. The release script reads `~/.config/meeting-notes-release/config.json` (permissions `0600`):
+Full Xcode, Python 3.10 or later, GitHub CLI access to `SyntaxFisher/meeting-notes`, and a valid Developer ID Application certificate with its private key in the login Keychain are required. The release script reads `~/.config/meeting-notes-release/config.json` (permissions `0600`):
 
 ```json
 {
@@ -35,13 +35,13 @@ Sparkle's EdDSA key is stored in the login Keychain under account `com.jona.meet
 ### Each release
 
 1. Increase the three-part `CFBundleShortVersionString` and integer `CFBundleVersion` in `Info.plist`. Add `releases/<version>.md`.
-2. Run `make lint`, `make test`, and `make build`. Tests use generated audio and mocks; live recording requires explicit approval.
+2. Run `make lint`, `make test`, and `make build`. Tests use generated audio and mocks.
 3. Review, commit using a conventional commit, and push to `origin/main`.
 4. Run `make release`. It builds arm64, signs the native helper and Sparkle components, signs the app with Hardened Runtime and the audio-input entitlement, notarizes/staples it, and creates the installer. The DMG has a fixed Finder layout, drag instruction, arrow, and Applications shortcut. The DMG is signed, notarized, stapled, and checked by Gatekeeper. Packaging tools are pinned with hashes in `scripts/dmg-requirements.txt` inside an isolated build environment.
 5. Inspect `build/releases/<version>/manifest.json`, both notarization results (`Accepted`), app/DMG signatures, and the mounted installer. The script generates and verifies the signed update feed and checksums.
 6. Run `make publish` when publication is authorized. It requires unchanged source/assets and `origin/main` at the manifest commit, tags that commit, uploads a draft, downloads and compares its asset hashes, then publishes it as Latest.
 
-The three public assets are `Meeting-Notes-<version>-macOS-arm64.dmg`, `appcast.xml`, and `SHA256SUMS`. The app reads GitHub's `releases/latest/download/appcast.xml`; every release must include it. Earlier feed entries are retained and old assets must remain available. Never edit a signed feed or replace an existing public version. Failed builds remain available for diagnosis; inspect Apple's submission status before retrying, and move a failed version directory aside rather than overwriting a verified candidate.
+The three public assets are `Meeting-Notes-<version>-macOS-arm64.dmg`, `appcast.xml`, and `SHA256SUMS`. The app reads GitHub's `releases/latest/download/appcast.xml`; every release must include it. The feed retains up to three versions per compatibility branch; older published assets remain available. Never edit a signed feed or replace an existing public version. Failed builds remain available for diagnosis; inspect Apple's submission status before retrying, and move a failed version directory aside rather than overwriting a verified candidate.
 
 Pinned dependencies: [Sparkle](https://sparkle-project.org/documentation/) 2.10.0, FluidAudio 0.17.1 (`NativeTranscription/Package.resolved`) and the whisper.cpp 1.9.5 XCFramework (URL and checksum in `NativeTranscription/Package.swift`; `scripts/build.py` bundles its arm64 slice as `Contents/Frameworks/whisper.framework`). The whisper and Silero VAD models are pinned by revision and SHA-256 in `ModelStore.swift`. All licenses are bundled; see [third-party components](third-party-licenses.md). Preserve the bundle identifier and signing team. See [Sparkle update customization](https://sparkle-project.org/documentation/customization/) and [Apple notarization](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
 

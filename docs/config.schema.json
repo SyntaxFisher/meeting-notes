@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Meeting Notes config.json",
-  "description": "Settings in ~/.config/meeting-notes/config.json, edited by the Settings window, the command line, MCP or by hand. Missing keys use their defaults. See docs/automation.md.",
+  "description": "Settings in ~/.config/meeting-notes/config.json, edited by the Settings window, the command line or by hand. Missing keys use their defaults. See docs/automation.md.",
   "type": "object",
   "properties": {
     "$schema": {

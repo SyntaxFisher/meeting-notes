@@ -5,14 +5,14 @@ description: Prepare, verify, publish, or recover signed and notarized Meeting N
 
 # Release Meeting Notes
 
-Read [AGENTS.md](../../../AGENTS.md), [README Releasing](../../../README.md#releasing), and [scripts/build.py](../../../scripts/build.py). The script is the release implementation; do not create a second one in this skill.
+Read [AGENTS.md](../../../AGENTS.md), [release guide](../../../docs/releasing.md), and [scripts/build.py](../../../scripts/build.py). The script is the release implementation; do not create a second one in this skill.
 
 ## App-specific constraints
 
 - Repository `SyntaxFisher/meeting-notes`; app `Meeting Notes.app`; executable `MeetingNotes`; bundle ID and Sparkle account `com.jona.meeting-notes`. Preserve identity and Apple signing team.
 - Apple silicon and macOS 26+ only. Swift Package Manager builds the pinned transcription helper (whisper.cpp XCFramework and FluidAudio); package the whisper framework, FluidAudio resources and all licenses (`NativeTranscription/Licenses/`, FluidAudio, Sparkle).
-- `make build` creates an ad-hoc app with updates disabled. `make install` installs/launches that development build and refuses a running app. Use the DMG to test release installation.
-- Run `make lint` before every commit, plus `make test` and `make build` for release changes. Tests must not open microphones, capture system audio, or join calls. Live recording requires separate explicit user approval. Fixture processing is allowed.
+- `make build` creates an ad-hoc app with updates disabled by default; signed preview builds can enable updates as described in the development guide. `make install` installs/launches that development build and refuses a running app. Use the DMG to test release installation.
+- Run `make lint` before every commit, plus `make test` and `make build` for release changes. Automated tests use fixtures; live capture checks use the separate development test environment.
 - Updates defer checks/restarts while work or permission setup is active. Keep that protection intact. Do not overwrite recordings/transcripts or change retention as part of release work.
 - Preparing a release does not authorize publication. When the user asks to release/publish, carry through the verified GitHub workflow. Installing or launching the app is separate from preparing a DMG.
 
@@ -20,7 +20,7 @@ Read [AGENTS.md](../../../AGENTS.md), [README Releasing](../../../README.md#rele
 
 Verify `gh auth status`, `security find-identity -v -p codesigning`, and `xcrun --find notarytool`. Use the configured Developer ID Application identity.
 
-Local `~/.config/meeting-notes-release/config.json` (0600) contains the signing identity and notarization credential references. Keep private keys and tokens outside the repository and release assets. See README for environment overrides.
+Local `~/.config/meeting-notes-release/config.json` (0600) contains the signing identity and notarization credential references. Keep private keys and tokens outside the repository and release assets. See the release guide for environment overrides.
 
 Sparkle's private key is in login Keychain under `com.jona.meeting-notes`; `Info.plist` has its public key. Reuse the existing key.
 

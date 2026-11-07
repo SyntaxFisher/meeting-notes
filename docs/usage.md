@@ -33,7 +33,7 @@ The app chooses audio automatically when recording starts and keeps that source 
 
 The app, CLI, MCP and Shortcuts all use this automatic choice; there is no source selector or remembered source preference. App and device audio use the same System Audio Recording permission. The record's `source` and `meeting-notes status` show which source a recording uses. Capture opens the microphone before the system audio tap because a Bluetooth headset can change its playback format when its microphone opens. Device and format changes rebuild the audio engine with bounded retries, which can leave a short silent gap. If audio plays but no buffers reach the tap, the app restarts the tap twice and then stops the recording, keeping what was captured.
 
-**Mirror Teams mute** is on by default and can be toggled during a Teams recording. While Teams shows you as muted ("Unmute mic" or "Mikrofon wieder aktivieren"), your microphone is left out; when the state is unclear, the microphone is recorded. Mute mirroring, the Teams meeting title and participant roster apply only when recording Teams audio, including explicitly choosing Teams. Other apps and microphone-only recordings do not inherit them. The Teams reads run on a background queue, so a slow Teams reply never delays the panel or your buttons.
+**Mirror Teams mute** is on by default and can be toggled during a Teams recording. While Teams shows you as muted ("Unmute mic" or "Mikrofon wieder aktivieren"), your microphone is left out; when the state is unclear, the microphone is recorded. Mute mirroring, the Teams meeting title and participant roster apply only when recording Teams audio, selected automatically at recording start. Device-audio recordings do not inherit them. The Teams reads run on a background queue, so a slow Teams reply never delays the panel or your buttons.
 
 **Discard Recording** stops the recording and moves what was captured to the Trash.
 
@@ -54,7 +54,7 @@ Every meeting has one record, `transcripts/<id>.json`, created when recording st
 
 Transcription runs one meeting at a time in the order the meetings were queued. The queue is persistent: on launch, meetings left `transcribing` return to `queued` and continue, meetings left `saving` continue if their audio is complete and become `interrupted` otherwise, and meetings left `recording` become `interrupted`. Nothing is deleted on launch.
 
-**Retry** on a failed, interrupted or untranscribed meeting queues it again; an interrupted recording is first saved from its captured tracks, which survive a crash, `kill -9` or power loss up to their last complete frame. **Discard** moves the meeting's audio, captured tracks and record to the Trash. Both act on one meeting; any number of meetings can need attention at once. Without a meeting id, the command line, MCP and Shortcuts act only when exactly one meeting needs attention and otherwise list the ids. A recording under one minute with no detected speech is moved to the Trash automatically; a longer silent recording fails with "No speech was detected".
+**Retry** on a failed, interrupted or untranscribed meeting queues it again; an interrupted recording is first saved from its captured tracks, which survive a crash, `kill -9` or power loss up to their last complete frame. **Discard** moves the meeting's audio, captured tracks and record to the Trash. Both act on one meeting; any number of meetings can need attention at once. CLI `retry` and `discard`, and MCP `retry_transcription`, can omit the meeting ID only when exactly one meeting needs attention. MCP `delete_meeting` requires an exact ID. Shortcuts provides recording and transcript-reading actions, not retry or discard. A recording under one minute with no detected speech is moved to the Trash automatically; a longer silent recording fails with "No speech was detected".
 
 Quitting while recording or transcribing asks first. The recording is then stopped and saved, and queued meetings continue when Meeting Notes starts again. Updates wait until nothing is recording, saving, queued or transcribing and no permission setup runs.
 
@@ -79,17 +79,17 @@ Quiet system sounds mark the outcome of automatic and manual recordings: **Purr*
 
 ## Settings
 
-All settings live in `~/.config/meeting-notes/config.json`; the Settings window edits that file, and edits made by you or an agent apply within two seconds. An invalid file is never overwritten: the last valid settings stay in effect, the app reports the problem, and settings cannot be changed in the window until the file is fixed. Unknown keys produce warnings. The [automation guide](automation.md#settings-configjson) lists every key.
+Recording, storage and agent preferences live in `~/.config/meeting-notes/config.json`; their Settings controls edit that file, and edits made by you or an agent apply within two seconds. An invalid file is never overwritten: the last valid settings stay in effect, the app reports the problem, and settings cannot be changed in the window until the file is fixed. Unknown keys produce warnings. The [automation guide](automation.md#settings-configjson) lists every key. Launch at login is managed by macOS; automatic updates and window state use app preferences outside this file.
 
 - **General**: launch at login, auto-record, mirror Teams mute, and your name in transcripts.
-- **Agents**: connect Codex, Claude Code or pi with one click; copy their commands; allow agents to name meetings (on by default); the command-line path.
-- **Permissions**: live status with buttons that open System Settings, and the setup guide.
-- **Advanced**: the meetings folder and the storage limits for recordings and transcripts, the command line, URL commands and the event log.
-- **Updates** (release builds) and **About**.
+- **Agents**: connect Codex, Claude Code or pi; copy the MCP setup command; allow agents to name untitled meetings, add summaries or correct recognition errors when working with meetings. Naming and summaries are on by default; corrections are off. Explicitly requested changes remain available when these preferences are off.
+- **Permissions**: Documents, Microphone, System Audio Recording and Accessibility status, with controls to grant or manage access.
+- **Advanced**: open the fixed meetings folder, delete all meetings, choose whether to keep audio, set its storage limit, and copy the automation help command.
+- **About**: version, diagnostic log, update check and automatic-update controls for signed builds, GitHub and licenses.
 
 ## Transcripts and speaker names
 
-A transcript starts with a short header: the title, the recording time, what each speaker label means and the participants Teams showed. Every turn follows as `[hh:mm:ss] Label: text`; header lines never start with `[`. There is no AI summary or cleanup.
+A transcript starts with a short header: the title, the recording time, what each speaker label means and the participants Teams showed. Every turn follows as `[hh:mm:ss] Label: text`; header lines never start with `[`. Transcription itself does not summarize or rewrite the meeting. Connected agents can save a short summary and correct clear recognition errors according to your preferences or explicit requests. The summary appears below the meeting title in the Library.
 
 ```
 Weekly Sync
@@ -106,10 +106,10 @@ Participants in Teams:
 [00:00:22] Jona Bihl: Guten Morgen, lasst uns mit dem Daily anfangen.
 ```
 
-- **Your name.** When a recording has your microphone and call audio (Teams or device audio) with remote speech, the two tracks are transcribed separately and everything the microphone recorded carries your name: `localSpeakerName` from the settings, otherwise your Teams display name (from this meeting, or the last one Meeting Notes saw), otherwise your macOS full name, otherwise "Me". Muted passages are silence in the microphone track and never appear.
+- **Your name.** When a recording has separate microphone and call-audio tracks (Teams or device audio), the two tracks are transcribed separately and everything the microphone recorded carries your name: `localSpeakerName` from the settings, otherwise your Teams display name (from this meeting, or the last one Meeting Notes saw), otherwise your macOS full name, otherwise "Me". Muted passages are silence in the microphone track and never appear.
 - **Remote speakers.** The call audio is split into voices by sound and labeled Speaker 1, Speaker 2, … in order of first appearance. Teams does not reveal who is speaking; for device audio the header says "remote voices in the device audio". A person who switches language or audio device can appear as two speakers.
 - **One other participant.** When Teams listed exactly one participant besides you, all remote Teams speech carries that name. Device audio is never named after a Teams participant.
-- **No remote speech.** Recordings whose call audio holds no speech are diarized as one mixed recording with anonymous labels, because several people may share your microphone.
+- **No remote speech.** Your microphone keeps its local-speaker identity even when the call-audio track is silent. Anonymous mixed transcription is used when separate capture tracks are unavailable.
 
 Without headphones your microphone also picks up the Teams playback. Meeting Notes estimates the delay and level of that echo from the two tracks and drops microphone passages the Teams audio explains, so remote speech is not attributed to you. During double talk some remote words can still appear in your turn. People in the room who speak into your microphone are labeled with your name.
 
@@ -150,11 +150,11 @@ The bundled Swift helper (`Contents/MacOS/MeetingTranscriber`) runs everything i
 
 A job runs in stages, which the panel and the record's `stage` show: downloading the transcription model (first use only, with a progress bar), loading speaker models, identifying speakers, loading the transcription model, finding speech, detecting languages, then transcribing part *n* of *m* with a progress bar.
 
-1. The diarizer finds who speaks when: in the Teams or device audio track for remote voices and, after echo filtering, in the microphone track for you, or in the mixed recording.
-2. Silero VAD finds the speech in each track. Whisper only ever hears speech, so long silences cannot turn into invented text such as a repeated "Vielen Dank.".
-3. Each stretch of speech gets its language detected on its own, so meetings that switch between German and English, or where everyone speaks their own language, keep every language. Whisper never translates.
-4. Speech is packed in time order into parts of up to 28 seconds until the language changes, and each part is transcribed without carrying text over from earlier parts, so a misheard phrase cannot repeat itself.
-5. Every word belongs to the stretch of speech it was found in and thus to its speaker. Voice activity marks where a turn really starts, so the first words of a turn ("Hallo!", "Mache ich.") are kept and attributed correctly even when the diarizer notices the new voice a second late.
+1. The diarizer separates remote voices in the Teams or device-audio track. Microphone speech is detected with VAD and echo filtering and keeps the local-speaker label. If separate tracks are unavailable, the diarizer works on the mixed recording.
+2. Silero VAD identifies speech regions and excludes detected silence before transcription, reducing spurious text from silent audio.
+3. Each stretch of speech gets its language detected independently to support multilingual meetings. Whisper is configured to transcribe, not translate.
+4. Speech is packed in time order into parts of up to 28 seconds, split when the detected language changes. Each part is transcribed without carrying earlier text forward, reducing repeated recognition errors.
+5. Word timestamps are mapped back to the original speech regions and speaker turns. Voice-activity boundaries help preserve short turns, but recognition and speaker attribution can still be wrong.
 
 On an M2 with 8 GB, an 18-minute German lecture took about 2 minutes, and an hour of meetings in which the language changes every few sentences took 16 to 22 minutes. The time grows with the number of speaker turns and language changes, not with silence. The helper needs about 1.2 GB of memory. A new recording never waits for it: you can join the next meeting while earlier ones transcribe.
 
