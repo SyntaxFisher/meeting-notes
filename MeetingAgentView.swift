@@ -8,7 +8,7 @@ struct MeetingCursor: Codable {
   var revision: Int? = nil
   var offset = 0
   var character = 0
-  var query: String? = nil
+  var queries: [String]? = nil
   var since: String? = nil
   var until: String? = nil
   var status: String? = nil
@@ -21,7 +21,7 @@ struct MeetingCursor: Codable {
     case revision = "r"
     case offset = "o"
     case character = "c"
-    case query = "q"
+    case queries = "q"
     case since = "s"
     case until = "u"
     case status = "t"
@@ -32,7 +32,7 @@ struct MeetingCursor: Codable {
   var token: String { (try! JSONEncoder().encode(self)).base64EncodedString() }
 
   static func read(_ value: String, kind: String) throws -> Self {
-    guard value.count <= 4096, let data = Data(base64Encoded: value),
+    guard value.count <= 8192, let data = Data(base64Encoded: value),
       let cursor = try? JSONDecoder().decode(Self.self, from: data), cursor.kind == kind,
       cursor.offset >= 0, cursor.character >= 0, (1...50).contains(cursor.limit)
     else { throw MeetingError("Invalid cursor. Start this read again.") }

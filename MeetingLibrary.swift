@@ -200,18 +200,22 @@ final class MeetingLibrary {
         + (matches.count > 5 ? ", ..." : "") + ". Use an exact meeting ID or unique title.")
   }
 
+  /// Meetings newest first. With queries, a meeting matches when any query matches its title,
+  /// speaker or participant names or transcript.
   func list(
-    since: Date? = nil, until: Date? = nil, query: String? = nil,
+    since: Date? = nil, until: Date? = nil, queries: [String] = [],
     status: Set<MeetingStatus>? = nil, limit: Int? = nil
   ) -> [MeetingRecord] {
-    let terms = Self.terms(query)
+    let alternatives = Self.alternatives(queries)
     var result: [MeetingRecord] = []
     for record in meetings() {
       if let limit, result.count >= limit { break }
       if let since, record.startedAt < since { continue }
       if let until, record.startedAt >= until { continue }
       if let status, !status.contains(record.status) { continue }
-      if !terms.isEmpty, !Self.matches(terms, in: haystack(of: record)) { continue }
+      if !alternatives.isEmpty, Self.firstMatch(alternatives, in: haystack(of: record)) == nil {
+        continue
+      }
       result.append(record)
     }
     return result
@@ -230,15 +234,16 @@ final class MeetingLibrary {
       .joined(separator: "\n")
   }
 
-  /// Finds transcript segments in which every query term starts a word, ignoring case and
-  /// diacritics, so "budget" finds "budgets" but "mac" does not find "gemacht". Meetings are
-  /// searched newest first; segments within a meeting in spoken order.
+  /// Finds transcript segments matching any of the queries. A query matches when each of its
+  /// terms starts a word, ignoring case and diacritics, so "budget" finds "budgets" but "mac"
+  /// does not find "gemacht". Meetings are searched newest first; segments within a meeting in
+  /// spoken order.
   func search(
-    _ query: String, since: Date? = nil, until: Date? = nil, meeting: String? = nil,
+    _ queries: [String], since: Date? = nil, until: Date? = nil, meeting: String? = nil,
     limit: Int = 20
   ) -> [SearchHit] {
-    let terms = Self.terms(query)
-    guard !terms.isEmpty else { return [] }
+    let alternatives = Self.alternatives(queries)
+    guard !alternatives.isEmpty else { return [] }
     var hits: [SearchHit] = []
     let candidates = meeting.flatMap { try? load($0) }.map { [$0] } ?? meetings()
     for record in candidates {
@@ -246,7 +251,8 @@ final class MeetingLibrary {
       if let until, record.startedAt >= until { continue }
       for (index, segment) in record.segments.enumerated() {
         let speaker = record.displayName(for: segment.speaker)
-        guard Self.matches(terms, in: segment.text + "\n" + speaker) else { continue }
+        guard let terms = Self.firstMatch(alternatives, in: segment.text + "\n" + speaker)
+        else { continue }
         hits.append(
           SearchHit(
             meetingId: record.id, meetingTitle: record.title,
@@ -570,9 +576,19 @@ final class MeetingLibrary {
     return words(query).map(String.init)
   }
 
+  static func alternatives(_ queries: [String]) -> [[String]] {
+    queries.map(terms).filter { !$0.isEmpty }
+  }
+
   static func matches(_ terms: [String], in text: String) -> Bool {
+    firstMatch([terms], in: text) != nil
+  }
+
+  static func firstMatch(_ alternatives: [[String]], in text: String) -> [String]? {
     let words = words(text)
-    return terms.allSatisfy { term in words.contains { $0.hasPrefix(term) } }
+    return alternatives.first { terms in
+      terms.allSatisfy { term in words.contains { $0.hasPrefix(term) } }
+    }
   }
 
   static func label(_ label: String, matches reference: String) -> Bool {
