@@ -93,7 +93,7 @@ enum AgentEditingSmoke {
     precondition(call("open_meeting", error: true).contains("App controls are unavailable"))
     let read = call("get_meeting")
     precondition(read.contains("suggest_topic: true") && !read.contains("suggest_corrections"))
-    precondition(read.contains("transcript_path:") && read.contains("recording_path:"))
+    precondition(read.contains("recording_path:"))
     precondition(read.contains("url: \(record.link.string)") && read.contains("s3 00:00:05"))
     precondition(!read.contains("title_source") && !read.contains("original_segments"))
     _ = call("get_meeting", ["format": "json"], error: true)

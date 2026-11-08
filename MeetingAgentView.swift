@@ -119,9 +119,6 @@ enum MeetingAgentView {
       lines.append(
         "\(JSONCoding.formatDate(record.startedAt)) | \(record.status.rawValue)"
           + (record.durationSeconds.map { " | \(MeetingLibrary.timestamp($0))" } ?? ""))
-      if let path = library.transcriptURL(of: record)?.path {
-        lines.append("transcript_path: \(path)")
-      }
       if let path = library.audioURL(of: record)?.path { lines.append("recording_path: \(path)") }
       if !record.speakers.isEmpty {
         lines.append(

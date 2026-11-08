@@ -75,7 +75,7 @@ For meeting references, use the base meeting URL unchanged, without `?p=` or `?t
 
 The app resolves the passage ID exactly, including overlapping speech, without starting playback. Links work even without stored audio. Time links (`?t=754.3`) also remain available. Meeting and passage links refer to private local data even though they use HTTPS. Treat them and local file paths as private local references; do not fetch meeting URLs as webpages. They may appear only in direct chat answers to the user, never in documents, saved summaries, files, emails or other shareable output—even drafts for the user—and must never be disclosed to other people or external services.
 
-Meeting details supply `transcript_path` and `recording_path` when those files exist. Storage/config internals are not exposed. CLI exports can still include full JSON and Markdown.
+Meeting details supply `recording_path` while the audio file exists, for tasks that need the audio itself. Storage/config internals are not exposed. CLI exports can still include full JSON and Markdown.
 
 For a specific search hit, use `get_meeting` with its `meeting_id` and `passage`. For a time, use `at` with seconds or `HH:MM:SS`. Both return two neighboring passages on each side by default; `context` accepts 0–10. The response indicates its position in the complete transcript and lets the agent continue forward.
 
