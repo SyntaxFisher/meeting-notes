@@ -98,16 +98,22 @@ enum AgentEditingSmoke {
     precondition(!read.contains("title_source") && !read.contains("original_segments"))
     _ = call("get_meeting", ["format": "json"], error: true)
     _ = call("start_recording", ["source": "auto"], error: true)
-    _ = call("list_meetings", ["query": "checkout"], error: true)
+    _ = call("list_meetings", ["queries": ["checkout"]], error: true)
     _ = call("get_meeting", ["passage": "s2", "at": "0"], error: true)
     let passage = call("get_meeting", ["passage": "s3", "context": 0])
     precondition(passage.contains("Cooper Netties") && !passage.contains("We deploy"))
     _ = call("get_meeting", ["at": "00:01:00"], error: true)
     let at = call("get_meeting", ["at": "00:00:05", "context": 0])
     precondition(at.contains("Mira checks"))
-    let searched = call("search_meetings", ["query": "checkout"])
+    let searched = call("search_meetings", ["queries": ["checkout"]])
     precondition(searched.contains("s1") && searched.contains("(excerpt)"))
+    let alternatives = call("search_meetings", ["queries": ["nonexistent", "checkout", "cooper"]])
+    precondition(alternatives.contains("s1 ") && alternatives.contains("s3 "))
     _ = call("search_meetings", [:], error: true)
+    _ = call("search_meetings", ["query": "checkout"], error: true)
+    _ = call("search_meetings", ["queries": []], error: true)
+    _ = call("search_meetings", ["queries": ["checkout", " "]], error: true)
+    _ = call("search_meetings", ["queries": "checkout"], error: true)
     let named = call(
       "update_meeting",
       [
@@ -304,7 +310,7 @@ enum AgentEditingSmoke {
     _ = try library.editTranscript(
       long.id, changes: [.init(segmentID: "s1", text: "Changed")], expectedRevision: 0)
     _ = call("get_meeting", ["cursor": .string(firstCursor)], error: true)
-    let allSearch = call("search_meetings", ["query": "Unique passage", "limit": 3])
+    let allSearch = call("search_meetings", ["queries": ["Unique passage"], "limit": 3])
     precondition(cursor(allSearch) != nil)
     let continued = call("search_meetings", ["cursor": .string(cursor(allSearch)!)])
     precondition(continued.contains("s5") && !continued.contains("s2 "))

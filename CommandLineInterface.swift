@@ -201,7 +201,7 @@ struct CommandLineInterface {
     case "list":
       let records = library.list(
         since: try arguments.date("since"), until: try arguments.date("until"),
-        query: arguments.options["query"] ?? arguments.positional.first,
+        queries: (arguments.options["query"] ?? arguments.positional.first).map { [$0] } ?? [],
         status: try arguments.statuses(), limit: try arguments.int("limit"))
       let summaries = records.map(library.summary(of:))
       json ? emitJSON(summaries) : print(Self.table(summaries))
@@ -225,7 +225,7 @@ struct CommandLineInterface {
         throw UsageError(message: "search needs a query.")
       }
       let hits = library.search(
-        query, since: try arguments.date("since"), until: try arguments.date("until"),
+        [query], since: try arguments.date("since"), until: try arguments.date("until"),
         meeting: try arguments.options["meeting"].map(library.resolve),
         limit: try arguments.int("limit") ?? 20)
       if json {

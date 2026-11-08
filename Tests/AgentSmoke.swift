@@ -164,20 +164,29 @@ enum AgentSmoke {
   }
 
   static func testSearch(_ library: MeetingLibrary) throws {
-    let hits = library.search("BUDGET")
+    let hits = library.search(["BUDGET"])
     precondition(hits.map(\.meetingId) == ["20261105T151700Z", "20261103T163900Z"])
     precondition(hits[1].timestamp == "00:01:05" && hits[1].start == 65)
-    precondition(library.search("cafe menu").first?.speaker == "Jona")
-    precondition(library.search("uber aufnahmefunktion").first?.speaker == "Grace")
-    precondition(library.search("budget thursday").count == 1)
-    precondition(library.search("budg, THURS!").count == 1)
-    precondition(library.search("ursday").isEmpty, "Terms match at word starts only")
-    precondition(library.search("budget nonexistent").isEmpty)
-    precondition(library.search("budget", limit: 1).count == 1)
-    precondition(library.search("budget", meeting: "20261103T163900Z").count == 1)
+    precondition(library.search(["cafe menu"]).first?.speaker == "Jona")
+    precondition(library.search(["uber aufnahmefunktion"]).first?.speaker == "Grace")
+    precondition(library.search(["budget thursday"]).count == 1)
+    precondition(library.search(["budg, THURS!"]).count == 1)
+    precondition(library.search(["ursday"]).isEmpty, "Terms match at word starts only")
+    precondition(library.search(["budget nonexistent"]).isEmpty)
+    let either = library.search(["nonexistent", "cafe menu", "aufnahmefunktion"])
+    precondition(either.map(\.speaker) == ["Jona", "Grace"], "Any query matches a passage")
+    precondition(library.search(["budget", "budget thursday"]).count == hits.count)
+    precondition(library.search(["", "  "]).isEmpty)
+    precondition(library.search(["budget"], limit: 1).count == 1)
+    precondition(library.search(["budget"], meeting: "20261103T163900Z").count == 1)
     let since = try DateFilter.parse("2026-11-04")
-    precondition(library.search("budget", since: since).count == 1)
-    precondition(library.list(query: "grace aufnahmefunktion").map(\.id) == ["20261103T163900Z"])
+    precondition(library.search(["budget"], since: since).count == 1)
+    precondition(
+      library.list(queries: ["grace aufnahmefunktion"]).map(\.id) == ["20261103T163900Z"])
+    precondition(
+      library.list(queries: ["nonexistent", "grace aufnahmefunktion"]).map(\.id) == [
+        "20261103T163900Z"
+      ])
     precondition(library.list(limit: 1).count == 1)
     precondition(library.list(until: since).map(\.id) == ["20261103T163900Z"])
     precondition(library.list(status: [.transcribing]).map(\.id) == ["20261105T160000Z"])

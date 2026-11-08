@@ -78,9 +78,9 @@ enum TranscriptEditsSmoke {
     try expect(
       try String(contentsOf: library.transcriptURL(of: baseline)!, encoding: .utf8)
         == MeetingLibrary.transcriptText(corrected.record))
-    precondition(library.search("Kubernetes").first?.segmentID == "s2")
-    precondition(library.search("Kubernetes").first?.revision == 1)
-    precondition(library.search("Cooper Netties").isEmpty)
+    precondition(library.search(["Kubernetes"]).first?.segmentID == "s2")
+    precondition(library.search(["Kubernetes"]).first?.revision == 1)
+    precondition(library.search(["Cooper Netties"]).isEmpty)
     precondition(library.markdown(corrected.record).contains("We use Kubernetes."))
     let json = try MeetingLibrary.json(corrected.record)
     precondition(json["original"] == nil && json["edit_history"] == nil)

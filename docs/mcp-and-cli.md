@@ -44,7 +44,7 @@ Start with `get_meeting` for the newest meeting. MCP responses are compact text 
 | `get_meeting` | Optional `meeting_id`, `passage`, `at`, `context`, or `cursor` alone | Newest meeting by default, or ID/unique title. Reads full pages or nearby passages. |
 | `open_meeting` | Optional `meeting_id` (default latest), `passage` or `at` | Show the meeting or passage in the app, paused, only when the user asks. |
 | `list_meetings` | Optional `since`, `until`, `status`, `limit`, or `cursor` alone | Browse newest first, with no transcript search. |
-| `search_meetings` | `query`; optional `meeting_id`, `since`, `until`, `limit`, or `cursor` alone | Keyword search across titles, people and transcripts, grouped by meeting with passage excerpts. |
+| `search_meetings` | `queries` (1–30 alternatives); optional `meeting_id`, `since`, `until`, `limit`, or `cursor` alone | Keyword search across titles, people and transcripts, grouped by meeting with passage excerpts. A passage matches any query. |
 | `get_status` | None | Recording, pending work, failures and blocked-start reasons. |
 | `start_recording` | Optional `title` | Automatic Teams/device audio capture, including microphone. |
 | `stop_recording` | None | Stop and transcribe. |
@@ -77,9 +77,11 @@ The app resolves the passage ID exactly, including overlapping speech, without s
 
 Meeting details supply `recording_path` while the audio file exists, for tasks that need the audio itself. Storage/config internals are not exposed. CLI exports can still include full JSON and Markdown.
 
+Search is literal, so the agent passes synonyms, word stems and both meeting languages as alternative `queries` in one call, for example `["kost", "budget", "cost"]`. Within one query, all words must match; a passage matches when any query does. Words match from their start, so `kost` finds "Kosten" and "kostet" but "Eskalation" does not find "eskaliert". For everything said about a topic, or when searches find little, the server instructions tell agents to read the whole meeting instead of guessing more keywords: things said in other words, misheard terms and the other language never match. A two-hour meeting is only a few pages.
+
 For a specific search hit, use `get_meeting` with its `meeting_id` and `passage`. For a time, use `at` with seconds or `HH:MM:SS`. Both return two neighboring passages on each side by default; `context` accepts 0–10. The response indicates its position in the complete transcript and lets the agent continue forward.
 
-Transcript pages contain up to 12,000 text characters and 100 passages. Whole passages stay together where possible. Exceptionally large passages split with a clear partial marker; read all parts before replacing one. Continue by passing the returned `next_cursor` as `cursor` alone to the same tool. Cursors carry the query, position and version so the agent does not manage offsets. Changed transcripts/results reject stale continuations rather than mix versions. Absence of a cursor means the result is complete.
+Transcript pages contain up to 12,000 text characters and 100 passages. Whole passages stay together where possible. Exceptionally large passages split with a clear partial marker; read all parts before replacing one. Continue by passing the returned `next_cursor` as `cursor` alone to the same tool. Cursors carry the queries, position and version so the agent does not manage offsets. Changed transcripts/results reject stale continuations rather than mix versions. Absence of a cursor means the result is complete.
 
 ## Naming, summaries and corrections
 
@@ -178,7 +180,7 @@ The running app listens on `~/Library/Application Support/Meeting Notes/control.
 ## Limits
 
 - Recording requires macOS permissions. MCP `get_status` explains when starting is blocked; permission setup is available in the app.
-- Search matches keywords at word starts, ignoring case and accents. It is not semantic and does not translate.
+- Search matches keywords at word starts, ignoring case and accents. It is not semantic and does not translate; agents read the meeting when keywords are not enough.
 - Remote speaker labels are estimates per recording. Agents should name speakers only on clear evidence and say so.
 - The first time the CLI or MCP server reads `~/Documents/meeting-notes`, macOS may ask the app hosting the agent for access to the Documents folder.
 
