@@ -290,13 +290,14 @@ enum AgentSmoke {
     testAgentRemoval(setup)
     testOnboardingPages()
     try testCommandLineShim()
+    try testDesktopCodex()
   }
 
   static func testAgentRemoval(_ setup: AgentSetup) {
     let agents = Dictionary(uniqueKeysWithValues: setup.agents.map { ($0.id, $0) })
     precondition(agents["codex"]?.removeCommand == "codex mcp remove meeting-notes")
     precondition(agents["claude"]?.removeCommand == "claude mcp remove --scope user meeting-notes")
-    precondition(agents["pi"]?.removeCommand == "pi mcp remove meeting-notes")
+    precondition(Set(agents.keys) == ["codex", "claude"])
     for agent in setup.agents {
       precondition(
         agent.command.hasPrefix("\(agent.tool) mcp add ")
@@ -316,7 +317,7 @@ enum AgentSmoke {
     precondition(connectError.updated(by: .notConnected) == connectError)
     precondition(connectError.updated(by: .connected) == .connected)
     precondition(connectError.updated(by: .notInstalled) == .notInstalled)
-    let removeError = AgentConnection.removeFailed("pi: read-only file")
+    let removeError = AgentConnection.removeFailed("claude: read-only file")
     precondition(removeError.updated(by: .connected) == removeError)
     precondition(removeError.updated(by: .notConnected) == .notConnected)
     precondition(AgentConnection.connected.updated(by: .notConnected) == .notConnected)
@@ -342,6 +343,52 @@ enum AgentSmoke {
     precondition(OnboardingState.page(before: .done, hasInstalledAgent: false) == .preferences)
     precondition(OnboardingState.page(before: .done, hasInstalledAgent: true) == .agents)
     precondition(OnboardingState.page(before: .permissions, hasInstalledAgent: true) == nil)
+  }
+
+  static func testDesktopCodex() throws {
+    let manager = FileManager.default
+    let root = manager.temporaryDirectory.appendingPathComponent("desktop-codex-\(UUID())")
+    defer { try? manager.removeItem(at: root) }
+    let app = root.appendingPathComponent("User's Apps/ChatGPT.app")
+    let executable = app.appendingPathComponent("Contents/Resources/codex-cli/bin/codex")
+    try manager.createDirectory(
+      at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "#!/bin/sh\nprintf '%s\\n' \"$CODEX_HOME\" \"$@\"\n".write(
+      to: executable, atomically: true, encoding: .utf8)
+    try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let claude = root.appendingPathComponent(
+      "claude-code/1.0/abcdef/claude.app/Contents/MacOS/claude")
+    try manager.createDirectory(
+      at: claude.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try manager.copyItem(at: executable, to: claude)
+    let found = AgentConnector.desktopClaudeExecutables(
+      in: root.appendingPathComponent("claude-code"))
+    precondition(found.map { $0.resolvingSymlinksInPath() } == [claude.resolvingSymlinksInPath()])
+    let claudeSetup = AgentConnector.toolShellSetup(tool: "claude", executables: found)
+    let claudeResult = AgentConnector.shell(
+      "PATH=/usr/bin:/bin\n\(claudeSetup)\nclaude mcp get meeting-notes")
+    precondition(claudeResult.status == 0 && claudeResult.text.hasSuffix("mcp\nget\nmeeting-notes"))
+    let setup = AgentConnector.toolShellSetup(tool: "codex", executables: [root, executable])
+    precondition(!setup.isEmpty)
+    for arguments in [
+      "mcp add meeting-notes -- meeting-notes mcp", "mcp get meeting-notes",
+      "mcp remove meeting-notes",
+    ] {
+      let result = AgentConnector.shell(
+        "PATH=/usr/bin:/bin; export CODEX_HOME=desktop-test\n\(setup)\ncodex \(arguments)")
+      precondition(result.status == 0, result.text)
+      precondition(
+        result.text == "desktop-test\n" + arguments.replacingOccurrences(of: " ", with: "\n"))
+    }
+    let preferred = AgentConnector.shell(
+      "codex() { echo existing-cli; }\n\(setup)\ncodex mcp get meeting-notes")
+    precondition(preferred.status == 0 && preferred.text == "existing-cli")
+    precondition(
+      AgentConnector.toolShellSetup(
+        tool: "codex", executables: [root.appendingPathComponent("absent")]
+      ).isEmpty)
+    try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: executable.path)
+    precondition(AgentConnector.toolShellSetup(tool: "codex", executables: [executable]).isEmpty)
   }
 
   static func testCommandLineShim() throws {

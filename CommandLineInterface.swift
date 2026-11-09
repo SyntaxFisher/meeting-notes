@@ -56,7 +56,7 @@ struct CommandLineInterface {
 
     Agents:
       mcp                             Serve the Model Context Protocol on stdin/stdout.
-      agent-setup [--connect codex|claude|pi]
+      agent-setup [--connect codex|claude]
                                       Show which agents are connected and the commands that
                                       add the MCP server; --connect runs one of them.
 

@@ -6,14 +6,13 @@ Meeting Notes ships an MCP server and a command-line tool inside the app bundle.
 
 ## Connect an agent
 
-Open **Settings > Agents** (the panel shows **Connect an Agent…** until one is connected). Each installed agent among Codex, Claude Code and pi has a **Connect…** button; a connected one shows a green checkmark and **Remove…**, and one that is not installed just says so. Both buttons show the exact command, run it in a login shell after you confirm, and then check with the agent's own tool that the server is registered or gone. Errors are shown with the tool's output and a **Try Again…** button. While the tab is open, Meeting Notes checks the agents every five seconds, so changes made in a terminal show up by themselves. An agent counts as connected when it has an MCP server named `meeting-notes`, whatever command that server runs.
+Open **Settings > Agents** (the panel shows **Connect an Agent…** until one is connected). Each installed agent among Codex / ChatGPT and Claude Code has a **Connect…** button; a connected one shows a green checkmark and **Remove…**, and one that is not installed just says so. Both buttons show the exact command, run it in a login shell after you confirm, and then check with the agent's own tool that the server is registered or gone. Errors are shown with the tool's output and a **Try Again…** button. While the tab is open, Meeting Notes checks the agents every five seconds, so changes made in a terminal show up by themselves. An agent counts as connected when it has an MCP server named `meeting-notes`, whatever command that server runs. Detection prefers the login shell’s CLI, then checks native and Homebrew install locations. Codex also uses the CLI bundled with ChatGPT Desktop; Claude Code can use the runtime downloaded by Claude Desktop after Code setup. Claude Code registration applies to local Code sessions; the Claude chat surface has its own MCP configuration.
 
 One-click setup uses the same `meeting-notes mcp` command as manual setup. The app installs it in `~/.local/bin`; that directory must be on the agent’s `PATH`:
 
 ```sh
 codex mcp add meeting-notes -- meeting-notes mcp
 claude mcp add --scope user meeting-notes -- meeting-notes mcp
-pi mcp add meeting-notes -- meeting-notes mcp
 ```
 
 **Remove…** runs:
@@ -21,12 +20,11 @@ pi mcp add meeting-notes -- meeting-notes mcp
 ```sh
 codex mcp remove meeting-notes
 claude mcp remove --scope user meeting-notes
-pi mcp remove meeting-notes
 ```
 
 For another agent, add a stdio MCP server named `meeting-notes` that runs `meeting-notes mcp` (the [command](#command-line) the app installs in `~/.local/bin`). If the agent does not find it, add `~/.local/bin` to its `PATH`.
 
-From a terminal: `meeting-notes agent-setup` shows which agents are connected and their commands, and `meeting-notes agent-setup --connect codex` (or `claude`, `pi`) runs one. The commands honour `CODEX_HOME`, `CLAUDE_CONFIG_DIR` and `PI_CODING_AGENT_DIR`.
+From a terminal: `meeting-notes agent-setup` shows which agents are connected and their commands, and `meeting-notes agent-setup --connect codex` (or `claude`) runs one. The commands honour `CODEX_HOME` and `CLAUDE_CONFIG_DIR`.
 
 Then ask, for example:
 
