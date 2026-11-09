@@ -97,6 +97,10 @@ struct Smoke {
     precondition(!permissionModel.allPermissionsGranted)
     permissionModel.folderAccess = .denied("Access denied")
     precondition(!permissionModel.allPermissionsGranted)
+    permissionModel.folderAccess = .loading(updating: true)
+    precondition(
+      permissionModel.statusText(for: .documents) == "Allowed",
+      "A folder that is being read is allowed")
     permissionModel.folderAccess = .granted
     precondition(permissionModel.allPermissionsGranted)
     for permission in MeetingPermission.setupOrder {

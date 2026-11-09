@@ -5,8 +5,18 @@ import Foundation
 /// read off the main actor, and nothing that needs it runs before access is `granted`.
 enum MeetingsFolderAccess: Equatable, Sendable {
   case checking
+  /// The folder is readable and its first scan is running, after renaming meetings from an
+  /// earlier version when `updating`.
+  case loading(updating: Bool)
   case granted
   case denied(String)
+
+  var isReadable: Bool {
+    switch self {
+    case .loading, .granted: return true
+    case .checking, .denied: return false
+    }
+  }
 }
 
 /// The meetings folder as last read in the background.
@@ -68,12 +78,21 @@ final class LibraryReader: @unchecked Sendable {
     return await run { _ in
       do {
         try probe(root)
-        Self.migrateFiles(root)
         return .granted
       } catch {
         return Self.access(after: error)
       }
     }
+  }
+
+  func needsMigration() async -> Bool {
+    let root = root
+    return await run { _ in MeetingFilesMigration.isNeeded(root: root) }
+  }
+
+  func migrate() async {
+    let root = root
+    await run { _ in Self.migrateFiles(root) }
   }
 
   func snapshot() async -> LibrarySnapshot {
@@ -182,6 +201,11 @@ final class LibraryStore {
     case .granted: return nil
     case .checking:
       return "Waiting for access to the meetings folder \(folder). Allow access when macOS asks."
+    case .loading(updating: true):
+      return
+        "Updating meetings from an earlier version of Meeting Notes. This can take a few minutes."
+    case .loading(updating: false):
+      return "Loading meetings from \(folder)."
     case .denied(let reason):
       return
         "Meeting Notes cannot read the meetings folder \(folder): \(reason) Allow it in System Settings > Privacy & Security > Files and Folders."
@@ -191,7 +215,7 @@ final class LibraryStore {
   /// Navigation can wait for the initial scan; a denied or stalled probe remains an error.
   func waitForAccess(timeout: Duration = .seconds(10)) async throws {
     let deadline = ContinuousClock.now.advanced(by: timeout)
-    while access == .checking, ContinuousClock.now < deadline {
+    while !isReady, access.isReadable || access == .checking, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(25))
     }
     if let reason = unavailableReason { throw MeetingError(reason) }
@@ -218,6 +242,15 @@ final class LibraryStore {
           onChange?()
         }
         try? await Task.sleep(for: retryInterval)
+        guard generation == self.generation else { return }
+      }
+      let updating = await reader.needsMigration()
+      guard generation == self.generation else { return }
+      self.access = .loading(updating: updating)
+      onChange?()
+      if updating {
+        AppLog.event("library.updating", reader.root.path)
+        await reader.migrate()
         guard generation == self.generation else { return }
       }
       let snapshot = await reader.snapshot()

@@ -1,12 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// The setup window. The full setup (permissions, how recording works, coding agents) runs until
-/// the user finishes it once; afterwards missing permissions bring back only the permissions page.
+/// The setup window. The full setup (permissions, how recording works, coding agents) opens once,
+/// including after an update from a version without it; afterwards missing permissions bring
+/// back only the permissions page.
 @MainActor
 final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
-  /// Set in the app's standard user defaults once the full setup was finished.
-  static let completedKey = "onboardingFinished"
+  /// Set in the app's standard user defaults once the full setup was shown.
+  static let shownKey = "onboardingShown"
+
+  static var wasShown: Bool { UserDefaults.standard.bool(forKey: shownKey) }
 
   private let state = OnboardingState()
   var onVisibilityChanged: ((Bool) -> Void)?
@@ -40,11 +43,11 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
   var isVisible: Bool { window?.isVisible == true }
   var isPermissionsOnly: Bool { state.permissionsOnly }
 
-  /// Always starts at the first page, so the whole setup can be repeated after permissions were
-  /// removed.
+  /// Always starts at the first page. An open full setup stays the full setup.
   func show() {
     state.page = .permissions
-    state.permissionsOnly = UserDefaults.standard.bool(forKey: Self.completedKey)
+    if !isVisible { state.permissionsOnly = Self.wasShown }
+    UserDefaults.standard.set(true, forKey: Self.shownKey)
     NSApp.activate(ignoringOtherApps: true)
     if window?.isVisible != true { window?.center() }
     showWindow(nil)
@@ -54,7 +57,6 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
   }
 
   func finish() {
-    UserDefaults.standard.set(true, forKey: Self.completedKey)
     close()
   }
 

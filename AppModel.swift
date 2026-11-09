@@ -129,7 +129,7 @@ final class AppModel {
     case .microphone: return permissions.microphone
     case .systemAudio: return permissions.systemAudio && !systemAudioBlocked
     case .accessibility: return permissions.accessibility
-    case .documents: return folderAccess == .granted
+    case .documents: return folderAccess.isReadable
     }
   }
 

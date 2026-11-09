@@ -213,8 +213,11 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     EventLog.shared.record("app.started", details: details)
     refreshModel()
     refreshAgents()
-    // The only window that ever opens by itself: the short setup while permissions are missing.
-    if !permissions.missingForRecording().isEmpty { onboarding.show() }
+    // The only window that ever opens by itself: the setup, once in full and afterwards while
+    // permissions are missing.
+    if !OnboardingWindowController.wasShown || !permissions.missingForRecording().isEmpty {
+      onboarding.show()
+    }
     let urls = launchURLs ?? []
     launchURLs = nil
     if !urls.isEmpty { application(NSApp, open: urls) }
@@ -855,7 +858,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
           if permission == .systemAudio { captureRetry.retryManually() }
         } else {
           try await PermissionAccess.requestMissing()
-          if !libraryStore.isReady { PermissionAccess.openFilesAndFoldersSettings() }
+          if !libraryStore.access.isReadable { PermissionAccess.openFilesAndFoldersSettings() }
           captureRetry.retryManually()
         }
       } catch {
