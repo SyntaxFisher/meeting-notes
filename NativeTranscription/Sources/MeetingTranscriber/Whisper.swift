@@ -49,9 +49,9 @@ final class WhisperRecognizer {
     whisper_free(context)
   }
 
-  /// The language spoken at the start of 16 kHz mono samples, such as "de", or nil when whisper
-  /// is unsure.
-  func language(of samples: [Float]) -> String? {
+  /// The most likely language spoken at the start of 16 kHz mono samples, such as "de", with
+  /// whisper's probability for it.
+  func language(of samples: [Float]) -> SpeechPlan.Detection? {
     let threads = Self.parameters().n_threads
     guard
       samples.withUnsafeBufferPointer({
@@ -61,10 +61,8 @@ final class WhisperRecognizer {
     else { return nil }
     var probabilities = [Float](repeating: 0, count: Int(whisper_lang_max_id()) + 1)
     let id = whisper_lang_auto_detect_with_state(context, detection, 0, threads, &probabilities)
-    guard id >= 0, probabilities[Int(id)] >= 0.5, let code = whisper_lang_str(id) else {
-      return nil
-    }
-    return String(cString: code)
+    guard id >= 0, let code = whisper_lang_str(id) else { return nil }
+    return .init(language: String(cString: code), probability: Double(probabilities[Int(id)]))
   }
 
   private static func parameters() -> whisper_full_params {

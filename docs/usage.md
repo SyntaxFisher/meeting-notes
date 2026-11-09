@@ -154,8 +154,8 @@ The bundled Swift helper (`Contents/MacOS/MeetingTranscriber`) runs everything i
 A job runs in stages, which the panel and the record's `stage` show: downloading the transcription model (first use only, with a progress bar), loading speaker models, identifying speakers, loading the transcription model, finding speech, detecting languages, then transcribing part *n* of *m* with a progress bar.
 
 1. The diarizer separates remote voices in the Teams or device-audio track. Microphone speech is detected with VAD and echo filtering and keeps the local-speaker label. If separate tracks are unavailable, the diarizer works on the mixed recording.
-2. Silero VAD identifies speech regions and excludes detected silence before transcription, reducing spurious text from silent audio.
-3. Each stretch of speech gets its language detected independently to support multilingual meetings. Whisper is configured to transcribe, not translate.
+2. Silero VAD identifies speech regions and excludes detected silence before transcription, reducing spurious text from silent audio. A region is split where the diarizer hears another speaker take over without a pause.
+3. Each stretch of one speaker's speech gets its language detected independently to support multilingual meetings. Short stretches and uncertain detections use the speaker's usual language when that speaker sticks to one. Whisper is configured to transcribe, not translate.
 4. Speech is packed in time order into parts of up to 28 seconds, split when the detected language changes. Each part is transcribed without carrying earlier text forward, reducing repeated recognition errors.
 5. Word timestamps are mapped back to the original speech regions and speaker turns. Voice-activity boundaries help preserve short turns, but recognition and speaker attribution can still be wrong.
 

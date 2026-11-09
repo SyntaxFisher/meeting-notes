@@ -83,12 +83,13 @@ struct Transcriber {
           regions: try detector.regions(in: samples), turns: tracks[index].turns,
           policy: tracks[index].policy, trackDuration: Double(samples.count) / Double(sampleRate))
         reporter.report("Detecting languages")
-        let languages = passages.map { passage -> String? in
+        let detections = passages.map { passage -> SpeechPlan.Detection? in
           guard passage.end - passage.start >= SpeechPlan.minimumLanguageSeconds else {
             return nil
           }
           return recognizer.language(of: audio(of: passage, in: samples))
         }
+        let languages = SpeechPlan.languages(passages: passages, detections: detections)
         tracks[index].chunks = SpeechPlan.chunks(passages: passages, languages: languages)
       }
       let total = tracks.reduce(0) { $0 + $1.chunks.count }

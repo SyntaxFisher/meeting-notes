@@ -7,6 +7,7 @@ enum SpeechPlanSmoke {
   static func run() {
     testRepairedTurns()
     testPassages()
+    testLanguages()
     testUnidentifiedSpeech()
     testChunks()
     testPlacement()
@@ -60,6 +61,48 @@ enum SpeechPlanSmoke {
       "Microphone speech far from local turns is playback and is not transcribed")
     precondition(
       Plan.passages(regions: regions, turns: [], policy: .localSpeech, trackDuration: 30).isEmpty)
+
+    let handover = Plan.passages(
+      regions: [Plan.Region(start: 30, end: 40)],
+      turns: [
+        Plan.Turn(start: 29.8, end: 34, speaker: "A"),
+        Plan.Turn(start: 33.5, end: 34.2, speaker: "C"),
+        Plan.Turn(start: 34.3, end: 37, speaker: "B"),
+        Plan.Turn(start: 36.6, end: 40, speaker: "A"),
+      ], policy: .speakers, trackDuration: 50)
+    precondition(
+      handover.map(\.speaker) == ["A", "B", "A"] && close(handover[1].start, 34.15)
+        && close(handover[2].start, 36.6),
+      "Speakers taking over without a pause get their own passages: \(handover)")
+    precondition(
+      Plan.split(
+        [Plan.Region(start: 0, end: 3)],
+        at: [
+          Plan.Turn(start: 0, end: 2.5, speaker: "A"),
+          Plan.Turn(start: 2.5, end: 3.2, speaker: "B"),
+        ]
+      ).count == 1, "A region is not cut closer than the split minimum to its end")
+  }
+
+  private static func testLanguages() {
+    func passage(_ start: Double, _ end: Double, _ speaker: String) -> Plan.Passage {
+      Plan.Passage(start: start, end: end, speaker: speaker)
+    }
+    func heard(_ language: String, _ probability: Double) -> Plan.Detection {
+      Plan.Detection(language: language, probability: probability)
+    }
+    let languages = Plan.languages(
+      passages: [
+        passage(0, 10, "A"), passage(10, 14, "A"), passage(14, 15, "A"), passage(15, 20, "B"),
+        passage(20, 25, "B"), passage(25, 28, "B"), passage(28, 29, "B"), passage(30, 32, "A"),
+      ],
+      detections: [
+        heard("de", 1), heard("en", 0.6), nil, heard("en", 0.95), heard("de", 0.99),
+        heard("fr", 0.6), nil, heard("en", 0.97),
+      ])
+    precondition(
+      languages == ["de", "de", "de", "en", "de", "fr", nil, "en"],
+      "Unsure and short passages take the language their speaker sticks to: \(languages)")
   }
 
   private static func testUnidentifiedSpeech() {
@@ -172,5 +215,12 @@ enum SpeechPlanSmoke {
       words: [(Plan.Word(start: 2.5, end: 2.5, text: " Okay."), "local")], turns: local,
       policy: .localSpeech)
     precondition(instant.map(\.text) == ["Okay."], "Words without duration are kept")
+    let dashed = Plan.segments(
+      words: [
+        word(0.25, " Got", "A"), word(0.5, " it.", "A"), word(1, " -", "A"),
+        word(1.25, " That", "A"), word(1.5, " works.", "A"),
+      ], turns: [], policy: .speakers)
+    precondition(
+      dashed.map(\.text) == ["Got it. That works."], "whisper's speaker dash is dropped: \(dashed)")
   }
 }
