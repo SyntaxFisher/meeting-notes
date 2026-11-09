@@ -32,6 +32,10 @@ enum TeamsMuteState: Hashable {
 struct TeamsWindowSnapshot {
   var title: String? = nil
   let buttons: [[String]]
+  /// Whether Teams keeps this window's controls current: the compact meeting view, or the
+  /// main window of Teams while it is in front. A meeting window behind other apps or
+  /// minimized keeps showing the mute state it last drew.
+  var isCurrent = false
 }
 
 struct TeamsReading: Equatable {
@@ -44,11 +48,17 @@ enum TeamsMuteClassifier {
     "", "microsoft teams", "meeting", "calendar", "chat", "activity", "teams", "calls",
   ]
 
-  /// Teams can show the same meeting in more than one window (for example a compact view next
-  /// to the main window), so several meeting windows count as one state when they agree.
+  /// Teams can show the same meeting in more than one window: while another app is in front it
+  /// opens a compact view that follows the call, and the meeting window keeps the mute button
+  /// it last drew. Windows Teams keeps current decide; otherwise several meeting windows count
+  /// as one state when they agree.
   static func classify(_ windows: [TeamsWindowSnapshot]) -> TeamsMuteState {
-    let meetingWindows = windows.filter(isMeetingWindow)
-    guard !meetingWindows.isEmpty else { return .unavailable(.noMeeting) }
+    let allMeetingWindows = windows.filter(isMeetingWindow)
+    guard !allMeetingWindows.isEmpty else { return .unavailable(.noMeeting) }
+    let current = allMeetingWindows.filter {
+      $0.isCurrent && !$0.buttons.compactMap(classifyButton).isEmpty
+    }
+    let meetingWindows = current.isEmpty ? allMeetingWindows : current
     var states: Set<TeamsMuteState> = []
     for window in meetingWindows {
       let windowStates = window.buttons.compactMap(classifyButton)
@@ -62,7 +72,8 @@ enum TeamsMuteClassifier {
   }
 
   static func meetingTitle(_ windows: [TeamsWindowSnapshot]) -> String? {
-    let titles = Set(windows.filter(isMeetingWindow).map(\.title))
+    let titles = Set(
+      windows.filter { isMeetingWindow($0) && !isCompactView($0.title) }.map(\.title))
     guard titles.count == 1, var title = titles.first ?? nil else { return nil }
     title = title.trimmingCharacters(in: .whitespacesAndNewlines)
     for suffix in [" | Microsoft Teams", " - Microsoft Teams"] where title.hasSuffix(suffix) {
@@ -78,6 +89,14 @@ enum TeamsMuteClassifier {
     }
     title = title.trimmingCharacters(in: .whitespacesAndNewlines)
     return genericTitles.contains(title.lowercased()) ? nil : title
+  }
+
+  /// Teams titles its compact meeting view "Meeting compact view | <meeting>".
+  static func isCompactView(_ title: String?) -> Bool {
+    guard let title else { return false }
+    return ["Meeting compact view | ", "Kompakte Besprechungsansicht | "].contains {
+      title.hasPrefix($0)
+    }
   }
 
   private static func isMeetingWindow(_ window: TeamsWindowSnapshot) -> Bool {
@@ -141,11 +160,16 @@ enum TeamsMuteReader {
     guard let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) else {
       return TeamsReading(state: .unavailable(.accessibilityError))
     }
+    let frontmost: Bool = attribute(application, kAXFrontmostAttribute) ?? false
     var snapshots: [TeamsWindowSnapshot] = []
     for window in windows {
-      guard let snapshot = scan(window) else {
+      guard var snapshot = scan(window) else {
         return TeamsReading(state: .unavailable(.accessibilityError))
       }
+      let minimized: Bool = attribute(window, kAXMinimizedAttribute) ?? false
+      let main: Bool = attribute(window, kAXMainAttribute) ?? false
+      snapshot.isCurrent =
+        !minimized && (TeamsMuteClassifier.isCompactView(snapshot.title) || (frontmost && main))
       snapshots.append(snapshot)
     }
     return TeamsReading(

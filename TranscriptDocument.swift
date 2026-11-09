@@ -27,55 +27,69 @@ enum TranscriptDocument {
   }
 
   /// Fills the record's speakers, segments, participants and duration from the helper's result
-  /// and returns the transcript text.
+  /// and returns the transcript text. `speaking` is when Teams showed each participant speaking,
+  /// on the result's timeline; it names remote Teams voices.
   static func compose(
     _ result: TranscriptSegments, into record: inout MeetingRecord, localName: String,
-    roster: ParticipantRoster?, timeZone: TimeZone = .current
+    roster: ParticipantRoster?, speaking: SpeakingTimeline? = nil, timeZone: TimeZone = .current
   ) -> String {
     let remote = roster?.remoteParticipants ?? []
     let soleRemote = result.mode == .separateTracks && remote.count == 1 ? remote[0].name : nil
-    var labels: [String: String] = [:]
+    let excluded = [localName, roster?.localParticipant?.name].compactMap { $0 }
+    let teamsNames =
+      result.mode == .separateTracks && soleRemote == nil
+      ? speaking.map {
+        SpeakerNaming.names(for: result.segments, timeline: $0, excluded: excluded)
+          .map { $0.flatMap(cleanedName) }
+      } : nil
+    var anonymousLabels: [String: String] = [:]
     var speakers: [MeetingSpeaker] = []
     var anonymous = 0
-    for segment in result.segments {
-      let key = "\(segment.source.rawValue)/\(segment.speaker)"
-      if labels[key] == nil {
-        let label: String
-        let identity: MeetingSpeaker.Identity
-        var participant: String?
-        switch segment.source {
-        case .microphone:
-          label = localName
-          identity = .localUser
-          participant = roster?.localParticipant?.name
-        case .teams where soleRemote != nil:
-          label = soleRemote!
-          identity = .soleRemoteParticipant
-          participant = soleRemote
-        case .teams, .deviceAudio, .app, .mix:
+    var segmentLabels: [String] = []
+    for (index, segment) in result.segments.enumerated() {
+      let label: String
+      let identity: MeetingSpeaker.Identity
+      var participant: String?
+      switch segment.source {
+      case .microphone:
+        label = localName
+        identity = .localUser
+        participant = roster?.localParticipant?.name
+      case .teams where soleRemote != nil:
+        label = soleRemote!
+        identity = .soleRemoteParticipant
+        participant = soleRemote
+      case .teams where teamsNames?[index].map({ $0 != localName }) == true:
+        label = teamsNames![index]!
+        identity = .teamsSpeaker
+        participant = label
+      case .teams, .deviceAudio, .app, .mix:
+        let key = "\(segment.source.rawValue)/\(segment.speaker)"
+        if anonymousLabels[key] == nil {
           anonymous += 1
-          label = "Speaker \(anonymous)"
-          identity = .unidentified
+          anonymousLabels[key] = "Speaker \(anonymous)"
         }
-        labels[key] = label
-        if !speakers.contains(where: { $0.label == label }) {
-          speakers.append(
-            MeetingSpeaker(
-              label: label, isLocalUser: identity == .localUser, identity: identity,
-              source: segment.source, participant: participant))
-        }
+        label = anonymousLabels[key]!
+        identity = .unidentified
       }
-      let index = speakers.firstIndex { $0.label == labels[key] }!
-      speakers[index].turns += 1
-      speakers[index].seconds += max(0, segment.end - segment.start)
+      segmentLabels.append(label)
+      if !speakers.contains(where: { $0.label == label }) {
+        speakers.append(
+          MeetingSpeaker(
+            label: label, isLocalUser: identity == .localUser, identity: identity,
+            source: segment.source, participant: participant))
+      }
+      let speaker = speakers.firstIndex { $0.label == label }!
+      speakers[speaker].turns += 1
+      speakers[speaker].seconds += max(0, segment.end - segment.start)
     }
     for index in speakers.indices {
       speakers[index].seconds = (speakers[index].seconds * 10).rounded() / 10
     }
-    let segments = result.segments.map {
+    let segments = zip(result.segments, segmentLabels).map { segment, label in
       MeetingSegment(
-        start: MeetingRecord.seconds($0.start), end: MeetingRecord.seconds($0.end),
-        speaker: labels["\($0.source.rawValue)/\($0.speaker)"]!, text: $0.text)
+        start: MeetingRecord.seconds(segment.start), end: MeetingRecord.seconds(segment.end),
+        speaker: label, text: segment.text)
     }
     let duration = MeetingRecord.seconds(result.duration)
     record.durationSeconds = duration
@@ -120,6 +134,9 @@ enum TranscriptDocument {
       case .soleRemoteParticipant:
         lines.append(
           "- \(speaker.label): the Teams audio; Teams listed no other remote participant")
+      case .teamsSpeaker:
+        lines.append(
+          "- \(speaker.label): a voice in the Teams audio while Teams showed them speaking")
       case .unidentified: break
       }
     }

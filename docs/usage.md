@@ -68,7 +68,7 @@ The gear button at the top right opens Settings directly.
 
 - Right-click a finished transcript passage and choose **Edit Text…** to correct it with **Save** and **Cancel**. **Copy Passage** copies that passage. Clickable passages have a subtle hover highlight. If another editor or agent changes the meeting meanwhile, **Review Latest Version** keeps your draft and shows the current text before you save again.
 - Clicking the speaker row opens **Edit Speakers** (⌘R), with Teams participants as name suggestions. Save names before choosing **Merge with…** for labels you know belong to the same person. Review the resulting name and confirm the merge.
-- The **Copy Transcript** icon (⇧⌘C) copies the entire corrected transcript with timestamps and speaker names. Search, exports and agent reads use the same corrected version. Source links open the current passage with audio paused, and also work without a recording. Edits replace the transcript directly; there is no history, original copy or undo.
+- The **Copy Transcript** icon (⇧⌘C) copies the entire corrected transcript with timestamps and speaker names, then briefly shows a checkmark. Search, exports and agent reads use the same corrected version. Source links open the current passage with audio paused, and also work without a recording. Edits replace the transcript directly; there is no history, original copy or undo.
 - Double-click the title to edit it directly. **Save** or Return applies it; **Cancel** or Escape keeps the previous title. Titles set here are protected from automatic agent naming.
 - The trash button beside **Copy Transcript** asks for confirmation before moving the meeting to the Trash. **Retry Transcription** (⇧⌘T) remains available for failed work.
 - **File > Start Recording** (⇧⌘R) and **Stop & Transcribe** (⌘.).
@@ -107,7 +107,8 @@ Participants in Teams:
 ```
 
 - **Your name.** When a recording has separate microphone and call-audio tracks (Teams or device audio), the two tracks are transcribed separately and everything the microphone recorded carries your name: `localSpeakerName` from the settings, otherwise your Teams display name (from this meeting, or the last one Meeting Notes saw), otherwise your macOS full name, otherwise "Me". Muted passages are silence in the microphone track and never appear.
-- **Remote speakers.** The call audio is split into voices by sound and labeled Speaker 1, Speaker 2, … in order of first appearance. Teams does not reveal who is speaking; for device audio the header says "remote voices in the device audio". A person who switches language or audio device can appear as two speakers.
+- **Remote speakers.** The call audio is split into voices by sound and labeled Speaker 1, Speaker 2, … in order of first appearance. For Teams recordings, active-speaker readings match those voices to participant names when the evidence is clear; for device audio the header says "remote voices in the device audio". A person who switches language or audio device can appear as two speakers.
+- **Background Teams.** Names and mute state are read without bringing Teams forward. A minimized or covered meeting uses Teams’ compact meeting view. Hiding Teams entirely with ⌘H can stop its speaker indicators from updating; unavailable or ambiguous evidence leaves voices anonymous rather than inventing a match.
 - **One other participant.** When Teams listed exactly one participant besides you, all remote Teams speech carries that name. Device audio is never named after a Teams participant.
 - **No remote speech.** Your microphone keeps its local-speaker identity even when the call-audio track is silent. Anonymous mixed transcription is used when separate capture tracks are unavailable.
 

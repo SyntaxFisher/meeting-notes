@@ -19,7 +19,7 @@ struct TeamsParticipantSighting: Equatable {
 /// every participant with role and mute state ("Anna Schmidt (Unverified), Meeting guest,
 /// Unmuted"); video tiles list visible participants ("Sam Carter (Guest), Context menu is
 /// available", "Myself video, Jona Bihl, Muted, Has context menu"); transient notices announce
-/// joins ("Sam Carter joined the call"). Teams does not expose who is speaking.
+/// joins ("Sam Carter joined the call").
 enum TeamsParticipantParser {
   private static let roles: [String: String] = [
     "organizer": "Organizer", "co-organizer": "Co-organizer", "presenter": "Presenter",
@@ -37,7 +37,17 @@ enum TeamsParticipantParser {
     "context menu is available", "has context menu", "kontextmenü ist verfügbar",
     "hat kontextmenü",
   ]
-  private static let localPrefixes = ["Myself video, ", "Eigenes Video, "]
+  /// States Teams appends to a tile's name, such as "Muster, Léa (Design), Video ist ein,
+  /// Hat die Kontrolle über Produktionstools, Kontextmenü ist verfügbar".
+  private static let tileStates: Set<String> = [
+    "video is on", "video is off", "has control of production tools", "fill frame",
+    "fit to frame", "pinned", "spotlighted", "hand raised", "video ist ein",
+    "video deaktiviert", "hat die kontrolle über produktionstools", "frame ausfüllen",
+    "an frame anpassen", "angeheftet", "im spotlight", "hand erhoben",
+  ]
+  private static let localPrefixes = [
+    "Myself video, ", "Video von mir selbst, ", "Eigenes Video, ",
+  ]
   private static let joinSuffixes = [" joined the call", " ist dem Anruf beigetreten"]
   private static let leaveSuffixes = [" left the call", " hat den Anruf verlassen"]
 
@@ -85,15 +95,15 @@ enum TeamsParticipantParser {
       body.removeFirst(prefix.count)
       isLocal = true
     }
-    var parts = components(body)
+    let parts = components(body)
     guard let last = parts.last, tileSuffixes.contains(last.lowercased()) else { return nil }
-    parts.removeLast()
-    var muted: Bool?
-    if let last = parts.last, let value = muteWords[last.lowercased()] {
-      muted = value
-      parts.removeLast()
+    let states = parts.dropLast()
+    let nameParts = states.prefix {
+      muteWords[$0.lowercased()] == nil && !tileStates.contains($0.lowercased())
     }
-    let (name, tag) = splitTag(parts.joined(separator: ", "))
+    let muted = states.dropFirst(nameParts.count).lazy.compactMap { muteWords[$0.lowercased()] }
+      .first
+    let (name, tag) = splitTag(nameParts.joined(separator: ", "))
     guard isName(name) else { return nil }
     return TeamsParticipantSighting(
       name: name, tag: tag, muted: muted, isLocal: isLocal, source: .tile)
@@ -124,12 +134,108 @@ enum TeamsParticipantParser {
     text.components(separatedBy: ", ").map { $0.trimmingCharacters(in: .whitespaces) }
   }
 
-  private static func splitTag(_ text: String) -> (String, String?) {
+  static func splitTag(_ text: String) -> (String, String?) {
     let name = text.trimmingCharacters(in: .whitespaces)
     guard name.hasSuffix(")"), let open = name.lastIndex(of: "(") else { return (name, nil) }
     let tag = String(name[name.index(after: open)..<name.index(before: name.endIndex)])
     guard tags.contains(tag.lowercased()) else { return (name, nil) }
     return (String(name[..<open]).trimmingCharacters(in: .whitespaces), tag)
+  }
+}
+
+/// Who Teams shows as speaking. Teams draws a frame around the active speaker's video tile
+/// (`vdi-frame-occlusion`, the gallery while the meeting window is in front) and labels the
+/// compact meeting view it opens when another app is in front ("Anna Schmidt (Guest) is
+/// speaking", "Niemand spricht."). Both stay readable through Accessibility while the meeting
+/// is minimized or Teams is in the background. Teams highlights the voice it hears, so the label
+/// trails speech by a second or two and briefly misses rapid exchanges.
+enum TeamsSpeakingParser {
+  static let speakingFrameClass = "vdi-frame-occlusion"
+  private static let speakingSuffixes = [" is speaking", " spricht.", " spricht"]
+  private static let nobody: Set<String> = [
+    "nobody is speaking", "niemand spricht.", "niemand spricht",
+  ]
+  /// Your own voice is in the microphone track, never in the Teams audio.
+  private static let localSpeaking: Set<String> = [
+    "you are speaking", "sie sprechen.", "sie sprechen",
+  ]
+  private static let localPrefixes = ["You and ", "Sie und "]
+  private static let localSuffixes = [" are speaking", " sprechen.", " sprechen"]
+
+  enum Label: Equatable {
+    case speaking(String)
+    case nobody
+  }
+
+  /// Parses the compact view's speaker label. Teams fills its "{name} is speaking" template
+  /// with whatever it shows for the speaker, so your own turns read "You are speaking is
+  /// speaking" and a speaker change briefly reads " is speaking", which returns nil.
+  /// "You and Anna are speaking" names Anna; your own speech names no remote voice.
+  static func label(_ description: String) -> Label? {
+    let text = description.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, text.count <= 200 else { return nil }
+    if let speaker = speaker(text) { return speaker }
+    guard let suffix = speakingSuffixes.first(where: { text.hasSuffix($0) }) else { return nil }
+    let filled = String(text.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+    if let speaker = speaker(filled) { return speaker }
+    let (name, _) = TeamsParticipantParser.splitTag(filled)
+    return name.isEmpty ? nil : .speaking(name)
+  }
+
+  /// Labels that say who speaks without the template: nobody, you, or you and someone.
+  private static func speaker(_ text: String) -> Label? {
+    let lowercased = text.lowercased()
+    if nobody.contains(lowercased) || localSpeaking.contains(lowercased) { return .nobody }
+    for prefix in localPrefixes where text.hasPrefix(prefix) {
+      for suffix in localSuffixes where text.hasSuffix(suffix) {
+        let (name, _) = TeamsParticipantParser.splitTag(
+          String(text.dropFirst(prefix.count).dropLast(suffix.count)))
+        return name.isEmpty ? .nobody : .speaking(name)
+      }
+    }
+    return nil
+  }
+}
+
+/// When Teams showed each remote participant as the active speaker during one recording, in
+/// seconds on the host clock that also times the capture tracks (`capture.json`). The
+/// transcription helper reads it as `speaking.json` to name remote voices.
+struct SpeakingTimeline: Codable, Equatable {
+  struct Interval: Codable, Equatable {
+    var name: String
+    /// The first and last reading that showed `name` as speaking.
+    var start: Double
+    var end: Double
+  }
+
+  var intervals: [Interval] = []
+  private var lastReading: (name: String?, time: Double)?
+
+  /// Readings further apart than this do not join: Teams could not be read in between.
+  static let maximumGap = 3.0
+
+  enum CodingKeys: String, CodingKey { case intervals }
+
+  init(intervals: [Interval] = []) { self.intervals = intervals }
+
+  static func == (left: SpeakingTimeline, right: SpeakingTimeline) -> Bool {
+    left.intervals == right.intervals
+  }
+
+  /// Merges one reading at `time`; `speaker` nil means Teams showed nobody speaking. Returns
+  /// whether a new interval started.
+  @discardableResult
+  mutating func observe(_ speaker: String?, at time: Double) -> Bool {
+    defer { lastReading = (speaker, time) }
+    if let speaker, let last = lastReading, last.name == speaker, time >= last.time,
+      time - last.time <= Self.maximumGap, intervals.last?.name == speaker
+    {
+      intervals[intervals.count - 1].end = time
+      return false
+    }
+    guard let speaker else { return false }
+    intervals.append(Interval(name: speaker, start: time, end: time))
+    return true
   }
 }
 
@@ -192,10 +298,31 @@ struct ParticipantRoster: Codable, Equatable {
   }
 }
 
+/// One Accessibility pass over the Teams windows during a recording.
+struct TeamsMeetingSnapshot: Equatable {
+  /// Participants in the meeting window; nil when there is no single meeting.
+  var participants: [TeamsParticipantSighting]?
+  /// Who Teams shows as speaking: a name, `.some(nil)` for nobody, nil when Teams shows no
+  /// current speaker indication.
+  var speaker: String??
+}
+
 enum TeamsParticipantReader {
   /// Reads participant descriptions from the single Teams meeting window without changing the
   /// Teams interface. Returns nil when no single meeting window can be read.
-  static func read() -> [TeamsParticipantSighting]? {
+  static func read() -> [TeamsParticipantSighting]? { snapshot()?.participants }
+
+  /// What one Teams window shows, gathered in a single pass.
+  struct WindowReading: Equatable {
+    var isMeeting = false
+    var sightings: [TeamsParticipantSighting] = []
+    /// Tiles framed as the active speaker; only collected from a window Teams keeps current.
+    var framed: Set<String> = []
+    var labels: [TeamsSpeakingParser.Label] = []
+  }
+
+  /// Reads participants and the active speaker in one pass over all Teams windows.
+  static func snapshot() -> TeamsMeetingSnapshot? {
     guard AXIsProcessTrusted() else { return nil }
     let apps = NSRunningApplication.runningApplications(
       withBundleIdentifier: "com.microsoft.teams2")
@@ -207,45 +334,83 @@ enum TeamsParticipantReader {
     guard let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) else {
       return nil
     }
-    var meetings: [[TeamsParticipantSighting]] = []
-    for window in windows {
-      var pending: [AXUIElement] = [window]
-      var sightings: [TeamsParticipantSighting] = []
-      var isMeeting = false
-      var inMeetingSection = true
-      var visited = 0
-      while let element = pending.popLast(), visited < 6_000 {
-        visited += 1
-        let role: String = attribute(element, kAXRoleAttribute) ?? ""
-        if role == kAXButtonRole as String,
-          let title: String = attribute(element, kAXTitleAttribute)
-            ?? attribute(
-              element, kAXDescriptionAttribute),
-          title.range(of: #"^(?:Leave|Verlassen)\b"#, options: .regularExpression) != nil
-        {
-          isMeeting = true
-        }
-        if ["AXRow", "AXGroup", "AXMenuItem", "AXImage", "AXStaticText"].contains(role),
-          let text = [kAXDescriptionAttribute, kAXValueAttribute].lazy.compactMap({
-            (name: String) -> String? in attribute(element, name)
-          }).first(where: { !$0.isEmpty })
-        {
-          if let present = TeamsParticipantParser.section(text) {
-            inMeetingSection = present
-          } else if let sighting = TeamsParticipantParser.parse(role: role, description: text),
-            sighting.source != .roster || inMeetingSection
-          {
-            sightings.append(sighting)
-          }
-        }
-        // Children are visited in document order, so section headers precede their rows.
-        if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {
-          pending.append(contentsOf: children.reversed())
+    // A hidden Teams stops updating its windows; a meeting window behind other windows keeps
+    // the frame it last drew, so only the frontmost one shows the current speaker.
+    let hidden: Bool = attribute(application, kAXHiddenAttribute) ?? false
+    let frontmost: Bool = attribute(application, kAXFrontmostAttribute) ?? false
+    let readings = windows.map { window in
+      read(window, framesAreCurrent: frontmost && (attribute(window, kAXMainAttribute) ?? false))
+    }
+    return combine(readings, hidden: hidden)
+  }
+
+  /// Teams can show one meeting in two windows: the meeting window with participant tiles and,
+  /// while another app or Teams view is in front, a compact view whose label names the
+  /// speaker. Participants come from the one meeting window that lists any; the compact view's
+  /// label wins over a gallery frame.
+  static func combine(_ readings: [WindowReading], hidden: Bool) -> TeamsMeetingSnapshot {
+    let meetings = readings.filter(\.isMeeting)
+    let listing = meetings.filter { !$0.sightings.isEmpty }
+    let participants =
+      meetings.isEmpty || listing.count > 1 ? nil : (listing.first?.sightings ?? [])
+    guard !hidden, !meetings.isEmpty else {
+      return TeamsMeetingSnapshot(participants: participants)
+    }
+    if let label = meetings.lazy.compactMap(\.labels.last).first {
+      switch label {
+      case .speaking(let name):
+        return TeamsMeetingSnapshot(participants: participants, speaker: .some(name))
+      case .nobody: return TeamsMeetingSnapshot(participants: participants, speaker: .some(nil))
+      }
+    }
+    let framed = meetings.reduce(into: Set<String>()) { $0.formUnion($1.framed) }
+    guard framed.count <= 1 else { return TeamsMeetingSnapshot(participants: participants) }
+    return TeamsMeetingSnapshot(participants: participants, speaker: .some(framed.first))
+  }
+
+  private static func read(_ window: AXUIElement, framesAreCurrent: Bool) -> WindowReading {
+    var reading = WindowReading()
+    var pending: [(element: AXUIElement, tile: String?)] = [(window, nil)]
+    var inMeetingSection = true
+    var visited = 0
+    while let (element, enclosingTile) = pending.popLast(), visited < 6_000 {
+      visited += 1
+      let role: String = attribute(element, kAXRoleAttribute) ?? ""
+      var tile = enclosingTile
+      if role == kAXButtonRole as String,
+        let title: String = attribute(element, kAXTitleAttribute)
+          ?? attribute(element, kAXDescriptionAttribute),
+        title.range(of: #"^(?:Leave|Verlassen)\b"#, options: .regularExpression) != nil
+      {
+        reading.isMeeting = true
+      }
+      if framesAreCurrent, let tile, role == "AXGroup",
+        let classes: [String] = attribute(element, "AXDOMClassList"),
+        classes.contains(TeamsSpeakingParser.speakingFrameClass)
+      {
+        reading.framed.insert(tile)
+      }
+      if ["AXRow", "AXGroup", "AXMenuItem", "AXImage", "AXStaticText"].contains(role),
+        let text = [kAXDescriptionAttribute, kAXValueAttribute].lazy.compactMap({
+          (name: String) -> String? in attribute(element, name)
+        }).first(where: { !$0.isEmpty })
+      {
+        if let present = TeamsParticipantParser.section(text) {
+          inMeetingSection = present
+        } else if let sighting = TeamsParticipantParser.parse(role: role, description: text) {
+          if sighting.source != .roster || inMeetingSection { reading.sightings.append(sighting) }
+          // Your own tile never names a voice in the Teams audio.
+          if sighting.source == .tile { tile = sighting.isLocal ? nil : sighting.name }
+        } else if role == "AXGroup", let label = TeamsSpeakingParser.label(text) {
+          reading.labels.append(label)
         }
       }
-      if isMeeting { meetings.append(sightings) }
+      // Children are visited in document order, so section headers precede their rows.
+      if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {
+        pending.append(contentsOf: children.reversed().map { ($0, tile) })
+      }
     }
-    return meetings.count == 1 ? meetings[0] : nil
+    return reading
   }
 
   private static func attribute<T>(_ element: AXUIElement, _ name: String) -> T? {

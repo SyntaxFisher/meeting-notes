@@ -166,6 +166,7 @@ Each meeting has one record, `transcripts/<id>.json`, the single source of truth
 
 - `status` is one of `recording`, `saving`, `queued`, `transcribing` (with `stage` and `progress`), `complete`, `failed` or `interrupted` (with `error` and `failed_at`); `untranscribed` marks audio an older version saved but never transcribed. See the [lifecycle](usage.md#meeting-lifecycle).
 - `source` is fixed at recording start: `teams`, `device-audio`, `app:<bundleID>` or `microphone`. Automatic uses Teams during a detected Teams meeting, otherwise device audio; auto-record always uses Teams. `meeting-notes status` shows the active source. See [recording sources](usage.md#recording).
+- Speaker `identity` is `local-user`, `sole-remote-participant`, `teams-speaker` (matched using Teams’ active-speaker readings), or `unidentified`. Names are estimates and can be corrected.
 - `segments` and `speakers` describe the current transcript. `segments[].speaker` is a speaker label; `speakers[].name` is its assigned name. After a merge, the affected passages use the surviving label. `is_local_user` is identity metadata, not proof that every microphone voice belongs to one person.
 - Edits overwrite the `.txt` transcript and update the record. `revision` increases with each effective change. File names are relative to `audios/` and `transcripts/`.
 - Transcripts from older versions get a record when their files are [renamed to the current scheme](usage.md#files-and-retention).

@@ -58,12 +58,13 @@ final class TeamsMonitor {
     }
   }
 
-  /// Collects the Teams participant list into `file` until `stopRoster` is called.
-  func startRoster(writingTo file: URL, startedAt: Date) {
-    reader.setRoster(file: file, startedAt: startedAt)
+  /// Collects the Teams participant list into `capture/participants.json` and when Teams shows
+  /// each participant speaking into `capture/speaking.json`, until `stopRoster` is called.
+  func startRoster(in capture: URL, startedAt: Date) {
+    reader.setRoster(directory: capture, startedAt: startedAt)
   }
 
-  /// Stops collecting and returns once the last roster write finished.
+  /// Stops collecting and returns once the last write finished.
   func stopRoster() async {
     await withCheckedContinuation { continuation in
       reader.clearRoster { continuation.resume() }
@@ -86,16 +87,26 @@ final class TeamsMonitor {
 }
 
 /// The Accessibility reads behind `TeamsMonitor`, on one serial queue: the mute state every
-/// 0.4 s while recording and every 2 s otherwise, and the participant roster every 2 s while a
-/// recording collects it.
+/// 0.4 s while recording and every 2 s otherwise, and while a recording collects them the
+/// active speaker every 0.8 s and the participant roster every 2 s, from the same reading.
 final class TeamsBackgroundReader: @unchecked Sendable {
   private let queue = DispatchQueue(label: "com.jona.meeting-notes.teams", qos: .userInitiated)
   private var timer: DispatchSourceTimer?
   private var mirrored: NativeRecorder?
-  private var roster: (file: URL, startedAt: Date, roster: ParticipantRoster)?
+  private var collection: Collection?
   private var lastStateRead = Date.distantPast
+  private var lastMeetingRead = Date.distantPast
   private var lastRosterRead = Date.distantPast
-  private var participantCount = 0
+
+  private struct Collection {
+    let directory: URL
+    let startedAt: Date
+    var roster = ParticipantRoster()
+    var speaking = SpeakingTimeline()
+    var participantCount = 0
+    var speakingWritten = Date.distantPast
+    var speakingUnwritten = false
+  }
   var deliver: (@Sendable (TeamsReading) -> Void)?
   var deliverLocalName: (@Sendable (String) -> Void)?
 
@@ -135,44 +146,64 @@ final class TeamsBackgroundReader: @unchecked Sendable {
     }
   }
 
-  func setRoster(file: URL, startedAt: Date) {
+  func setRoster(directory: URL, startedAt: Date) {
     queue.async { [self] in
-      roster = (file, startedAt, ParticipantRoster())
-      participantCount = 0
+      collection = Collection(directory: directory, startedAt: startedAt)
+      lastMeetingRead = .distantPast
       lastRosterRead = .distantPast
     }
   }
 
   func clearRoster(_ done: @escaping @Sendable () -> Void) {
     queue.async { [self] in
-      roster = nil
+      if let collection { writeSpeaking(collection) }
+      collection = nil
       done()
     }
   }
 
   private func tick() {
     let now = Date()
-    if now.timeIntervalSince(lastStateRead) >= (mirrored == nil && roster == nil ? 2 : 0.4) {
+    if now.timeIntervalSince(lastStateRead) >= (mirrored == nil && collection == nil ? 2 : 0.4) {
       lastStateRead = now
       let reading = TeamsMuteReader.read()
       mirrored?.setMicrophoneMuted(reading.state.microphoneMuted)
       deliver?(reading)
     }
-    if var current = roster, now.timeIntervalSince(lastRosterRead) >= 2 {
-      lastRosterRead = now
-      guard let sightings = TeamsParticipantReader.read(),
-        current.roster.observe(sightings, at: now.timeIntervalSince(current.startedAt))
-      else { return }
-      roster = current
-      try? JSONEncoder().encode(current.roster).write(to: current.file, options: .atomic)
-      if let name = current.roster.localParticipant?.name { deliverLocalName?(name) }
-      if current.roster.participants.count != participantCount {
-        participantCount = current.roster.participants.count
-        AppLog.event(
-          "teams.participants",
-          "count=\(participantCount); fullRoster=\(current.roster.sawFullRoster); local=\(current.roster.localParticipant != nil)"
-        )
+    guard var current = collection, now.timeIntervalSince(lastMeetingRead) >= 0.8 else { return }
+    lastMeetingRead = now
+    guard let snapshot = TeamsParticipantReader.snapshot() else { return }
+    if let speaker = snapshot.speaker {
+      // The host clock times the capture tracks, so the helper can align these readings.
+      current.speaking.observe(speaker, at: ProcessInfo.processInfo.systemUptime)
+      current.speakingUnwritten = current.speakingUnwritten || speaker != nil
+      if current.speakingUnwritten, now.timeIntervalSince(current.speakingWritten) >= 5 {
+        writeSpeaking(current)
+        current.speakingWritten = now
+        current.speakingUnwritten = false
       }
     }
+    if now.timeIntervalSince(lastRosterRead) >= 2, let sightings = snapshot.participants {
+      lastRosterRead = now
+      if current.roster.observe(sightings, at: now.timeIntervalSince(current.startedAt)) {
+        try? JSONEncoder().encode(current.roster).write(
+          to: current.directory.appendingPathComponent("participants.json"), options: .atomic)
+        if let name = current.roster.localParticipant?.name { deliverLocalName?(name) }
+        if current.roster.participants.count != current.participantCount {
+          current.participantCount = current.roster.participants.count
+          AppLog.event(
+            "teams.participants",
+            "count=\(current.participantCount); fullRoster=\(current.roster.sawFullRoster); local=\(current.roster.localParticipant != nil)"
+          )
+        }
+      }
+    }
+    collection = current
+  }
+
+  private func writeSpeaking(_ collection: Collection) {
+    guard !collection.speaking.intervals.isEmpty else { return }
+    try? JSONEncoder().encode(collection.speaking).write(
+      to: collection.directory.appendingPathComponent("speaking.json"), options: .atomic)
   }
 }

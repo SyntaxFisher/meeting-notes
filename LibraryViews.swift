@@ -417,6 +417,8 @@ struct MeetingHeader: View {
   let record: MeetingRecord
   var compact = false
   @State private var speakersHovered = false
+  @State private var copied = false
+  @State private var copyGeneration = 0
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -448,11 +450,19 @@ struct MeetingHeader: View {
           if record.status == .complete {
             Button {
               model.copyTranscript(record)
+              copyGeneration += 1
+              withAnimation { copied = true }
             } label: {
-              Image(systemName: "doc.on.doc")
+              Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .contentTransition(.symbolEffect(.replace))
             }
-            .help("Copy the transcript")
-            .accessibilityLabel("Copy Transcript")
+            .help(copied ? "Copied" : "Copy the transcript")
+            .accessibilityLabel(copied ? "Transcript Copied" : "Copy Transcript")
+            .task(id: copyGeneration) {
+              guard copied else { return }
+              do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
+              withAnimation { copied = false }
+            }
           }
           Button(role: .destructive) {
             if record.status == .complete {
