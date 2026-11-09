@@ -3,8 +3,9 @@ import Foundation
 /// Decides which audio of one track whisper transcribes and attributes the timed words it returns
 /// to diarized speakers.
 ///
-/// Whisper only sees voice activity. Speech regions become passages of one speaker, and each
-/// passage gets its own detected language. Consecutive passages are packed in time order into
+/// Whisper only sees voice activity. Speech regions, split where the diarizer hears another
+/// speaker take over without a pause, become passages of one speaker, and each passage gets its
+/// own language. Consecutive passages are packed in time order into
 /// chunks of at most `maximumChunkSeconds` until the language changes, so whisper hears the
 /// conversation as it happened, needs few 30-second windows, and is never told the wrong language
 /// for a speaker who switches. Pauses up to `keptPause` stay as recorded; longer ones become
@@ -23,8 +24,15 @@ enum SpeechPlan {
   /// What longer pauses become: long enough to keep imprecise word times on the right side of
   /// the join, short enough that whisper does not invent text in it.
   static let joinedSilence = 1.0
-  /// Passages shorter than this are too short to tell their language and join any chunk.
+  /// Passages shorter than this are too short to tell their language.
   static let minimumLanguageSeconds = 2.0
+  /// How sure whisper must be of a passage's language to trust it over its speaker's.
+  static let confidentProbability = 0.9
+  /// The share of a speaker's confidently detected speech one language must hold to count as
+  /// that speaker's language.
+  static let speakerLanguageShare = 0.8
+  /// The least of a diarizer turn on each side of a cut through a speech region.
+  static let splitSeconds = 0.8
   /// The shortest a word counts as when it is attributed.
   static let minimumWordSeconds = 0.1
   /// Words further apart than this start a new segment.
@@ -65,6 +73,40 @@ enum SpeechPlan {
     /// The microphone track, whose turns are the local speech left after echo filtering:
     /// speech far from it is Teams playback picked up by the microphone.
     static let localSpeech = Policy(lead: 0.6, trail: 0.3, keepsDistantSpeech: false)
+  }
+
+  /// The language whisper heard in a passage and how sure it is.
+  struct Detection: Equatable {
+    var language: String
+    var probability: Double
+  }
+
+  /// The language each passage is transcribed in, or nil to let it join any chunk. A confident
+  /// detection is taken as heard. Short passages and unsure detections, which whisper often
+  /// gets wrong for a voice it hears mixed with another, take their speaker's main language when
+  /// the speaker sticks to one; otherwise a probable detection still counts.
+  static func languages(passages: [Passage], detections: [Detection?]) -> [String?] {
+    func detected(_ passage: Passage, _ detection: Detection?, minimum: Double) -> String? {
+      guard let detection, passage.end - passage.start >= minimumLanguageSeconds,
+        detection.probability >= minimum
+      else { return nil }
+      return detection.language
+    }
+    var seconds: [String: [String: Double]] = [:]
+    for (passage, detection) in zip(passages, detections) {
+      if let language = detected(passage, detection, minimum: confidentProbability) {
+        seconds[passage.speaker, default: [:]][language, default: 0] +=
+          passage.end - passage.start
+      }
+    }
+    let speakerLanguages = seconds.compactMapValues { languages in
+      let total = languages.values.reduce(0, +)
+      return languages.first { $0.value >= speakerLanguageShare * total }?.key
+    }
+    return zip(passages, detections).map { passage, detection in
+      detected(passage, detection, minimum: confidentProbability)
+        ?? speakerLanguages[passage.speaker] ?? detected(passage, detection, minimum: 0.5)
+    }
   }
 
   /// A stretch of one speaker's speech: padded speech regions with short pauses kept.
@@ -186,12 +228,43 @@ enum SpeechPlan {
     return turns
   }
 
+  /// Splits regions where the diarizer hears another speaker take over without a pause voice
+  /// activity could detect. Both sides must hold at least `splitSeconds` of their speaker's turn.
+  static func split(_ regions: [Region], at turns: [Turn]) -> [Region] {
+    let turns = turns.sorted { $0.start < $1.start }
+    return regions.flatMap { region -> [Region] in
+      // The turns inside the region, one run per speaker until another speaker takes over.
+      var runs: [Turn] = []
+      for turn in turns {
+        let start = max(region.start, turn.start)
+        let end = min(region.end, turn.end)
+        guard end - start >= splitSeconds else { continue }
+        if let last = runs.last, last.speaker == turn.speaker {
+          runs[runs.count - 1].end = max(last.end, end)
+        } else {
+          runs.append(Turn(start: start, end: end, speaker: turn.speaker))
+        }
+      }
+      var cuts: [Double] = []
+      for (first, second) in zip(runs, runs.dropFirst()) {
+        // Where turns overlap, the speaker who just began talking takes over at once.
+        let cut = second.start >= first.end ? (first.end + second.start) / 2 : second.start
+        if cut - (cuts.last ?? region.start) >= splitSeconds, region.end - cut >= splitSeconds {
+          cuts.append(cut)
+        }
+      }
+      let bounds = [region.start] + cuts + [region.end]
+      return zip(bounds, bounds.dropFirst()).map { Region(start: $0, end: $1) }
+    }
+  }
+
   /// Turns the speech regions of one track into passages. Regions the policy attributes to
   /// nobody are dropped.
   static func passages(regions: [Region], turns: [Turn], policy: Policy, trackDuration: Double)
     -> [Passage]
   {
-    let regions = regions.filter { $0.end > $0.start }.sorted { $0.start < $1.start }
+    let regions = split(
+      regions.filter { $0.end > $0.start }.sorted { $0.start < $1.start }, at: turns)
     var passages: [Passage] = []
     for (index, region) in regions.enumerated() {
       guard let speaker = speaker(of: region, turns: turns, policy: policy) else { continue }
@@ -240,6 +313,8 @@ enum SpeechPlan {
   static func segments(words placed: [(word: Word, speaker: String)], turns: [Turn], policy: Policy)
     -> [Segment]
   {
+    // whisper marks a change of speaker it hears inside a chunk with a lone dash.
+    let placed = placed.filter { $0.word.text.trimmingCharacters(in: .whitespaces) != "-" }
     let words = placed.map(\.word)
     var speakers: [String?] = placed.map { word, speaker in
       // whisper gives some words no duration; they still need an overlap to be attributed.
