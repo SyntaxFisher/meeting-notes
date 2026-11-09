@@ -200,7 +200,9 @@ struct AgentSetup {
   static let serverName = "meeting-notes"
   static let manualServerCommand = "meeting-notes mcp"
 
-  var serverCommand: String { Self.manualServerCommand }
+  var executable = CommandLineInterface.executablePath
+
+  var serverCommand: String { "\(Self.quoted(executable)) mcp" }
 
   static func quoted(_ text: String) -> String {
     "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -381,10 +383,6 @@ enum AgentConnector {
     let output = shell(
       """
       \(shellSetup(for: agent))
-      command -v meeting-notes >/dev/null 2>&1 || {
-        echo 'Open Meeting Notes from Applications and add ~/.local/bin to your PATH.'
-        exit 1
-      }
       \(agent.command)
       """)
     guard output.status == 0 else { return .failed(message(output, agent)) }

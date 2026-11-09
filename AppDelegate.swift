@@ -549,6 +549,16 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
         if try CommandLineShim.install(executable: executable) {
           AppLog.event("cli.installed", executable)
         }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let profileDirectory =
+          ProcessInfo.processInfo.environment["ZDOTDIR"].map {
+            URL(fileURLWithPath: $0)
+          } ?? home
+        if try CommandLineShim.installShellPath(
+          in: profileDirectory.appendingPathComponent(".zprofile"))
+        {
+          AppLog.event("cli.path.installed")
+        }
       } catch {
         AppLog.event("cli.skipped", error.localizedDescription)
       }
