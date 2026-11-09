@@ -44,7 +44,7 @@ Click the menu bar icon to see the recording control, the last three meetings wi
 
 **Mirror Teams mute** (on by default) leaves your microphone out of the recording while you are muted in Teams. Headphones avoid echo between the meeting playback and your microphone.
 
-In a Teams meeting, your microphone and the Teams audio are transcribed separately. Everything you said is labeled with your Teams display name once Meeting Notes has seen it (otherwise your macOS name; change it in **Settings > General**). Remote voices are labeled **Speaker 1**, **Speaker 2** and so on, told apart by sound; the transcript lists the participants Teams showed, so you or an agent can match them. A silent Teams track does not change your microphone label. When separate capture tracks are unavailable, the mixed recording uses anonymous speaker labels.
+In a Teams meeting, your microphone and the Teams audio are transcribed separately. Everything you said is labeled with your Teams display name once Meeting Notes has seen it (otherwise your macOS name; change it in **Settings > General**). Remote voices are matched to the names Teams shows speaking. This works with the meeting window minimized or behind another app when Teams keeps its compact meeting view available. Uncertain matches stay **Speaker 1**, **Speaker 2**, and so on; you or an agent can correct them. A silent Teams track does not change your microphone label. When separate capture tracks are unavailable, the mixed recording uses anonymous speaker labels.
 
 ## Use with coding agents
 

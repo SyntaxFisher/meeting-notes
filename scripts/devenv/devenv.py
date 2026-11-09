@@ -790,7 +790,7 @@ def meeting_records():
     return sorted(records, key=lambda record: record["started_at"])
 
 
-RECORD_NAME = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}\.\d{2}(-\d+)?\.json$")
+RECORD_NAME = re.compile(r"^\d{8}T\d{6}Z(-\d+)?\.json$")
 
 
 def record_started(record):

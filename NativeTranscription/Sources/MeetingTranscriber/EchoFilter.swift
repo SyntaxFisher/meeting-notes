@@ -6,6 +6,9 @@ import Foundation
 /// Both tracks share one host clock. Echo appears in the microphone as a delayed, attenuated copy
 /// of the Teams track, so its loudness follows the Teams loudness at a fixed lag and ratio. A
 /// microphone frame counts as local speech only if it is clearly louder than that prediction.
+/// The estimate uses only frames the microphone actually recorded: while Teams is muted the
+/// track holds digital silence, which says nothing about the room and, over a long meeting,
+/// would hide the echo of the unmuted minutes.
 struct EchoFilter {
   static let frameSeconds = 0.02
   private static let lagFrames = -5...20
@@ -27,7 +30,7 @@ struct EchoFilter {
     for lag in Self.lagFrames {
       var pairs: [(Float, Float)] = []
       for t in max(0, lag)..<min(microphone.count, teams.count + lag)
-      where teams[t - lag] > teamsThreshold {
+      where teams[t - lag] > teamsThreshold && microphone[t] > 0 {
         pairs.append((log(microphone[t] + 1e-5), log(teams[t - lag] + 1e-5)))
       }
       let correlation = Self.correlation(pairs)

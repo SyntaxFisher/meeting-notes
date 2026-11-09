@@ -87,6 +87,8 @@ struct MeetingSpeaker: Codable, Equatable, Sendable {
     case localUser = "local-user"
     /// Teams audio while Teams listed exactly one other participant.
     case soleRemoteParticipant = "sole-remote-participant"
+    /// A voice in the Teams audio named after the participant Teams showed speaking.
+    case teamsSpeaker = "teams-speaker"
     /// A voice told apart by sound only.
     case unidentified
   }

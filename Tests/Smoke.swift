@@ -435,6 +435,20 @@ struct Smoke {
         precondition(TeamsMuteClassifier.classify([prejoin]) == .unavailable(.noMeeting))
         precondition(TeamsMuteClassifier.meetingTitle([prejoin]) == nil)
       }
+      // In the background Teams keeps the meeting window's last mute button and follows the
+      // call in its compact view.
+      let stale = TeamsWindowSnapshot(
+        title: "Weekly Sync | Microsoft Teams", buttons: [[leave], [mute]])
+      let compact = TeamsWindowSnapshot(
+        title: "Meeting compact view | Weekly Sync | Microsoft Teams",
+        buttons: [[leave], [unmute]],
+        isCurrent: true)
+      precondition(TeamsMuteClassifier.classify([stale, compact]) == .muted)
+      precondition(TeamsMuteClassifier.meetingTitle([stale, compact]) == "Weekly Sync")
+      precondition(TeamsMuteClassifier.isCompactView("Kompakte Besprechungsansicht | Daily"))
+      var front = stale
+      front.isCurrent = true
+      precondition(TeamsMuteClassifier.classify([front]) == .unmuted)
       let missingMicrophone = TeamsWindowSnapshot(buttons: [[leave]])
       let missingState = TeamsMuteClassifier.classify([missingMicrophone])
       precondition(missingState == .unavailable(.noControl))

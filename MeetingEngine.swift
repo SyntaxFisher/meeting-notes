@@ -184,8 +184,7 @@ final class MeetingEngine {
     write(record)
     active = ActiveRecording(id: id, recorder: recorder, automatic: automatically)
     if systemAudio == .teams {
-      teams.startRoster(
-        writingTo: capture.appendingPathComponent("participants.json"), startedAt: now)
+      teams.startRoster(in: capture, startedAt: now)
     }
     AppLog.event("recording.started", "\(id); automatic=\(automatically)")
     onEvent?(.recordingStarted, record, [:])
@@ -423,8 +422,10 @@ final class MeetingEngine {
             ParticipantRoster.self,
             from: Data(contentsOf: $0.appendingPathComponent("participants.json")))
         }
+        let speaking = tracks.flatMap(SpeakingTimeline.load(fromCapture:))
         text = TranscriptDocument.compose(
-          result, into: &record, localName: localSpeakerName(roster), roster: roster)
+          result, into: &record, localName: localSpeakerName(roster), roster: roster,
+          speaking: speaking)
         try MeetingFiles.publish(Data(text.utf8), to: destination)
       }
       record.transcriptFile = destination.lastPathComponent

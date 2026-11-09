@@ -4,7 +4,7 @@ import Foundation
 /// [--title <title>]` transcribes an existing recording like the app does after a meeting and
 /// writes the transcript and a meeting record next to it (`<output>.json`). A capture directory
 /// holds the separate `microphone.aac` and `system.aac` tracks with `capture.json`, and
-/// optionally `participants.json`. Existing files are never overwritten.
+/// optionally `participants.json` and `speaking.json`. Existing files are never overwritten.
 enum TranscribeCommand {
   static let usage =
     "usage: MeetingNotes transcribe <audio> <output.txt> [--capture <directory>] [--name <local name>] [--title <title>]"
@@ -76,7 +76,7 @@ enum TranscribeCommand {
         result, into: &record,
         localName: TranscriptDocument.localSpeakerName(
           configured: options.name ?? configured, teamsName: roster?.localParticipant?.name),
-        roster: roster)
+        roster: roster, speaking: options.capture.flatMap(SpeakingTimeline.load(fromCapture:)))
       try MeetingFiles.publish(
         JSONCoding.encoder(pretty: true).encode(record), to: recordFile)
       try MeetingFiles.publish(Data(text.utf8), to: options.output)
