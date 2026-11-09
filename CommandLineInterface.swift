@@ -578,6 +578,30 @@ enum CommandLineShim {
     FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin")
   }
 
+  /// Login shells read this profile; desktop MCP clients use the app's absolute path.
+  @discardableResult
+  static func installShellPath(in profile: URL) throws -> Bool {
+    let stanza = """
+      if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        export PATH="$HOME/.local/bin:$PATH"
+      fi
+      """
+    let manager = FileManager.default
+    let exists = manager.fileExists(atPath: profile.path)
+    let contents = exists ? try String(contentsOf: profile, encoding: .utf8) : ""
+    guard !contents.contains(stanza) else { return false }
+    let suffix = (contents.isEmpty || contents.hasSuffix("\n") ? "" : "\n") + stanza + "\n"
+    if exists {
+      let handle = try FileHandle(forWritingTo: profile)
+      defer { try? handle.close() }
+      try handle.seekToEnd()
+      try handle.write(contentsOf: Data(suffix.utf8))
+    } else {
+      try Data(suffix.utf8).write(to: profile, options: .withoutOverwriting)
+    }
+    return true
+  }
+
   /// Writes the script unless it is already current; returns whether it changed anything.
   @discardableResult
   static func install(executable: String, in directory: URL = directory) throws -> Bool {

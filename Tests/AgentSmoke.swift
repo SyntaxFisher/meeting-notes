@@ -281,10 +281,12 @@ enum AgentSmoke {
     expectError { _ = try CommandLineInterface.Arguments(["--limit", "0"]).int("limit") }
     precondition(CommandLineInterface.duration(65.4) == "1:05")
     precondition(CommandLineInterface.duration(3_725) == "1:02:05")
-    let setup = AgentSetup()
-    precondition(setup.serverCommand == "meeting-notes mcp")
+    let setup = AgentSetup(
+      executable: "/Applications/Meeting Notes.app/Contents/MacOS/MeetingNotes")
+    precondition(setup.serverCommand == "\(AgentSetup.quoted(setup.executable)) mcp")
     precondition(
-      setup.shellCommands.contains("claude mcp add --scope user meeting-notes -- meeting-notes mcp")
+      setup.shellCommands.contains(
+        "claude mcp add --scope user meeting-notes -- \(setup.serverCommand)")
     )
     precondition(AgentSetup.quoted("it's") == "'it'\\''s'")
     testAgentRemoval(setup)
@@ -305,7 +307,7 @@ enum AgentSmoke {
         "\(agent.name) adds and removes with its own tool")
       precondition(
         agent.command.hasSuffix(setup.serverCommand),
-        "One-click connect uses the installed meeting-notes command")
+        "One-click connect uses the absolute app executable")
       precondition(
         !agent.check.contains("MeetingNotes"),
         "Detection matches the server name, so a server added with \(AgentSetup.manualServerCommand) counts as connected"
@@ -368,6 +370,9 @@ enum AgentSmoke {
     let claudeResult = AgentConnector.shell(
       "PATH=/usr/bin:/bin\n\(claudeSetup)\nclaude mcp get meeting-notes")
     precondition(claudeResult.status == 0 && claudeResult.text.hasSuffix("mcp\nget\nmeeting-notes"))
+    let server = AgentSetup(executable: executable.path)
+    let serverResult = AgentConnector.shell("PATH=/usr/bin:/bin\n\(server.serverCommand)")
+    precondition(serverResult.status == 0 && serverResult.text.hasSuffix("mcp"))
     let setup = AgentConnector.toolShellSetup(tool: "codex", executables: [root, executable])
     precondition(!setup.isEmpty)
     for arguments in [
@@ -398,6 +403,14 @@ enum AgentSmoke {
     defer { try? manager.removeItem(at: directory.deletingLastPathComponent()) }
     let shim = directory.appendingPathComponent("meeting-notes")
     func contents() -> String { (try? String(contentsOf: shim, encoding: .utf8)) ?? "" }
+    let profile = directory.appendingPathComponent(".zprofile")
+    try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+    try "export EXISTING_SETTING=1".write(to: profile, atomically: true, encoding: .utf8)
+    try expect(CommandLineShim.installShellPath(in: profile))
+    try expect(!CommandLineShim.installShellPath(in: profile))
+    let profileContents = try String(contentsOf: profile, encoding: .utf8)
+    precondition(profileContents.hasPrefix("export EXISTING_SETTING=1\n"))
+    precondition(profileContents.contains("export PATH=\"$HOME/.local/bin:$PATH\""))
     let old = "/Applications/Meeting Notes.app/Contents/MacOS/MeetingNotes"
     let installed = try CommandLineShim.install(executable: old, in: directory)
     precondition(installed && contents() == "#!/bin/sh\nexec '\(old)' \"$@\"\n")
