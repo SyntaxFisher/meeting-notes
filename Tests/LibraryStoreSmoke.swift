@@ -111,6 +111,22 @@ extension Smoke {
     let missing = LibraryStore(root: root.appendingPathComponent("not-created-yet"))
     missing.open()
     await MeetingSmoke.waitUntil { missing.isReady }
+
+    let earlier = root.appendingPathComponent("earlier")
+    let earlierTranscripts = earlier.appendingPathComponent("transcripts")
+    try manager.createDirectory(at: earlierTranscripts, withIntermediateDirectories: true)
+    try "[00:00:01] Speaker 1: Hello.\n".write(
+      to: earlierTranscripts.appendingPathComponent("2026-11-03 17.39 Weekly Sync.txt"),
+      atomically: true, encoding: .utf8)
+    let updated = LibraryStore(root: earlier, retryInterval: .milliseconds(20))
+    var states: [MeetingsFolderAccess] = []
+    updated.onChange = { states.append(updated.access) }
+    updated.open()
+    await MeetingSmoke.waitUntil { updated.isReady }
+    precondition(
+      states == [.checking, .loading(updating: true), .granted],
+      "An update reports converting meetings, not waiting for access: \(states)")
+    precondition(updated.snapshot.meetings.map(\.title) == ["Weekly Sync"])
     print("Launch never waits for the meetings folder; access is retried until granted: OK")
   }
 }

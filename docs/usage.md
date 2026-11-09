@@ -4,7 +4,7 @@
 
 ## Setup and permissions
 
-The setup window lists **Documents → Microphone → System Audio Recording → Accessibility**, each with an **Allowed** or **Not allowed** status. Use each row's **Allow** button to grant access; macOS may ask directly or open System Settings. Documents access is requested when the meetings folder is first read. You can also manage these permissions in **Settings > Permissions**.
+The setup window opens by itself once, also after an update from an earlier version, and afterwards whenever a permission is missing. It lists **Documents → Microphone → System Audio Recording → Accessibility**, each with an **Allowed** or **Not allowed** status. Use each row's **Allow** button to grant access; macOS may ask directly or open System Settings. Documents access is requested when the meetings folder is first read. You can also manage these permissions in **Settings > Permissions**.
 
 No screen recording permission is requested and no screen-sharing session is created. The System Audio Recording status is the decision macOS has stored for the app, and **Allow** shows the macOS prompt even when no app is playing audio. After a denial, change it in **System Settings > Privacy & Security > Screen & System Audio Recording**. A Core Audio denial during capture blocks automatic recording until setup runs again. Accessibility detects Teams meetings, titles, participants and your mute state; automatic Teams recording requires it.
 
@@ -17,7 +17,7 @@ Clicking the menu bar icon opens the panel. When the notch hides the icon, the p
 - **Last Meetings**: up to three recent meetings, including meetings still processing. Each row highlights on hover and opens the meeting in the Library. Processing rows show their progress and offer immediate cancel-and-discard. Background work stays visible while you record the next meeting. **Connect an Agent…** appears only while no agent is connected.
 - **Open App** and **Settings** as full-width rows at the bottom. Use ⌘Q or the right-click menu to quit.
 
-While macOS asks for access to the meetings folder (for example ~/Documents on first launch), the panel says *Waiting for access to Documents* and recording is unavailable; everything continues on its own once access is allowed. The command line and MCP keep answering meanwhile.
+While macOS asks for access to the meetings folder (for example ~/Documents on first launch), the panel says *Waiting for access to Documents* and recording is unavailable; everything continues on its own once access is allowed. After an update from an earlier version, the panel says *Updating meetings* while meetings are converted to the current file names, which can take a few minutes. The command line and MCP keep answering meanwhile.
 
 Right-clicking the icon offers Start/Stop, Library, Settings and Quit. Opening Meeting Notes again from Finder, Spotlight or the Dock opens the Library.
 

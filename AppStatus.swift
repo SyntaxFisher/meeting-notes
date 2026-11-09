@@ -160,11 +160,13 @@ enum HeaderAccessory: Equatable {
 }
 
 /// What the panel header and the menu bar icon say is happening, derived from app state only.
-/// A recording always wins, then an unreadable meetings folder, missing permissions,
-/// transcription, meetings that need attention, other problems, a fresh transcript, any other
-/// reason recording is unavailable, and finally "Ready".
+/// A recording always wins, then an unreadable or still loading meetings folder, missing
+/// permissions, transcription, meetings that need attention, other problems, a fresh transcript,
+/// any other reason recording is unavailable, and finally "Ready".
 enum PanelStatus: Equatable {
   case folderUnavailable(folder: String, denied: Bool)
+  /// The meetings folder is readable and its first scan is running.
+  case loadingMeetings(updating: Bool)
   case setupRequired([MeetingPermission])
   case systemAudioBlocked
   case ready(ReadyContext)
@@ -209,6 +211,7 @@ enum PanelStatus: Equatable {
     case .granted: break
     case .checking: return .folderUnavailable(folder: inputs.folderName, denied: false)
     case .denied: return .folderUnavailable(folder: inputs.folderName, denied: true)
+    case .loading(let updating): return .loadingMeetings(updating: updating)
     }
     let missing = inputs.permissions.missingForRecording()
     if !missing.isEmpty { return .setupRequired(missing) }
@@ -255,6 +258,7 @@ enum PanelStatus: Equatable {
     switch self {
     case .folderUnavailable(let folder, let denied):
       return denied ? "No access to \(folder)" : "Waiting for access to \(folder)"
+    case .loadingMeetings(let updating): return updating ? "Updating meetings" : "Loading meetings"
     case .setupRequired: return "Setup required"
     case .systemAudioBlocked: return "System audio blocked"
     case .attention: return "Needs attention"
@@ -285,6 +289,8 @@ enum PanelStatus: Equatable {
     switch self {
     case .folderUnavailable(_, true):
       return "Allow it in Privacy & Security > Files and Folders."
+    case .loadingMeetings(updating: true):
+      return "Converting meetings from an earlier version. This can take a few minutes."
     case .systemAudioBlocked: return "Allow it in Screen & System Audio Recording."
     case .ready(.autoRecordPaused): return "Auto-record resumes after this meeting."
     case .unavailable(let reason): return reason
@@ -309,6 +315,7 @@ enum PanelStatus: Equatable {
   var tone: StatusTone {
     switch self {
     case .folderUnavailable(_, let denied): return denied ? .warning : .working
+    case .loadingMeetings: return .working
     case .setupRequired, .systemAudioBlocked: return .warning
     case .attention, .problem: return .error
     case .ready, .unavailable: return .neutral
@@ -321,6 +328,7 @@ enum PanelStatus: Equatable {
   var symbol: String {
     switch self {
     case .folderUnavailable(_, let denied): return denied ? "lock.shield" : "hourglass"
+    case .loadingMeetings: return "hourglass"
     case .setupRequired, .systemAudioBlocked: return "lock.shield"
     case .attention, .problem: return "exclamationmark.triangle.fill"
     case .ready: return "waveform"
@@ -345,7 +353,7 @@ enum PanelStatus: Equatable {
     case .recording: return .stop
     case .setupRequired, .systemAudioBlocked: return .setUpPermissions
     case .folderUnavailable(_, true): return .openFolderSettings
-    case .folderUnavailable(_, false), .starting, .unavailable: return nil
+    case .folderUnavailable(_, false), .loadingMeetings, .starting, .unavailable: return nil
     case .ready, .saving, .transcribing, .attention, .problem, .transcriptReady:
       return canStart ? .start : nil
     }
@@ -372,6 +380,7 @@ enum PanelStatus: Equatable {
   var kindIdentifier: String {
     switch self {
     case .folderUnavailable(_, let denied): return denied ? "folder-denied" : "folder-waiting"
+    case .loadingMeetings(let updating): return updating ? "updating-meetings" : "loading-meetings"
     case .setupRequired: return "setup-required"
     case .systemAudioBlocked: return "system-audio-blocked"
     case .attention: return "needs-attention"

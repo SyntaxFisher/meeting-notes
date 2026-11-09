@@ -28,15 +28,25 @@ enum MeetingFilesMigration {
     var capture: URL?
   }
 
+  /// Whether files in an earlier format or an unfinished migration plan remain.
+  static func isNeeded(root: URL) -> Bool {
+    let transcripts = root.appendingPathComponent("transcripts", isDirectory: true)
+    let audios = root.appendingPathComponent("audios", isDirectory: true)
+    return !scan(transcripts, audios).isEmpty
+      || FileManager.default.fileExists(atPath: planFile(in: transcripts).path)
+  }
+
+  private static func planFile(in transcripts: URL) -> URL {
+    transcripts.appendingPathComponent(".edit-locks/migration-plan.json")
+  }
+
   static func run(root: URL, timeZone: TimeZone = .current) throws -> Result {
     let transcripts = root.appendingPathComponent("transcripts", isDirectory: true)
     let audios = root.appendingPathComponent("audios", isDirectory: true)
     let state = transcripts.appendingPathComponent(".edit-locks", isDirectory: true)
-    let planFile = state.appendingPathComponent("migration-plan.json")
+    let planFile = Self.planFile(in: transcripts)
     let manager = FileManager.default
-    guard !scan(transcripts, audios).isEmpty || manager.fileExists(atPath: planFile.path) else {
-      return Result()
-    }
+    guard isNeeded(root: root) else { return Result() }
     try manager.createDirectory(at: state, withIntermediateDirectories: true)
     return try withLock(state.appendingPathComponent("migration.lock")) {
       let groups = scan(transcripts, audios)

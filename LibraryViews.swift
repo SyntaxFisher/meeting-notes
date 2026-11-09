@@ -98,7 +98,17 @@ struct MeetingSidebar: View {
     }
     .listStyle(.sidebar)
     .overlay {
-      if model.app.folderAccess != .granted {
+      if case .loading(let updating) = model.app.folderAccess {
+        ContentUnavailableView {
+          Label(updating ? "Updating Meetings" : "Loading Meetings", systemImage: "hourglass")
+        } description: {
+          if updating {
+            Text("Converting meetings from an earlier version. This can take a few minutes.")
+          }
+        } actions: {
+          ProgressView().controlSize(.small)
+        }
+      } else if model.app.folderAccess != .granted {
         ContentUnavailableView(
           "Waiting for Access", systemImage: "folder",
           description: Text(
