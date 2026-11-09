@@ -8,7 +8,7 @@ Meeting Notes records your Microsoft Teams meetings from the menu bar and turns 
 
 1. Install the app and allow the permissions it asks for. Nothing else needs to be set up.
 2. Join a Teams meeting. Meeting Notes starts recording on its own and transcribes the meeting a few seconds after you leave. You can go straight into your next meeting; earlier meetings wait in a queue.
-3. Ask your agent (Codex, Claude Code or pi) about "my last meeting", or open the transcript from the menu bar.
+3. Ask your agent (Codex / ChatGPT or Claude Code) about "my last meeting", or open the transcript from the menu bar.
 
 Recording and transcription run on your Mac. Connected agents receive the transcript content you ask them to work with.
 
@@ -16,7 +16,7 @@ Recording and transcription run on your Mac. Connected agents receive the transc
 
 - **Automatic recording** of Teams meetings, including back-to-back meetings. Manual recording is one click away.
 - **Local transcription** with timestamps by OpenAI Whisper large-v3-turbo, in German, English and the other languages Whisper knows, also when a meeting switches between them. Everything your microphone recorded carries your name, the Teams participant list is saved with the meeting, and a remote voice gets a name when Teams listed only one other participant.
-- **Agent access** through a built-in MCP server. **Settings > Agents** connects Codex, Claude Code or pi with one click; `get_meeting` answers "my last meeting" in a single call.
+- **Agent access** through a built-in MCP server. **Settings > Agents** connects Codex / ChatGPT or Claude Code with one click; `get_meeting` answers "my last meeting" in a single call.
 - **Nothing is lost silently.** A failed or interrupted recording stays visible until you retry or discard it, even after a crash. Discarded and deleted meetings go to the Trash.
 - **Optional extras** for people who want them: a Library window with search, playback from any timestamp and speaker renaming; a command-line tool; an event log, a `meetingnotes://` URL scheme and Shortcuts actions; a Settings window for recording, storage, agent preferences and updates.
 
@@ -48,7 +48,7 @@ In a Teams meeting, your microphone and the Teams audio are transcribed separate
 
 ## Use with coding agents
 
-Open **Settings > Agents** (or **Connect an Agent…** in the panel) and click **Connect…** next to Codex, Claude Code or pi. Meeting Notes shows the exact command it runs and then checks the result. Afterwards, ask your agent things like "Fass mein letztes Meeting zusammen", "What did we decide about the budget last week?" or "Record this call and send me the action items". See [using Meeting Notes with coding agents](docs/mcp-and-cli.md).
+Open **Settings > Agents** (or **Connect an Agent…** in the panel) and click **Connect…** next to Codex / ChatGPT or Claude Code. Meeting Notes shows the exact command it runs and then checks the result. Afterwards, ask your agent things like "Fass mein letztes Meeting zusammen", "What did we decide about the budget last week?" or "Record this call and send me the action items". See [using Meeting Notes with coding agents](docs/mcp-and-cli.md).
 
 ## Files and privacy
 

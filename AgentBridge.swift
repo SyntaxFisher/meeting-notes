@@ -221,7 +221,7 @@ struct AgentSetup {
     let server = Self.serverName
     return [
       Agent(
-        id: "codex", name: "Codex", tool: "codex",
+        id: "codex", name: "Codex / ChatGPT", tool: "codex",
         command: "codex mcp add \(server) -- \(serverCommand)",
         removeCommand: "codex mcp remove \(server)",
         check: "codex mcp get \(server)"),
@@ -230,12 +230,7 @@ struct AgentSetup {
         command: "claude mcp add --scope user \(server) -- \(serverCommand)",
         removeCommand: "claude mcp remove --scope user \(server)",
         check: "claude mcp get \(server)"),
-      Agent(
-        id: "pi", name: "pi", tool: "pi",
-        command: "pi mcp add \(server) -- \(serverCommand)",
-        removeCommand: "pi mcp remove \(server)",
-        check:
-          "grep -q '\"\(server)\"' \"${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/mcp.json\""),
+
     ]
   }
 
@@ -274,7 +269,7 @@ enum AgentConnection: Equatable, Sendable {
 }
 
 /// Runs the agents' command-line tools in a login shell, so the user's PATH and agent
-/// configuration variables (CODEX_HOME, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR) apply.
+/// configuration variables (CODEX_HOME, CLAUDE_CONFIG_DIR) apply.
 enum AgentConnector {
   struct Output: Sendable {
     let status: Int32
@@ -304,11 +299,78 @@ enum AgentConnector {
       text: String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
   }
 
+  /// Prefer the login shell's tool; desktop runtimes and native installs need not be on PATH.
+  static func toolShellSetup(tool: String, executables: [URL]) -> String {
+    guard
+      let executable = executables.first(where: {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: $0.path, isDirectory: &isDirectory)
+          && !isDirectory.boolValue && FileManager.default.isExecutableFile(atPath: $0.path)
+      })
+    else { return "" }
+    return """
+      if ! command -v \(tool) >/dev/null 2>&1; then
+        \(tool)() { \(AgentSetup.quoted(executable.path)) "$@"; }
+      fi
+      """
+  }
+
+  static func desktopClaudeExecutables(in directory: URL) -> [URL] {
+    let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]
+    guard
+      let entries = FileManager.default.enumerator(
+        at: directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])
+    else { return [] }
+    var candidates: [(URL, Date)] = []
+    for case let url as URL in entries {
+      if entries.level > 6 {
+        entries.skipDescendants()
+        continue
+      }
+      guard url.lastPathComponent == "claude",
+        let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true
+      else { continue }
+      candidates.append((url, values.contentModificationDate ?? .distantPast))
+    }
+    return candidates.sorted { $0.1 > $1.1 }.map { $0.0 }
+  }
+
+  static func shellSetup(for agent: AgentSetup.Agent) -> String {
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    var executables: [URL] = []
+    if agent.id == "codex" {
+      let registered = ["com.openai.codex", "com.openai.chat"].compactMap {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
+      }
+      let directories = [
+        URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications"),
+      ]
+      let applications =
+        registered
+        + directories.flatMap { directory in
+          ["ChatGPT.app", "Codex.app"].map { directory.appendingPathComponent($0) }
+        }
+      executables += applications.map {
+        $0.appendingPathComponent("Contents/Resources/codex-cli/bin/codex")
+      }
+    }
+    executables += [".local/bin", "/opt/homebrew/bin", "/usr/local/bin"].map {
+      $0.hasPrefix("/")
+        ? URL(fileURLWithPath: $0).appendingPathComponent(agent.tool)
+        : home.appendingPathComponent($0).appendingPathComponent(agent.tool)
+    }
+    if agent.id == "claude" {
+      executables += desktopClaudeExecutables(
+        in: home.appendingPathComponent("Library/Application Support/Claude/claude-code"))
+    }
+    return toolShellSetup(tool: agent.tool, executables: executables)
+  }
+
   /// One login shell per agent, because Settings repeats this every few seconds.
   static func state(of agent: AgentSetup.Agent) -> AgentConnection {
     let notInstalled: Int32 = 127
     let status = shell(
-      "command -v \(agent.tool) >/dev/null 2>&1 || exit \(notInstalled)\n\(agent.check)"
+      "\(shellSetup(for: agent))\ncommand -v \(agent.tool) >/dev/null 2>&1 || exit \(notInstalled)\n\(agent.check)"
     ).status
     if status == notInstalled { return .notInstalled }
     return status == 0 ? .connected : .notConnected
@@ -318,6 +380,7 @@ enum AgentConnector {
   static func connect(_ agent: AgentSetup.Agent) -> AgentConnection {
     let output = shell(
       """
+      \(shellSetup(for: agent))
       command -v meeting-notes >/dev/null 2>&1 || {
         echo 'Open Meeting Notes from Applications and add ~/.local/bin to your PATH.'
         exit 1
@@ -332,7 +395,7 @@ enum AgentConnector {
 
   /// Removes the MCP server and confirms with the agent's own check that it is gone.
   static func disconnect(_ agent: AgentSetup.Agent) -> AgentConnection {
-    let output = shell(agent.removeCommand)
+    let output = shell("\(shellSetup(for: agent))\n\(agent.removeCommand)")
     guard output.status == 0 else { return .removeFailed(message(output, agent)) }
     let state = state(of: agent)
     return state == .connected
