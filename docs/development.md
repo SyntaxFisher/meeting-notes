@@ -51,6 +51,7 @@ Scenarios live in `scripts/devenv/scenarios/*.json`. Each defines `speakers` (`v
 
 - `quick-smoke`: 45 seconds, English and German, two speakers.
 - `standup-de-en`: three speakers, code-switching, an overlap, and a sentence spoken while muted.
+- `planning-long`: about eight minutes, eight speakers in German and English, frequent half-second overlaps, short interjections, and a sentence spoken while muted.
 - `multilingual-panel`: five speakers in German, French, Spanish, Italian and English.
 - `produkt-sync`: three speakers in German and English, with an aside spoken while muted.
 - `kundencall`: a short German customer call with one guest, meant to follow `produkt-sync` for back-to-back recording.
@@ -62,6 +63,8 @@ Scenarios live in `scripts/devenv/scenarios/*.json`. Each defines `speakers` (`v
 - Teams free has no lobby-bypass setting, so the host admits guests from the People pane. The pane stays open, so live recordings see the full participant roster; close it with `teams-control press "^Close participants pane" --meeting` to test tile-only detection.
 - Teams can join a meeting muted; `meeting` unmutes after joining because scenarios start unmuted.
 - Guests press Leave before their browser closes. Teams keeps guests that just disappear in the participant list for about a minute, so they would show up in the next run's roster.
+- Live playback uses a continuous microphone track and pre-scheduled guest audio. The microphone playback includes muted test speech; the expected recording excludes it. Timing logs and guest WebRTC audio statistics are saved next to the scenario reports. A control delay over half a second aborts the run because it cannot reliably test overlap and mute timing.
+- Device buffering and Teams' network path can shift live turns relative to the script. Check the captured tracks when evaluating short overlaps. Run the playback harness regression checks with `python3 -m unittest discover -s scripts/devenv -p 'test_*.py'`.
 
 
 ### Signed preview builds with updates

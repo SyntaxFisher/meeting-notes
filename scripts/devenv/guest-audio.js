@@ -64,13 +64,33 @@
       clips.set(id, await context.decodeAudioData(bytes.buffer));
       return clips.get(id).duration;
     },
-    async play(id) {
-      if (context.state !== "running") await context.resume();
-      const source = context.createBufferSource();
-      source.buffer = clips.get(id);
-      source.connect(destination);
-      source.start();
-      return source.buffer.duration;
+    async prepare() {
+      if (context.state !== "running") {
+        let timer;
+        try {
+          await Promise.race([
+            context.resume(),
+            new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error("Guest audio clock did not start")), 5000);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      if (context.state !== "running") throw new Error("Guest audio clock is not running");
+    },
+    schedule({ delay, events }) {
+      if (context.state !== "running") throw new Error("Guest audio clock is not running");
+      const origin = context.currentTime + delay;
+      for (const { id, at } of events) {
+        const source = context.createBufferSource();
+        source.buffer = clips.get(id);
+        if (!source.buffer) throw new Error(`Audio clip not loaded: ${id}`);
+        source.connect(destination);
+        source.start(origin + at);
+      }
+      return { contextState: context.state, origin };
     },
   };
 })();

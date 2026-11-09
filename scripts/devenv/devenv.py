@@ -10,6 +10,7 @@ transcript can be scored against a known reference. See docs/development.md.
 import argparse
 import base64
 import calendar
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -36,6 +37,7 @@ MIC_DEVICE = "BlackHole 2ch"
 # Teams playback goes to this unmonitored device. The app's process tap still captures it.
 SINK_DEVICE = "BlackHole 16ch"
 RATE = 48_000
+PLAYBACK_PREROLL = 5
 BREW = ["ffmpeg", "switchaudio-osx"]
 CASKS = ["microsoft-teams", "blackhole-2ch", "blackhole-16ch"]
 
@@ -207,27 +209,28 @@ def synthesize(step, voice, rate, output, scenario_path):
         source.unlink()
 
 
-def mix(truth, output, include=lambda event: True, codec=()):
+def mix(truth, output, include=lambda event: True, codec=(), *, include_muted=False):
     """The recording the app should produce: every turn except microphone speech while muted.
     `include` selects the turns, for example one side of the call."""
     audible = [event for event in truth["events"]
-               if "clip" in event and not event["muted"] and include(event)]
+               if "clip" in event and (include_muted or not event["muted"]) and include(event)]
     if not audible:
         run("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
             "-i", f"anullsrc=r={RATE}:cl=mono", "-t", str(truth["duration"]),
             *codec, output, quiet=True)
         return
-    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+               "-filter_complex_threads", "2"]
     filters = []
     for index, event in enumerate(audible):
-        command += ["-i", event["clip"]]
+        command += ["-threads", "1", "-i", event["clip"]]
         delay = int(event["at"] * 1000)
         filters.append(f"[{index}]adelay={delay}|{delay}[a{index}]")
     labels = "".join(f"[a{index}]" for index in range(len(audible)))
     filters.append(f"{labels}amix=inputs={len(audible)}:normalize=0,"
                    f"apad=whole_dur={truth['duration']}[out]")
     command += ["-filter_complex", ";".join(filters), "-map", "[out]", "-ar", str(RATE),
-                "-ac", "1", *codec, str(output)]
+                "-ac", "1", "-threads", "2", *codec, str(output)]
     subprocess.run(command, check=True)
 
 
@@ -471,7 +474,7 @@ def replay(args):
     directory = WORK / "replays" / f"{scenario['name']}{suffix}-{time.strftime('%Y%m%d-%H%M%S')}"
     tracks = directory / "capture"
     tracks.mkdir(parents=True)
-    for name in ("capture.json", "system.aac", "participants.json"):
+    for name in ("capture.json", "system.aac", "participants.json", "speaking.json"):
         if (capture / name).exists():
             shutil.copy2(capture / name, tracks / name)
     ffmpeg = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
@@ -574,8 +577,17 @@ def desktop_set_muted(muted):
     """Clicks the Teams microphone button unless it already shows the wanted state."""
     target = r"^(Mute mic|Mikrofon stummschalten)" if muted else \
         r"^(Unmute mic|Mikrofon wieder aktivieren)"
+    expected = r"^(Unmute mic|Mikrofon wieder aktivieren)" if muted else \
+        r"^(Mute mic|Mikrofon stummschalten)"
     if teams_control("press", target, "--meeting").returncode != 0:
-        print(f"  (Teams mic already {'muted' if muted else 'unmuted'} or button not found)")
+        if teams_control("find", expected, "--meeting").returncode == 0:
+            return
+        fail(f"Cannot set Teams mic to {'muted' if muted else 'unmuted'}.")
+    for _ in range(10):
+        if teams_control("find", expected, "--meeting").returncode == 0:
+            return
+        time.sleep(0.2)
+    fail("Teams microphone button did not confirm the requested state.")
 
 
 ADMIT = r"^(Admit all|Admit participant in lobby|Admit$|Alle zulassen|Zulassen)"
@@ -663,12 +675,75 @@ def wait_for_guests(pages, admit, timeout=120):
     fail(f"Guests not admitted: {', '.join(waiting)}; screenshots are in {WORK}.")
 
 
+@contextmanager
+def guest_browser(playwright, args):
+    browser = playwright.chromium.launch(
+        headless=not args.headed, channel="chromium",
+        args=GUEST_ARGS + ["--num-raster-threads=1", "--disable-background-media-suspend"])
+    try:
+        yield browser
+    finally:
+        try:
+            for context in browser.contexts:
+                for page in context.pages:
+                    try:
+                        leave = page.get_by_role("button", name=re.compile(r"^(Leave|Verlassen)"))
+                        if leave.count():
+                            leave.first.click(timeout=3000)
+                    except Exception:
+                        pass
+        finally:
+            try:
+                browser.close()
+            finally:
+                if args.leave and not args.no_desktop:
+                    if teams_control("find", r"^(Leave|Verlassen)$", "--meeting").returncode == 0:
+                        desktop_leave()
+
+
+@contextmanager
+def microphone_playback(clip, device_index, progress):
+    player = subprocess.Popen(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-threads", "1", "-re",
+         "-readrate_initial_burst", "0",
+         "-i", str(clip), "-threads", "2", "-stats_period", "0.1",
+         "-progress", str(progress), "-f", "audiotoolbox", "-audio_device_index",
+         str(device_index), "-"])
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if player.poll() is not None:
+                fail("Microphone playback exited before its audio clock started.")
+            if progress.exists():
+                positions = re.findall(r"^out_time_us=(\d+)$", progress.read_text(), re.M)
+                if positions:
+                    # Playback has five seconds of silence before the scenario timeline.
+                    origin = time.monotonic() + PLAYBACK_PREROLL - int(positions[-1]) / 1_000_000
+                    yield player, origin
+                    return
+            time.sleep(0.02)
+        fail("Microphone playback did not start within 15 seconds.")
+    finally:
+        if player.poll() is None:
+            player.terminate()
+            try:
+                player.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                player.kill()
+                player.wait()
+
+
 def meeting(args):
     url = args.url or config().get("meetingUrl")
     if not url:
         fail("Pass --url with a Teams meeting link or save one with `devenv.py config --url`.")
     scenario = load_scenario(args.scenario)
     directory, truth = render(scenario)
+    microphone = directory / "microphone-playback.wav"
+    playback = {**truth, "duration": truth["duration"] + PLAYBACK_PREROLL,
+                "events": [{**event, "at": event["at"] + PLAYBACK_PREROLL}
+                           for event in truth["events"]]}
+    mix(playback, microphone, lambda event: event["via"] == "mic", include_muted=True)
     ensure_audio_routing()
     # Auto-record starts when the desktop joins, long before every guest is admitted.
     joined = time.time() - (30 if args.no_desktop else 5)
@@ -681,9 +756,7 @@ def meeting(args):
     rounds = max(1, int(args.repeat))
     if rounds > 1 and (not args.leave or args.no_desktop):
         fail("--repeat needs --leave and the Teams desktop, which leaves and rejoins.")
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            headless=not args.headed, channel="chromium", args=GUEST_ARGS)
+    with sync_playwright() as playwright, guest_browser(playwright, args) as browser:
         pages = {}
         for key, speaker in guests.items():
             context = browser.new_context(
@@ -710,50 +783,63 @@ def meeting(args):
                 print(f"Round {round_index + 1}: {app_status_line()}", flush=True)
             frames = {}
             for key, page in pages.items():
-                frames[key] = guest_frames(page) or [page.main_frame]
+                unmute = page.get_by_role("button", name=re.compile(
+                    r"^(Unmute\b|Mikrofon wieder aktivieren)", re.I))
+                if unmute.count():
+                    unmute.first.click()
+                frames[key] = guest_frames(page)
+                if not frames[key]:
+                    fail(f"Guest {key} has no injected microphone stream.")
             for event in truth["events"]:
                 if event.get("via") == "guest":
                     data = base64.b64encode(Path(event["clip"]).read_bytes()).decode()
                     for frame in frames[event["speaker"]]:
                         frame.evaluate("([id, data]) => __meetingNotesGuest.load(id, data)",
                                        [event["clip"], data])
+            for guest in frames.values():
+                for frame in guest:
+                    frame.evaluate("() => __meetingNotesGuest.prepare()")
             print(f"Everyone joined. Playing {scenario['name']} ({truth['duration']:.0f} s)…",
                   flush=True)
             time.sleep(float(args.settle))
             starts.append(joined)
-            origin = time.monotonic()
-            players = []
-            for event in truth["events"]:
-                delay = origin + event["at"] - time.monotonic()
-                if delay > 0:
-                    time.sleep(delay)
-                label = event.get("action") or f"{event['speaker']}: {event['text'][:60]}"
-                print(f"  [{event['at']:6.1f}s] {label}", flush=True)
-                if event.get("action"):
-                    desktop_set_muted(event["action"] == "mute")
-                elif event["via"] == "mic":
-                    players.append(subprocess.Popen(
-                        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-i",
-                         event["clip"], "-f", "audiotoolbox", "-audio_device_index",
-                         str(ffmpeg_index), "-"]))
-                else:
-                    for frame in frames[event["speaker"]]:
-                        frame.evaluate("(id) => __meetingNotesGuest.play(id)", event["clip"])
-            remaining = origin + truth["duration"] - time.monotonic()
-            if remaining > 0:
-                time.sleep(remaining)
-            for player in players:
-                player.wait()
-            if args.leave and not args.no_desktop:
-                desktop_leave()
-        # Guests that close the browser without leaving stay listed in Teams for a while.
-        for page in pages.values():
+            # Audio clocks keep overlaps intact even when UI automation takes time.
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            timing = []
             try:
-                page.get_by_role("button", name=re.compile(r"^(Leave|Verlassen)")).first.click(
-                    timeout=5000)
-            except Exception:
-                pass
-        browser.close()
+                with microphone_playback(microphone, ffmpeg_index,
+                                         directory / f"live-{stamp}.microphone.log") as (player, origin):
+                    for key, guest in frames.items():
+                        plan = [{"id": event["clip"], "at": event["at"]}
+                                for event in truth["events"] if event.get("speaker") == key]
+                        for frame in guest:
+                            frame.evaluate("(plan) => __meetingNotesGuest.schedule(plan)",
+                                           {"delay": origin - time.monotonic(), "events": plan})
+                    if time.monotonic() >= origin:
+                        fail("Guest scheduling missed playback start; the machine is overloaded.")
+                    for event in truth["events"]:
+                        delay = origin + event["at"] - time.monotonic()
+                        if delay > 0:
+                            time.sleep(delay)
+                        late = time.monotonic() - origin - event["at"]
+                        timing.append({"at": event["at"], "late": round(late, 3)})
+                        if late > 0.5:
+                            fail(f"Playback control is {late:.1f}s late; this run cannot score overlaps.")
+                        label = event.get("action") or f"{event['speaker']}: {event['text'][:60]}"
+                        print(f"  [{event['at']:6.1f}s] {label}", flush=True)
+                        if event.get("action"):
+                            desktop_set_muted(event["action"] == "mute")
+                    timeout = max(10, origin + truth["duration"] - time.monotonic() + 10)
+                    if player.wait(timeout=timeout):
+                        fail("Microphone playback failed.")
+            finally:
+                (directory / f"live-{stamp}.timing.json").write_text(json.dumps(timing, indent=2) + "\n")
+            diagnostics = {key: [frame.evaluate("() => __meetingNotesGuest.audioStats()")
+                                 for frame in guest] for key, guest in frames.items()}
+            (directory / f"live-{stamp}.guests.json").write_text(
+                json.dumps(diagnostics, indent=2) + "\n")
+            if args.leave and not args.no_desktop and round_index + 1 < rounds:
+                desktop_leave()
     print("Scenario finished.")
     if args.score:
         scored = []
