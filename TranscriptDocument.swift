@@ -39,8 +39,11 @@ enum TranscriptDocument {
     let teamsNames =
       result.mode == .separateTracks && soleRemote == nil
       ? speaking.map {
-        SpeakerNaming.names(for: result.segments, timeline: $0, excluded: excluded)
-          .map { $0.flatMap(cleanedName) }
+        SpeakerNaming.names(
+          for: result.segments, timeline: $0, excluded: excluded,
+          embeddings: result.voiceEmbeddings ?? []
+        )
+        .map { $0.flatMap(cleanedName) }
       } : nil
     var anonymousLabels: [String: String] = [:]
     var speakers: [MeetingSpeaker] = []
