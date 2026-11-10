@@ -91,6 +91,7 @@ final class TeamsMonitor {
 /// active speaker every 0.8 s and the participant roster every 2 s, from the same reading.
 final class TeamsBackgroundReader: @unchecked Sendable {
   private let queue = DispatchQueue(label: "com.jona.meeting-notes.teams", qos: .userInitiated)
+  private let muteReader = TeamsMuteReader()
   private var timer: DispatchSourceTimer?
   private var mirrored: NativeRecorder?
   private var collection: Collection?
@@ -139,8 +140,8 @@ final class TeamsBackgroundReader: @unchecked Sendable {
   func readNow(_ done: @escaping @Sendable (TeamsMuteState) -> Void) {
     queue.async { [self] in
       lastStateRead = Date()
-      let reading = TeamsMuteReader.read()
-      mirrored?.setMicrophoneMuted(reading.state.microphoneMuted)
+      let reading = muteReader.read()
+      mirrorMicrophone(reading.state)
       deliver?(reading)
       done(reading.state)
     }
@@ -166,8 +167,8 @@ final class TeamsBackgroundReader: @unchecked Sendable {
     let now = Date()
     if now.timeIntervalSince(lastStateRead) >= (mirrored == nil && collection == nil ? 2 : 0.4) {
       lastStateRead = now
-      let reading = TeamsMuteReader.read()
-      mirrored?.setMicrophoneMuted(reading.state.microphoneMuted)
+      let reading = muteReader.read()
+      mirrorMicrophone(reading.state)
       deliver?(reading)
       let seconds = Date().timeIntervalSince(now)
       if seconds >= 1 { AppLog.event("teams.slowRead", String(format: "mute=%.1fs", seconds)) }
@@ -213,5 +214,10 @@ final class TeamsBackgroundReader: @unchecked Sendable {
     guard !collection.speaking.intervals.isEmpty else { return }
     try? JSONEncoder().encode(collection.speaking).write(
       to: collection.directory.appendingPathComponent("speaking.json"), options: .atomic)
+  }
+
+  private func mirrorMicrophone(_ state: TeamsMuteState) {
+    guard let muted = state.microphoneMuted else { return }
+    mirrored?.setMicrophoneMuted(muted)
   }
 }

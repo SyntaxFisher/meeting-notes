@@ -27,6 +27,7 @@ struct TeamsAutoRecordPolicy {
   static let leaveGracePeriod: TimeInterval = 0.8
   private(set) var ownsRecording = false
   private(set) var waitingForMeetingEnd = false
+  private var recordingInProgress = false
   private var meetingHasEnded = false
   private var absentSince: Date?
 
@@ -37,7 +38,8 @@ struct TeamsAutoRecordPolicy {
     case .inMeeting:
       absentSince = nil
       meetingHasEnded = false
-      return !isRecording && canStart && !waitingForMeetingEnd ? .start : nil
+      return !isRecording && !recordingInProgress && canStart && !waitingForMeetingEnd
+        ? .start : nil
     case .noMeeting:
       let since = absentSince ?? now
       absentSince = since
@@ -52,6 +54,7 @@ struct TeamsAutoRecordPolicy {
   }
 
   mutating func recordingStarted(automatically: Bool) {
+    recordingInProgress = true
     ownsRecording = automatically
     if automatically {
       absentSince = nil
@@ -60,6 +63,7 @@ struct TeamsAutoRecordPolicy {
   }
 
   mutating func recordingEnded() {
+    recordingInProgress = false
     ownsRecording = false
     waitingForMeetingEnd = !meetingHasEnded
   }

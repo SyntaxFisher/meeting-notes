@@ -407,7 +407,7 @@ struct CommandLineInterface {
           Data(String(format: "Read in %.2f s\n", Date().timeIntervalSince(started)).utf8))
       }
     case "check-teams-mute":
-      let reading = TeamsMuteReader.read()
+      let reading = TeamsMuteReader().read()
       let muted: String
       switch reading.state {
       case .muted: muted = "muted"

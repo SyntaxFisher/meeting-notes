@@ -802,13 +802,14 @@ def meeting(args):
             print(f"Everyone joined. Playing {scenario['name']} ({truth['duration']:.0f} s)…",
                   flush=True)
             time.sleep(float(args.settle))
-            starts.append(joined)
             # Audio clocks keep overlaps intact even when UI automation takes time.
             stamp = time.strftime("%Y%m%d-%H%M%S")
             timing = []
             try:
                 with microphone_playback(microphone, ffmpeg_index,
                                          directory / f"live-{stamp}.microphone.log") as (player, origin):
+                    starts.append((joined, time.time() + origin - time.monotonic()
+                                   + truth["duration"]))
                     for key, guest in frames.items():
                         plan = [{"id": event["clip"], "at": event["at"]}
                                 for event in truth["events"] if event.get("speaker") == key]
@@ -843,9 +844,9 @@ def meeting(args):
     print("Scenario finished.")
     if args.score:
         scored = []
-        for start in starts:
+        for start, expected_end in starts:
             scored.append(wait_and_score(start, truth, directory, float(args.score_timeout),
-                                         skip=scored))
+                                         expected_end=expected_end, skip=scored))
         if len(scored) > 1:
             report_back_to_back(scored)
 
@@ -890,14 +891,30 @@ def app_status_line():
     return " ".join(result.stdout.split())
 
 
-def wait_and_score(started, truth, directory, timeout, skip=()):
+def check_recording_continuity(records, expected_end):
+    """A scripted call must remain one recording through the final playback sample."""
+    from datetime import datetime
+    parts = [record for record in records if record_started(record) <= expected_end]
+    if len(parts) > 1:
+        fail("The meeting split into multiple recordings: "
+             + ", ".join(record["id"] for record in parts))
+    if parts and parts[0]["status"] == "complete":
+        ended = datetime.fromisoformat(parts[0]["ended_at"]).timestamp()
+        if ended < expected_end - 1:
+            fail(f"Recording {parts[0]['id']} stopped {expected_end - ended:.1f}s "
+                 "before playback finished.")
+
+
+def wait_and_score(started, truth, directory, timeout, *, expected_end, skip=()):
     """Waits for the first meeting that started after `started` to be transcribed, scores it,
     and returns its id."""
     print("Waiting for Meeting Notes to finish the transcript…", flush=True)
     deadline = time.time() + timeout
     while time.time() < deadline:
         candidates = [record for record in meeting_records()
-                      if record_started(record) >= started and record["id"] not in skip]
+                      if started <= record_started(record) <= expected_end
+                      and record["id"] not in skip]
+        check_recording_continuity(candidates, expected_end)
         if candidates:
             record = candidates[0]
             if record["status"] == "complete" and record.get("transcript_file"):

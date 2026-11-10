@@ -30,6 +30,7 @@ struct Smoke {
     print("System audio permission is read from macOS: OK")
     SoundSmoke.run()
     try SpeakerIdentitySmoke.run()
+    TeamsScreenSharingSmoke.run()
     try AgentSmoke.run()
     try TranscriptEditsSmoke.run()
     try MeetingTitlesSmoke.run()
@@ -219,13 +220,13 @@ struct Smoke {
     precondition(exists(transcripts, "19700101T000001Z.txt"))
     precondition(exists(transcripts, "19700101T000002Z.txt"))
     precondition(manager.fileExists(atPath: unrelated.path))
-    precondition(TeamsMuteState.muted.microphoneMuted)
-    precondition(!TeamsMuteState.unmuted.microphoneMuted)
+    precondition(TeamsMuteState.muted.microphoneMuted == true)
+    precondition(TeamsMuteState.unmuted.microphoneMuted == false)
     for reason: TeamsMuteState.Reason in [
       .accessibilityPermission, .teamsClosed, .noMeeting, .noControl, .ambiguous,
       .accessibilityError,
     ] {
-      precondition(!TeamsMuteState.unavailable(reason).microphoneMuted)
+      precondition(TeamsMuteState.unavailable(reason).microphoneMuted == nil)
     }
     try await testAudioCapture(root: root.appendingPathComponent("audio-capture"))
     try await testCaptureRecovery(root: root.appendingPathComponent("capture-recovery"))
@@ -458,7 +459,7 @@ struct Smoke {
       let missingState = TeamsMuteClassifier.classify([missingMicrophone])
       precondition(missingState == .unavailable(.noControl))
       precondition(missingState.meetingPresence == .inMeeting)
-      precondition(!missingState.microphoneMuted)
+      precondition(missingState.microphoneMuted == nil)
       precondition(
         TeamsMuteClassifier.classify([
           TeamsWindowSnapshot(buttons: [[leave], [unmute, mute]])
