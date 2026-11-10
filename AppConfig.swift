@@ -5,6 +5,7 @@ import Foundation
 struct AppConfig: Equatable, Sendable {
   var autoRecordTeamsMeetings = true
   var mirrorTeamsMute = true
+  var playSounds = true
   var agentsMayNameMeetings = true
   var agentsMaySummarizeMeetings = true
   var agentsMayCorrectTranscripts = false
@@ -52,6 +53,7 @@ struct AppConfig: Equatable, Sendable {
     reader.allow(root, keys: Self.topLevelKeys, at: "")
     reader.bool(root, "autoRecordTeamsMeetings") { config.autoRecordTeamsMeetings = $0 }
     reader.bool(root, "mirrorTeamsMute") { config.mirrorTeamsMute = $0 }
+    reader.bool(root, "playSounds") { config.playSounds = $0 }
     reader.bool(root, "keepAudio") { config.keepAudio = $0 }
     reader.bool(root, "agentsMayNameMeetings") { config.agentsMayNameMeetings = $0 }
     reader.bool(root, "agentsMaySummarizeMeetings") { config.agentsMaySummarizeMeetings = $0 }
@@ -82,6 +84,7 @@ struct AppConfig: Equatable, Sendable {
       "$schema": Self.schemaURL,
       "autoRecordTeamsMeetings": autoRecordTeamsMeetings,
       "mirrorTeamsMute": mirrorTeamsMute,
+      "playSounds": playSounds,
       "agentsMayNameMeetings": agentsMayNameMeetings,
       "agentsMaySummarizeMeetings": agentsMaySummarizeMeetings,
       "agentsMayCorrectTranscripts": agentsMayCorrectTranscripts,
@@ -103,7 +106,7 @@ struct AppConfig: Equatable, Sendable {
   private static let topLevelKeys: Set<String> = [
     "$schema", "autoRecordTeamsMeetings", "mirrorTeamsMute", "localSpeakerName",
     "retention", "agentsMayNameMeetings", "agentsMaySummarizeMeetings",
-    "agentsMayCorrectTranscripts", "keepAudio",
+    "agentsMayCorrectTranscripts", "keepAudio", "playSounds",
   ]
 
   private static func describe(_ error: Error) -> String {

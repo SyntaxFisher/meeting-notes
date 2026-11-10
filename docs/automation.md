@@ -27,6 +27,7 @@ Everything here is optional; Meeting Notes works without any of it. For coding a
   "keepAudio" : true,
   "localSpeakerName" : null,
   "mirrorTeamsMute" : true,
+  "playSounds" : true,
   "retention" : {
     "audioBytes" : 10000000000
   }
@@ -40,6 +41,7 @@ Everything here is optional; Meeting Notes works without any of it. For coding a
 | `agentsMaySummarizeMeetings` | `true` | Require reading the whole transcript and saving a missing short summary, regardless of the current question. |
 | `agentsMayCorrectTranscripts` | `false` | Require correcting every confidently identified recognition error in the transcript passages read. |
 | `keepAudio` | `true` | Keep recordings after successful transcription. |
+| `playSounds` | `true` | Play recording, transcription and error sounds. |
 | `mirrorTeamsMute` | `true` | Exclude the microphone while Teams shows you as muted, only when recording Teams audio. |
 | `localSpeakerName` | `null` | Label for everything the microphone records. `null` uses your Teams display name once seen, otherwise your macOS name. No colons. |
 | `retention.audioBytes` | `10000000000` | Budget of the `audios` folder; the oldest recordings above it are deleted. |

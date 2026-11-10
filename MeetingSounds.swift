@@ -24,6 +24,16 @@ enum MeetingSound: String {
 
 @MainActor
 final class MeetingSounds {
+  var isEnabled = true {
+    didSet {
+      if !isEnabled {
+        current?.stop()
+        current = nil
+        lastErrorAt = nil
+      }
+    }
+  }
+
   private let output: ((MeetingSound) -> Void)?
   private var current: NSSound?
   private var lastErrorAt: TimeInterval?
@@ -33,6 +43,7 @@ final class MeetingSounds {
   }
 
   func play(_ cue: MeetingSound, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+    guard isEnabled else { return }
     // One failure can surface through both the recording lifecycle and its command result.
     if cue == .error {
       if let lastErrorAt, now - lastErrorAt < 2 { return }

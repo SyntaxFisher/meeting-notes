@@ -47,7 +47,7 @@ struct CommandLineInterface {
       wait [<id>] [--timeout S]       Block until that meeting's transcript is ready, or
                                       without an id until the next transcript is ready;
                                       print its id and path. Default timeout 3600 s.
-      settings [auto-record on|off] [mirror-mute on|off] [local-name NAME|default]
+      settings [auto-record on|off] [mirror-mute on|off] [sounds on|off] [local-name NAME|default]
                [recordings-limit SIZE]
                                       Show or change settings in config.json. SIZE is
                                       bytes or a number with KB, MB, GB or TB (1 GB =
@@ -364,6 +364,7 @@ struct CommandLineInterface {
         switch key {
         case "auto-record": change.autoRecordTeamsMeetings = try flag()
         case "mirror-mute": change.mirrorTeamsMute = try flag()
+        case "sounds": change.playSounds = try flag()
         case "local-name":
           change.localSpeakerName = .some(value.lowercased() == "default" ? nil : value)
         case "recordings-limit":
@@ -374,7 +375,7 @@ struct CommandLineInterface {
         default:
           throw UsageError(
             message:
-              "Unknown setting \"\(key)\". Use auto-record, mirror-mute, local-name or recordings-limit."
+              "Unknown setting \"\(key)\". Use auto-record, mirror-mute, sounds, local-name or recordings-limit."
           )
         }
       }
@@ -388,6 +389,7 @@ struct CommandLineInterface {
       } else {
         print("auto-record: \(settings.autoRecordTeamsMeetings ? "on" : "off")")
         print("mirror-mute: \(settings.mirrorTeamsMute ? "on" : "off")")
+        print("sounds: \(settings.playSounds ? "on" : "off")")
         print("local-name: \(settings.localSpeakerName ?? "default (Teams name, else macOS name)")")
         print("meetings-folder: \(settings.meetingsRoot)")
         print("recordings-limit: \(Self.size(settings.retentionAudioBytes))")

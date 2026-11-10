@@ -75,7 +75,7 @@ The gear button at the top right opens Settings directly.
 
 The app shows a Dock icon only while the Library is open. It does not request notification permission, send macOS notifications or show automatic status popups. The menu-bar icon and meeting rows show progress and errors.
 
-Quiet system sounds mark the outcome of automatic and manual recordings: **Purr** when recording starts, **Frog** when it stops, **Pop** when you discard a recording or unfinished transcription, **Blow** when the transcript is ready, and **Basso** for errors. Deleting finished meetings and automatically removing short recordings without speech are silent.
+Quiet system sounds mark the outcome of automatic and manual recordings: **Purr** when recording starts, **Frog** when it stops, **Pop** when you discard a recording or unfinished transcription, **Blow** when the transcript is ready, and **Basso** for errors. Deleting finished meetings and automatically removing short recordings without speech are silent. Turn off **Settings > General > Sounds** to silence all app sounds.
 
 ## Settings
 

@@ -116,6 +116,7 @@ meeting-notes retry 20261105T141700Z
 meeting-notes discard 20261105T141700Z  # moves it to the Trash
 meeting-notes delete 20261105T141700Z   # any meeting, cancelling active work and moving it to the Trash
 meeting-notes settings auto-record off local-name "Jona B."
+meeting-notes settings sounds off
 meeting-notes settings recordings-limit 20GB
 meeting-notes status --json
 ```

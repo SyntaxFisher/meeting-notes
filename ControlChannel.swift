@@ -43,6 +43,7 @@ struct StatusSnapshot: Codable, Equatable, Sendable {
   struct Settings: Codable, Equatable, Sendable {
     var autoRecordTeamsMeetings: Bool
     var mirrorTeamsMute: Bool
+    var playSounds: Bool
     var localSpeakerName: String?
     var meetingsRoot: String
     var retentionAudioBytes: Int64
@@ -52,6 +53,7 @@ struct StatusSnapshot: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
       case autoRecordTeamsMeetings = "auto_record_teams_meetings"
       case mirrorTeamsMute = "mirror_teams_mute"
+      case playSounds = "play_sounds"
       case localSpeakerName = "local_speaker_name"
       case meetingsRoot = "meetings_root"
       case retentionAudioBytes = "retention_audio_bytes"
@@ -116,7 +118,8 @@ struct StatusSnapshot: Codable, Equatable, Sendable {
   static func settings(_ config: AppConfig, file: URL, error: String?) -> Settings {
     Settings(
       autoRecordTeamsMeetings: config.autoRecordTeamsMeetings,
-      mirrorTeamsMute: config.mirrorTeamsMute, localSpeakerName: config.localSpeakerName,
+      mirrorTeamsMute: config.mirrorTeamsMute, playSounds: config.playSounds,
+      localSpeakerName: config.localSpeakerName,
       meetingsRoot: config.meetingsRoot, retentionAudioBytes: config.retention.audioBytes,
       configPath: file.path,
       configError: error)
