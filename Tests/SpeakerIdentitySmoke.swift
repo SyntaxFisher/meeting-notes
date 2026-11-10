@@ -361,7 +361,7 @@ enum SpeakerIdentitySmoke {
     ])
     let names = SpeakerNaming.names(for: segments, timeline: timeline, excluded: ["Jona"])
     precondition(names[0] == "Anna" && names[1] == "Sam" && names[2] == "Anna")
-    precondition(names[3] == nil, "A cluster with conflicting named voices needs acoustic evidence")
+    precondition(names[3] == "Sam", "A short turn without evidence takes its voice's name")
     precondition(names[4] == nil, "A voice Teams never showed keeps an anonymous label")
     precondition(names[5] == "Grace", "Direct evidence beats the voice's usual name")
     precondition(names[6] == nil, "Microphone speech is never named here")

@@ -6,7 +6,7 @@ enum TeamsMuteState: Hashable {
   case unmuted
   case unavailable(Reason)
 
-  enum Reason: Hashable {
+  enum Reason: String, Codable, Hashable {
     case accessibilityPermission
     case teamsClosed
     case noMeeting
@@ -23,6 +23,15 @@ enum TeamsMuteState: Hashable {
       case .ambiguous: return "The Teams microphone state is ambiguous."
       case .accessibilityError: return "Teams Accessibility could not be read."
       }
+    }
+  }
+
+  /// "muted", "unmuted" or "unavailable(<reason>)", as traces record it.
+  var name: String {
+    switch self {
+    case .muted: return "muted"
+    case .unmuted: return "unmuted"
+    case .unavailable(let reason): return "unavailable(\(reason.rawValue))"
     }
   }
 
@@ -44,6 +53,42 @@ struct TeamsWindowSnapshot {
   /// main window of Teams while it is in front. A meeting window behind other apps or
   /// minimized keeps showing the mute state it last drew.
   var isCurrent = false
+}
+
+/// One Teams window as the mute reader read it, the input the classifier decides from. `id` is
+/// stable for the window while Teams keeps it open.
+struct TeamsWindowInput: Codable, Equatable {
+  var id: Int
+  var title: String?
+  var minimized = false
+  var main = false
+  var buttons: [[String]] = []
+  var headings: [[String]] = []
+}
+
+/// One mute reading's input: Teams' windows and whether Teams was in front, or why Teams could
+/// not be read.
+struct TeamsMuteInput: Codable, Equatable {
+  var frontmost = false
+  var windows: [TeamsWindowInput] = []
+  var failure: TeamsMuteState.Reason?
+
+  /// The input with only the labels the classifier recognizes, so chat messages, file names
+  /// and notifications shown in buttons and headings stay out of the trace. Reading the traced
+  /// input gives the same state.
+  var traced: TeamsMuteInput {
+    var input = self
+    input.windows = windows.map { window in
+      var window = window
+      window.buttons = window.buttons.map { $0.filter(TeamsMuteClassifier.isRecognized) }
+        .filter { !$0.isEmpty }
+      window.headings = window.headings.map {
+        $0.filter { TeamsMuteClassifier.isSharingPicker(role: "AXHeading", labels: [$0]) }
+      }.filter { !$0.isEmpty }
+      return window
+    }
+    return input
+  }
 }
 
 struct TeamsReading: Equatable {
@@ -77,6 +122,24 @@ enum TeamsMuteClassifier {
       return .unavailable(states.isEmpty ? .noControl : .ambiguous)
     }
     return state
+  }
+
+  /// What one window shows the classifier.
+  static func snapshot(_ window: TeamsWindowInput, frontmost: Bool) -> TeamsWindowSnapshot {
+    TeamsWindowSnapshot(
+      title: window.title, buttons: window.buttons,
+      sharingPicker: window.headings.contains { isSharingPicker(role: "AXHeading", labels: $0) },
+      meetingEnded: window.buttons.contains(where: isMeetingEndControl),
+      isCurrent: !window.minimized && (isCompactView(window.title) || (frontmost && window.main)))
+  }
+
+  /// The reading of `input`, with `tracker` remembering meeting windows across readings.
+  static func reading(_ input: TeamsMuteInput, tracker: inout TeamsMeetingWindowTracker<Int>)
+    -> TeamsReading
+  {
+    if let failure = input.failure { return TeamsReading(state: .unavailable(failure)) }
+    return tracker.observe(
+      input.windows.map { ($0.id, snapshot($0, frontmost: input.frontmost)) })
   }
 
   static func meetingTitle(_ windows: [TeamsWindowSnapshot]) -> String? {
@@ -138,6 +201,11 @@ enum TeamsMuteClassifier {
       }
   }
 
+  /// Whether a button label is one the classifier decides from.
+  static func isRecognized(_ label: String) -> Bool {
+    microphoneLabel(label) != nil || isMeetingControl([label]) || isMeetingEndControl([label])
+  }
+
   private static func classifyButton(_ labels: [String]) -> TeamsMuteState? {
     let states = Set(labels.compactMap(microphoneLabel))
     if states.isEmpty { return nil }
@@ -185,14 +253,34 @@ struct TeamsMeetingWindowTracker<Window: Equatable> {
   }
 }
 
-final class TeamsMuteReader {
-  private struct WindowIdentity: Equatable {
-    let element: AXUIElement
+/// Numbers Teams windows by identity, so trace records and the window tracker can refer to a
+/// window across readings without keeping Accessibility elements in them. Every reading looks
+/// up each open window, which keeps it among the `capacity` most recently used, so an open
+/// window keeps its number.
+final class TeamsWindowRegistry: @unchecked Sendable {
+  static let shared = TeamsWindowRegistry()
+  static let capacity = 1024
+  private let lock = NSLock()
+  private var known: [(element: AXUIElement, id: Int)] = []
+  private var next = 1
 
-    static func == (lhs: Self, rhs: Self) -> Bool { CFEqual(lhs.element, rhs.element) }
+  func id(of element: AXUIElement) -> Int {
+    lock.withLock {
+      if let index = known.firstIndex(where: { CFEqual($0.element, element) }) {
+        let entry = known.remove(at: index)
+        known.append(entry)
+        return entry.id
+      }
+      known.append((element, next))
+      if known.count > Self.capacity { known.removeFirst(known.count - Self.capacity) }
+      next += 1
+      return next - 1
+    }
   }
+}
 
-  private var tracker = TeamsMeetingWindowTracker<WindowIdentity>()
+final class TeamsMuteReader {
+  private var tracker = TeamsMeetingWindowTracker<Int>()
 
   static var hasAccessibilityAccess: Bool { AXIsProcessTrusted() }
 
@@ -202,42 +290,47 @@ final class TeamsMuteReader {
   }
 
   func read() -> TeamsReading {
+    let input = self.input()
+    TeamsTrace.shared.record("mute-input", value: input.traced)
+    let reading = TeamsMuteClassifier.reading(input, tracker: &tracker)
+    TeamsTrace.shared.record(
+      "mute", ["state": reading.state.name, "title": reading.meetingTitle ?? ""])
+    TeamsTrace.shared.record("read", always: true, [:])
+    return reading
+  }
+
+  private func input() -> TeamsMuteInput {
     guard Self.hasAccessibilityAccess else {
-      return TeamsReading(state: .unavailable(.accessibilityPermission))
+      return TeamsMuteInput(failure: .accessibilityPermission)
     }
     let apps = NSRunningApplication.runningApplications(
       withBundleIdentifier: "com.microsoft.teams2")
     guard apps.count == 1, let app = apps.first else {
-      return TeamsReading(state: .unavailable(apps.isEmpty ? .teamsClosed : .ambiguous))
+      return TeamsMuteInput(failure: apps.isEmpty ? .teamsClosed : .ambiguous)
     }
+    TeamsTrace.shared.record("teams", ["version": TeamsTrace.version(of: app) ?? ""])
     let application = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(application, 0.5)
     // Teams' web view exposes its controls in the background when enhanced accessibility is on.
     _ = AXUIElementSetAttributeValue(
       application, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
     guard let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) else {
-      return TeamsReading(state: .unavailable(.accessibilityError))
+      return TeamsMuteInput(failure: .accessibilityError)
     }
-    let frontmost: Bool = attribute(application, kAXFrontmostAttribute) ?? false
-    var snapshots: [(id: WindowIdentity, snapshot: TeamsWindowSnapshot)] = []
+    var input = TeamsMuteInput(frontmost: attribute(application, kAXFrontmostAttribute) ?? false)
     for window in windows {
-      guard var snapshot = scan(window) else {
-        return TeamsReading(state: .unavailable(.accessibilityError))
-      }
-      let minimized: Bool = attribute(window, kAXMinimizedAttribute) ?? false
-      let main: Bool = attribute(window, kAXMainAttribute) ?? false
-      snapshot.isCurrent =
-        !minimized && (TeamsMuteClassifier.isCompactView(snapshot.title) || (frontmost && main))
-      snapshots.append((WindowIdentity(element: window), snapshot))
+      guard var scanned = scan(window) else { return TeamsMuteInput(failure: .accessibilityError) }
+      scanned.id = TeamsWindowRegistry.shared.id(of: window)
+      scanned.minimized = attribute(window, kAXMinimizedAttribute) ?? false
+      scanned.main = attribute(window, kAXMainAttribute) ?? false
+      input.windows.append(scanned)
     }
-    return tracker.observe(snapshots)
+    return input
   }
 
-  private func scan(_ window: AXUIElement) -> TeamsWindowSnapshot? {
+  private func scan(_ window: AXUIElement) -> TeamsWindowInput? {
     var pending: [AXUIElement] = [window]
-    var buttons: [[String]] = []
-    var sharingPicker = false
-    var meetingEnded = false
+    var input = TeamsWindowInput(id: 0, title: attribute(window, kAXTitleAttribute))
     var visited = 0
     while let element = pending.popLast() {
       visited += 1
@@ -250,19 +343,16 @@ final class TeamsMuteReader {
         ]
         .compactMap { attribute(element, $0) }
         if role == kAXButtonRole as String {
-          buttons.append(labels)
-          meetingEnded = meetingEnded || TeamsMuteClassifier.isMeetingEndControl(labels)
+          input.buttons.append(labels)
+        } else {
+          input.headings.append(labels)
         }
-        sharingPicker =
-          sharingPicker || TeamsMuteClassifier.isSharingPicker(role: role, labels: labels)
       }
       if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {
         pending.append(contentsOf: children)
       }
     }
-    return TeamsWindowSnapshot(
-      title: attribute(window, kAXTitleAttribute), buttons: buttons, sharingPicker: sharingPicker,
-      meetingEnded: meetingEnded)
+    return input
   }
 
   private func attribute<T>(_ element: AXUIElement, _ name: String) -> T? {

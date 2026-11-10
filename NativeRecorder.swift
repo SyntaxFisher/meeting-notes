@@ -1,11 +1,20 @@
 import AVFoundation
 
-/// `capture.json`: the start of each track on the host clock and whose playback the system
-/// track holds.
+/// `capture.json`: the start of each track on the host clock, whose playback the system
+/// track holds, and when the microphone was muted. A mute without an end lasted until the
+/// recording stopped; the microphone track holds silence for every mute.
 struct CaptureManifest: Codable {
+  struct Mute: Codable, Equatable {
+    var start: Double
+    var end: Double?
+  }
+
   var systemStart: Double?
   var microphoneStart: Double?
   var systemAudio: SystemAudioScope?
+  var microphoneMutes: [Mute]?
+  /// Each track's input format before encoding, such as "48000 Hz, 2 ch", by source.
+  var inputFormats: [String: String]?
 }
 
 final class NativeRecorder: @unchecked Sendable {
@@ -61,7 +70,26 @@ final class NativeRecorder: @unchecked Sendable {
   }
 
   func setMicrophoneMuted(_ muted: Bool) {
-    queue.async { self.microphoneMuted = muted }
+    let time = AVAudioTime.seconds(forHostTime: mach_absolute_time())
+    queue.async {
+      guard muted != self.microphoneMuted else { return }
+      self.microphoneMuted = muted
+      var mutes = self.manifest.microphoneMutes ?? []
+      if muted {
+        mutes.append(.init(start: time))
+      } else if let last = mutes.indices.last, mutes[last].end == nil {
+        mutes[last].end = time
+      }
+      self.manifest.microphoneMutes = mutes
+      if !self.tracks.isEmpty { self.writeManifest() }
+    }
+  }
+
+  private func writeManifest() {
+    do {
+      try JSONEncoder().encode(manifest).write(
+        to: directory.appendingPathComponent("capture.json"), options: .atomic)
+    } catch { AppLog.event("capture.manifestFailed", error.localizedDescription) }
   }
 
   func start() async throws {
@@ -177,6 +205,10 @@ final class NativeRecorder: @unchecked Sendable {
         case .system: manifest.systemStart = timestamp
         case .microphone: manifest.microphoneStart = timestamp
         }
+        manifest.inputFormats = (manifest.inputFormats ?? [:]).merging([
+          source.rawValue:
+            "\(Int(buffer.format.sampleRate)) Hz, \(buffer.format.channelCount) ch"
+        ]) { $1 }
         try JSONEncoder().encode(manifest).write(
           to: directory.appendingPathComponent("capture.json"), options: .atomic)
         tracks[source] = try CaptureTrack(

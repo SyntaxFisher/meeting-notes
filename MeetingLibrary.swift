@@ -363,6 +363,9 @@ final class MeetingLibrary {
             throw error
           }
         }
+        if record.segments != previous.segments || record.speakers != previous.speakers {
+          ReconstructionArchive.forgetTranscription(of: id)
+        }
       }
       return MeetingEditResult(record: record, changed: changed)
     }
@@ -392,8 +395,10 @@ final class MeetingLibrary {
         if MeetingFiles.id(fromFileName: file.lastPathComponent) == id { files.append(file) }
       }
     }
-    let capture = captureURL(for: id)
-    if FileManager.default.fileExists(atPath: capture.path) { files.append(capture) }
+    for directory in [captureURL(for: id), ReconstructionArchive.url(for: id)]
+    where FileManager.default.fileExists(atPath: directory.path) {
+      files.append(directory)
+    }
     return files
   }
 
@@ -407,6 +412,7 @@ final class MeetingLibrary {
         trashed.append(file)
       }
       recordCache[recordURL(for: id)] = nil
+      try ReconstructionArchive.remove([id])
       return trashed
     }
   }

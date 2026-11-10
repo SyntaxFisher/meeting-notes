@@ -7,6 +7,10 @@ struct Smoke {
   @MainActor
   static func main() async throws {
     setvbuf(stdout, nil, _IOLBF, 0)
+    let cache = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "meeting-notes-smoke-cache-\(UUID().uuidString)")
+    setenv("MEETING_NOTES_CACHE_DIR", cache.path, 1)
+    defer { try? FileManager.default.removeItem(at: cache) }
     if try SpeakerFusionSmoke.replay(CommandLine.arguments) { return }
     if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--library-editing-fixture" {
       try MeetingDetailsSmoke.showFixture(root: URL(fileURLWithPath: CommandLine.arguments[2]))
@@ -32,6 +36,8 @@ struct Smoke {
     SoundSmoke.run()
     try SpeakerIdentitySmoke.run()
     try SpeakerFusionSmoke.run()
+    EchoCopiesSmoke.run()
+    try TeamsTraceSmoke.run(cache.appendingPathComponent("trace-smoke"))
     TeamsScreenSharingSmoke.run()
     try AgentSmoke.run()
     try TranscriptEditsSmoke.run()
