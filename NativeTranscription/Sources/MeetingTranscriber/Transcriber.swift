@@ -138,17 +138,20 @@ struct Transcriber {
     detector: VoiceActivityDetector
   ) async throws -> ([Track], TranscriptSegments) {
     reporter.report("Preparing speaker models")
-    let diarizer = OfflineDiarizerManager(config: .default)
+    var config = OfflineDiarizerConfig.default
+    config.exposeChunkEmbeddings = true
+    let diarizer = OfflineDiarizerManager(config: config)
     try await diarizer.prepareModels()
     let tracks = try capture.flatMap { try separateTracks(in: $0, workspace: workspace) }
     var remote: [SpeechPlan.Turn] = []
+    var embeddings: [TranscriptSegments.VoiceEmbedding] = []
     if let system = tracks?.system {
       reporter.report("Identifying remote speakers")
-      remote = try await diarize(system, with: diarizer, detector: detector)
+      (remote, embeddings) = try await diarize(system, with: diarizer, detector: detector)
     }
     guard let tracks else {
       reporter.report("Identifying speakers")
-      let turns = try await diarize(input, with: diarizer, detector: detector)
+      let (turns, _) = try await diarize(input, with: diarizer, detector: detector)
       let audio = try AVAudioFile(forReading: input)
       return (
         [Track(file: input, source: .mix, turns: turns, policy: .speakers)],
@@ -185,7 +188,7 @@ struct Transcriber {
           lagSeconds: Double(echo.lagFrames) * EchoFilter.frameSeconds,
           coupling: Double(echo.coupling),
           discardedSeconds: (max(0, localSeconds - keptSeconds) * 10).rounded() / 10),
-        engine: engine)
+        voiceEmbeddings: tracks.systemSource == .teams ? embeddings : nil, engine: engine)
     )
   }
 
@@ -220,16 +223,22 @@ struct Transcriber {
 
   private static func diarize(
     _ file: URL, with diarizer: OfflineDiarizerManager, detector: VoiceActivityDetector
-  ) async throws -> [SpeechPlan.Turn] {
-    let diarized: [SpeechPlan.Turn]
+  ) async throws -> ([SpeechPlan.Turn], [TranscriptSegments.VoiceEmbedding]) {
     do {
-      diarized = turns(of: try await diarizer.process(file).segments)
+      let result = try await diarizer.process(file)
+      let diarized = turns(of: result.segments)
+      if !diarized.isEmpty {
+        let embeddings = (result.chunkEmbeddings ?? []).map {
+          TranscriptSegments.VoiceEmbedding(
+            speaker: $0.speakerId, start: $0.startTimeSeconds, end: $0.endTimeSeconds,
+            values: $0.embedding256)
+        }
+        return (diarized, embeddings)
+      }
     } catch {
       guard isNoSpeech(error) else { throw error }
-      diarized = []
     }
-    guard diarized.isEmpty else { return diarized }
-    return SpeechPlan.unidentifiedTurns(in: try detector.regions(in: samples(of: file)))
+    return (SpeechPlan.unidentifiedTurns(in: try detector.regions(in: samples(of: file))), [])
   }
 
   /// The audio of one passage.

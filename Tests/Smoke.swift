@@ -7,6 +7,7 @@ struct Smoke {
   @MainActor
   static func main() async throws {
     setvbuf(stdout, nil, _IOLBF, 0)
+    if try SpeakerFusionSmoke.replay(CommandLine.arguments) { return }
     if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--library-editing-fixture" {
       try MeetingDetailsSmoke.showFixture(root: URL(fileURLWithPath: CommandLine.arguments[2]))
       return
@@ -30,6 +31,7 @@ struct Smoke {
     print("System audio permission is read from macOS: OK")
     SoundSmoke.run()
     try SpeakerIdentitySmoke.run()
+    try SpeakerFusionSmoke.run()
     TeamsScreenSharingSmoke.run()
     try AgentSmoke.run()
     try TranscriptEditsSmoke.run()

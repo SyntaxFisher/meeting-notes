@@ -38,6 +38,15 @@ struct TranscriptSegments: Codable, Equatable {
     var text: String
   }
 
+  /// Speaker embeddings are temporary evidence for naming voices within this recording.
+  /// They are not stored in meeting records or reused across meetings.
+  struct VoiceEmbedding: Codable, Equatable {
+    var speaker: String
+    var start: Double
+    var end: Double
+    var values: [Float]
+  }
+
   /// How much of the microphone track was attributed to playback picked up acoustically: the
   /// estimated acoustic delay, the echo level relative to the system track (0 when no echo
   /// was found), and the seconds of microphone speech discarded as echo.
@@ -51,6 +60,7 @@ struct TranscriptSegments: Codable, Equatable {
   var duration: Double
   var segments: [Segment]
   var echo: EchoReport? = nil
+  var voiceEmbeddings: [VoiceEmbedding]? = nil
   /// The recognition and diarization models that produced the segments.
   var engine: String
 }
