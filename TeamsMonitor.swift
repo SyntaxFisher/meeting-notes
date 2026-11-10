@@ -169,10 +169,18 @@ final class TeamsBackgroundReader: @unchecked Sendable {
       let reading = TeamsMuteReader.read()
       mirrored?.setMicrophoneMuted(reading.state.microphoneMuted)
       deliver?(reading)
+      let seconds = Date().timeIntervalSince(now)
+      if seconds >= 1 { AppLog.event("teams.slowRead", String(format: "mute=%.1fs", seconds)) }
     }
     guard var current = collection, now.timeIntervalSince(lastMeetingRead) >= 0.8 else { return }
     lastMeetingRead = now
-    guard let snapshot = TeamsParticipantReader.snapshot() else { return }
+    let snapshotStarted = Date()
+    let snapshot = TeamsParticipantReader.snapshot()
+    let snapshotSeconds = Date().timeIntervalSince(snapshotStarted)
+    if snapshotSeconds >= 1 {
+      AppLog.event("teams.slowRead", String(format: "participants=%.1fs", snapshotSeconds))
+    }
+    guard let snapshot else { return }
     if let speaker = snapshot.speaker {
       // The host clock times the capture tracks, so the helper can align these readings.
       current.speaking.observe(speaker, at: ProcessInfo.processInfo.systemUptime)

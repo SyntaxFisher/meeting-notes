@@ -144,11 +144,11 @@ enum TeamsParticipantParser {
 }
 
 /// Who Teams shows as speaking. Teams draws a frame around the active speaker's video tile
-/// (`vdi-frame-occlusion`, the gallery while the meeting window is in front) and labels the
-/// compact meeting view it opens when another app is in front ("Anna Schmidt (Guest) is
-/// speaking", "Niemand spricht."). Both stay readable through Accessibility while the meeting
-/// is minimized or Teams is in the background. Teams highlights the voice it hears, so the label
-/// trails speech by a second or two and briefly misses rapid exchanges.
+/// (`vdi-frame-occlusion`, also while other apps cover the meeting window) and labels the
+/// compact meeting view it opens when the meeting window is minimized or replaced by another
+/// Teams view ("Anna Schmidt (Guest) is speaking", "Niemand spricht."). Both stay readable
+/// through Accessibility while Teams is in the background. Teams highlights the voice it hears,
+/// so the label trails speech by a second or two and briefly misses rapid exchanges.
 enum TeamsSpeakingParser {
   static let speakingFrameClass = "vdi-frame-occlusion"
   private static let speakingSuffixes = [" is speaking", " spricht.", " spricht"]
@@ -334,12 +334,11 @@ enum TeamsParticipantReader {
     guard let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) else {
       return nil
     }
-    // A hidden Teams stops updating its windows; a meeting window behind other windows keeps
-    // the frame it last drew, so only the frontmost one shows the current speaker.
+    // Teams keeps the speaking frame current in a meeting window behind other apps, but not in
+    // a minimized window or while Teams is hidden.
     let hidden: Bool = attribute(application, kAXHiddenAttribute) ?? false
-    let frontmost: Bool = attribute(application, kAXFrontmostAttribute) ?? false
     let readings = windows.map { window in
-      read(window, framesAreCurrent: frontmost && (attribute(window, kAXMainAttribute) ?? false))
+      read(window, framesAreCurrent: !(attribute(window, kAXMinimizedAttribute) ?? false))
     }
     return combine(readings, hidden: hidden)
   }

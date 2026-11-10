@@ -4,6 +4,8 @@
 //   teams-control find <regex>    Exit 0 if such a button exists, without pressing it.
 //   Add --meeting to press/find to search only meeting windows (those with a Leave button).
 //   teams-control buttons         Print every button label in every Teams window.
+//   teams-control windows         Print each window's mic button labels and whether Teams is in front.
+//   teams-control speaking        Print each window's tiles framed as speaking and speaking labels.
 //   teams-control slider <regex> [value]
 //                                 Print or set the value of a matching slider (e.g. speaker volume).
 //   teams-control status-menu <bundle-id> [regex]
@@ -120,6 +122,47 @@ case "buttons":
     print("# \(attribute(window, kAXTitleAttribute) as String? ?? "")")
     for (_, labels) in buttons(in: window) { print("  " + labels.joined(separator: " | ")) }
   }
+case "windows":
+  let frontmost: Bool = attribute(application, kAXFrontmostAttribute) ?? false
+  let microphone = try NSRegularExpression(
+    pattern: "^(Unmute mic|Mute mic|Mikrofon wieder aktivieren|Mikrofon stummschalten)",
+    options: .caseInsensitive)
+  print("frontmost=\(frontmost)")
+  for window in windows {
+    let title: String = attribute(window, kAXTitleAttribute) ?? ""
+    let main: Bool = attribute(window, kAXMainAttribute) ?? false
+    let minimized: Bool = attribute(window, kAXMinimizedAttribute) ?? false
+    let labels = buttons(in: window).flatMap(\.1).filter {
+      microphone.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil
+    }
+    print("main=\(main) minimized=\(minimized) mic=\(labels) title=\(title)")
+  }
+case "speaking":
+  // Tiles Teams frames as the active speaker, and "… is speaking" labels, per window.
+  for window in windows {
+    var framed: [String] = []
+    var labels: [String] = []
+    var pending = [window]
+    var visited = 0
+    while let element = pending.popLast(), visited < 6_000 {
+      visited += 1
+      let role: String = attribute(element, kAXRoleAttribute) ?? ""
+      let text: String = attribute(element, kAXDescriptionAttribute) ?? ""
+      if role == "AXGroup", let classes: [String] = attribute(element, "AXDOMClassList"),
+        classes.contains("vdi-frame-occlusion")
+      {
+        framed.append(text.isEmpty ? childText(element) ?? "?" : text)
+      }
+      if role == "AXGroup", text.hasSuffix("is speaking") || text.hasSuffix("spricht") {
+        labels.append(text)
+      }
+      if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {
+        pending.append(contentsOf: children)
+      }
+    }
+    let title: String = attribute(window, kAXTitleAttribute) ?? ""
+    print("\(title.prefix(40)) framed=\(framed.map { String($0.prefix(40)) }) labels=\(labels)")
+  }
 case "slider" where arguments.count >= 2:
   let pattern = try NSRegularExpression(
     pattern: arguments[arguments.startIndex + 1], options: .caseInsensitive)
@@ -181,7 +224,7 @@ case "press" where (2...3).contains(arguments.count),
   exit(1)
 default:
   let usage =
-    "Usage: teams-control buttons | find|press <regex> [--meeting] | slider <regex> [value]\n"
+    "Usage: teams-control buttons | windows | speaking | find|press <regex> [--meeting] | slider <regex> [value]\n"
   FileHandle.standardError.write(Data(usage.utf8))
   exit(2)
 }
