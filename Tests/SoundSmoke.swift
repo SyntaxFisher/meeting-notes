@@ -29,6 +29,14 @@ enum SoundSmoke {
     precondition(played.count == 7, "A repeated failure must not play another error sound")
     sounds.play(.error, now: 12)
     precondition(played.count == 8, "A later failure must still be audible")
+    sounds.isEnabled = false
+    for cue in [MeetingSound.start, .stop, .discard, .complete, .error] {
+      sounds.play(cue, now: 13)
+    }
+    precondition(played.count == 8, "Disabling sounds silences every lifecycle cue")
+    sounds.isEnabled = true
+    sounds.play(.error, now: 13)
+    precondition(played.count == 9, "Re-enabling sounds makes new failures audible immediately")
     for event in [LifecycleEvent.recordingInterrupted, .transcriptionFailed] {
       precondition(MeetingSound.forEvent(event, status: .failed) == .error)
     }

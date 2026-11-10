@@ -37,6 +37,13 @@ extension Smoke {
     precondition(empty.config == AppConfig() && empty.warnings.isEmpty)
     precondition(empty.config.autoRecordTeamsMeetings && empty.config.mirrorTeamsMute)
     precondition(empty.config.keepAudio)
+    precondition(empty.config.playSounds)
+    var silent = AppConfig()
+    SettingsChange(playSounds: false).apply(to: &silent)
+    precondition(!silent.playSounds)
+    let silentRoundTrip = try AppConfig.parse(silent.encoded()).config
+    precondition(silentRoundTrip == silent)
+    precondition(problems(#"{"playSounds":"off"}"#) == ["playSounds must be true or false"])
     precondition(empty.config.agentsMayNameMeetings && !empty.config.agentsMayCorrectTranscripts)
     precondition(empty.config.agentsMaySummarizeMeetings)
     let temporary = try AppConfig.parse(Data(#"{"keepAudio":false}"#.utf8)).config

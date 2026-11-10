@@ -68,6 +68,7 @@ struct AgentBridge {
         arguments["auto_record_teams_meetings"] = .bool(value)
       }
       if let value = change.mirrorTeamsMute { arguments["mirror_teams_mute"] = .bool(value) }
+      if let value = change.playSounds { arguments["play_sounds"] = .bool(value) }
       if let value = change.localSpeakerName {
         arguments["local_speaker_name"] = .string(value ?? "")
       }

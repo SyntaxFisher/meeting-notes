@@ -206,6 +206,15 @@ private struct GeneralSettings: View {
           )
           .labelsHidden()
         }
+        SettingRow(
+          title: "Sounds",
+          explanation: "Play sounds for recording, transcription and errors."
+        ) {
+          Toggle(
+            "Sounds", isOn: setting(model.config.playSounds) { SettingsChange(playSounds: $0) }
+          )
+          .labelsHidden()
+        }
         SettingRow(title: "Your name in transcripts") {
           TextField("Your name", text: $localName, prompt: Text(model.defaultLocalSpeakerName))
             .labelsHidden()

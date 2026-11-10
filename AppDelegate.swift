@@ -109,6 +109,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     )
     installCommandLineShim()
     configStore.load()
+    sounds.isEnabled = config.playSounds
     MeetingFiles.root = config.meetingsRootURL
     libraryStore = LibraryStore(root: config.meetingsRootURL)
     engine = MeetingEngine(
@@ -703,6 +704,10 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
 
   private func configChanged(from old: AppConfig, to new: AppConfig) {
     var changed: [String] = []
+    if old.playSounds != new.playSounds {
+      changed.append("playSounds")
+      sounds.isEnabled = new.playSounds
+    }
     if old.mirrorTeamsMute != new.mirrorTeamsMute {
       changed.append("mirrorTeamsMute")
       if new.mirrorTeamsMute, engine.recordingRecord?.source == .teams {
