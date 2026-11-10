@@ -451,17 +451,21 @@ struct MeetingHeader: View {
             Button {
               model.copyTranscript(record)
               copyGeneration += 1
-              withAnimation { copied = true }
+              withAnimation(.snappy(duration: 0.2)) { copied = true }
             } label: {
-              Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .contentTransition(.symbolEffect(.replace))
+              ZStack {
+                Image(systemName: "doc.on.doc").hidden()
+                Image(systemName: "checkmark").hidden()
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                  .contentTransition(.symbolEffect(.replace, options: .speed(2)))
+              }
             }
             .help(copied ? "Copied" : "Copy the transcript")
             .accessibilityLabel(copied ? "Transcript Copied" : "Copy Transcript")
             .task(id: copyGeneration) {
               guard copied else { return }
               do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
-              withAnimation { copied = false }
+              withAnimation(.snappy(duration: 0.2)) { copied = false }
             }
           }
           Button(role: .destructive) {
