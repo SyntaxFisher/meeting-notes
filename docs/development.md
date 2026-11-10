@@ -16,7 +16,7 @@ For isolated live checks, set `MEETING_NOTES_CONFIG_DIR` to a temporary config d
 
 Natural-prompt MCP scenarios use `scripts/devenv/qa_fixtures.py`; see the QA section below.
 
-Logs: `~/Library/Logs/Meeting Notes/meeting-notes.log` and one rotated `meeting-notes.previous.log` (about 4 MB total). Logs include stages, detected speaker counts, failures, paths, Teams detection and retention deletions, but no audio or transcript contents. Audio diagnostics include device names and formats, Teams process/output status, and recovery attempts. `capture.started` names the mode (`microphone-and-teams` or `microphone-and-device-audio`), and `recording.systemAudio` the Teams meeting state that chose it. A `capture.summary` entry for each selected source records buffer/frame counts, microphone mute counts, and peak sample levels before and after muting. These distinguish missing buffers from received silence; they do not establish system-audio authorization or identify speakers.
+Logs: `~/Library/Logs/Meeting Notes/meeting-notes.log` and one rotated `meeting-notes.previous.log` (about 4 MB total). Logs include stages, detected speaker counts, failures, paths, Teams detection, Teams Accessibility reads slower than a second (`teams.slowRead`) and retention deletions, but no audio or transcript contents. Audio diagnostics include device names and formats, Teams process/output status, and recovery attempts. `capture.started` names the mode (`microphone-and-teams` or `microphone-and-device-audio`), and `recording.systemAudio` the Teams meeting state that chose it. A `capture.summary` entry for each selected source records buffer/frame counts, microphone mute counts, and peak sample levels before and after muting. These distinguish missing buffers from received silence; they do not establish system-audio authorization or identify speakers.
 
 ## Local Teams test environment
 
@@ -58,7 +58,7 @@ Scenarios live in `scripts/devenv/scenarios/*.json`. Each defines `speakers` (`v
 
 ### Notes
 
-- `scripts/devenv/TeamsControl.swift` (built to `build/devenv/teams-control`) presses Teams buttons through Accessibility, using the same enhanced-interface approach as `TeamsMuteReader`; `teams-control buttons` lists every control. `teams-control status-menu com.jona.meeting-notes` presses the app's status item, which opens the panel, and `open -a "Meeting Notes"` on the running app opens the Library.
+- `scripts/devenv/TeamsControl.swift` (built to `build/devenv/teams-control`) presses Teams buttons through Accessibility, using the same enhanced-interface approach as `TeamsMuteReader`; `teams-control buttons` lists every control, `teams-control windows` each window's mic labels and `teams-control speaking` the tiles Teams frames as speaking. `teams-control status-menu com.jona.meeting-notes` presses the app's status item, which opens the panel, and `open -a "Meeting Notes"` on the running app opens the Library.
 - Guests open the Teams light-meetings page directly; the regular meeting link's launcher never finishes its SSO check in headless Chromium.
 - Teams free has no lobby-bypass setting, so the host admits guests from the People pane. The pane stays open, so live recordings see the full participant roster; close it with `teams-control press "^Close participants pane" --meeting` to test tile-only detection.
 - Teams can join a meeting muted; `meeting` unmutes after joining because scenarios start unmuted.
