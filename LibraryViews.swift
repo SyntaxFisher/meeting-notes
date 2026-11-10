@@ -422,15 +422,9 @@ struct MeetingHeader: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      EditableMeetingTitle(model: model, record: record, compact: compact)
+      EditableMeetingText(model: model, record: record, field: .title, compact: compact)
       if !compact {
-        if let summary = record.summary, !summary.isEmpty {
-          Text(summary)
-            .font(.body)
-            .foregroundStyle(.secondary)
-            .lineSpacing(2)
-            .textSelection(.enabled)
-        }
+        EditableMeetingText(model: model, record: record, field: .summary)
         HStack(spacing: 10) {
           HStack(spacing: 12) {
             Text(

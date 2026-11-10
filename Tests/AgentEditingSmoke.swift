@@ -91,8 +91,27 @@ enum AgentEditingSmoke {
       precondition(try! Data(contentsOf: library.recordURL(for: record.id)) == original)
     }
     precondition(call("open_meeting", error: true).contains("App controls are unavailable"))
+    let titleRequest = "This meeting has no title."
+    let summaryRequest = "This meeting has no saved description."
+    let correctionRequest = "Review the passages you read"
+    let followUp = "Required follow-up from the user's enabled Meeting Notes settings"
+    func metadata() -> [JSONValue] {
+      ["initialize", "tools/list"].map { method in
+        let request: JSONValue = ["jsonrpc": "2.0", "id": 1, "method": .string(method)]
+        return server.handle(
+          line: String(decoding: try! JSONCoding.encoder().encode(request), as: UTF8.self))![
+            "result"]!
+      }
+    }
+    let initialMetadata = metadata()
     let read = call("get_meeting")
-    precondition(read.contains("suggest_topic: true") && !read.contains("suggest_corrections"))
+    precondition(read.contains(titleRequest) && !read.contains(correctionRequest))
+    precondition(read.contains(summaryRequest))
+    precondition(
+      read.range(of: followUp)!.lowerBound > read.range(of: "End of transcript.")!.lowerBound)
+    precondition(read.contains("a separate editing request is not needed"))
+    precondition(read.contains("Do this even for a targeted question"))
+    precondition(read.contains("Batch transcript corrections first"))
     precondition(read.contains("recording_path:"))
     precondition(read.contains("url: \(record.link.string)") && read.contains("s3 00:00:05"))
     precondition(!read.contains("title_source") && !read.contains("original_segments"))
@@ -122,7 +141,7 @@ enum AgentEditingSmoke {
       ])
     precondition(
       named.contains("Checkout migration deployment plan") && named.contains("revision: 1"))
-    precondition(!call("get_meeting").contains("suggest_topic"))
+    precondition(!call("get_meeting").contains(titleRequest))
     _ = call(
       "edit_transcript",
       [
@@ -152,13 +171,15 @@ enum AgentEditingSmoke {
     var config = AppConfig()
     config.agentsMayCorrectTranscripts = true
     try config.encoded().write(to: bridge.configFile)
-    precondition(call("get_meeting").contains("suggest_corrections: true"))
-    precondition(server.instructions.contains("suggest_corrections"))
+    precondition(call("get_meeting").contains(correctionRequest))
+    precondition(metadata() == initialMetadata)
+    precondition(call("get_meeting").contains("every speech-recognition mistake"))
     config.agentsMayCorrectTranscripts = false
     config.agentsMayNameMeetings = false
     try config.encoded().write(to: bridge.configFile)
-    precondition(!server.instructions.contains("suggest_corrections"))
-    precondition(!server.instructions.contains("suggest_topic"))
+    precondition(metadata() == initialMetadata)
+    precondition(!call("get_meeting").contains(correctionRequest))
+    precondition(!call("get_meeting").contains(titleRequest))
     var untitled = record
     untitled.id = "20261105T080000Z"
     untitled.startedAt = record.startedAt.addingTimeInterval(-86400)
@@ -166,7 +187,7 @@ enum AgentEditingSmoke {
     untitled.transcriptFile = nil
     try library.save(untitled)
     precondition(
-      !call("get_meeting", ["meeting_id": .string(untitled.id)]).contains("suggest_topic"))
+      !call("get_meeting", ["meeting_id": .string(untitled.id)]).contains(titleRequest))
     _ = call(
       "update_meeting",
       ["meeting_id": .string(untitled.id), "revision": 0, "topic": "Checkout deployment plan"])
@@ -197,7 +218,7 @@ enum AgentEditingSmoke {
     try library.save(teams)
     let teamsRead = call("get_meeting", ["meeting_id": .string(teams.id)])
     precondition(
-      !teamsRead.contains("suggest_topic") && teamsRead.contains("suggest_summary: true"))
+      !teamsRead.contains(titleRequest) && teamsRead.contains(summaryRequest))
     _ = call(
       "update_meeting",
       [
@@ -221,8 +242,9 @@ enum AgentEditingSmoke {
     )
     let summarizedRead = call("get_meeting", ["meeting_id": .string(teams.id)])
     precondition(
-      summarizedRead.contains("Summary: Kurzer Test") && !summarizedRead.contains("suggest_summary")
+      summarizedRead.contains("Summary: Kurzer Test") && !summarizedRead.contains(summaryRequest)
     )
+    precondition(!summarizedRead.contains(followUp))
     precondition(!summarizedRead.contains("recording_path:"))
     _ = call(
       "update_meeting", ["meeting_id": .string(teams.id), "revision": 0, "summary": "Stale."],
@@ -236,19 +258,21 @@ enum AgentEditingSmoke {
         "meeting_id": .string(teams.id), "revision": 1,
         "summary": .string(String(repeating: "x", count: 1001)),
       ], error: true)
-    _ = call(
+    let correctedReply = call(
       "edit_transcript",
       [
         "meeting_id": .string(teams.id), "revision": 1,
         "changes": [["segment_id": "s1", "text": "Hallo, Test eins bis vier."]],
       ])
+    precondition(correctedReply.contains(summaryRequest) && correctedReply.contains("revision: 2"))
+    precondition(!correctedReply.contains(titleRequest))
     let correctedTeams = try library.load(teams.id)
     precondition(correctedTeams.summary == nil)
     config.agentsMaySummarizeMeetings = false
     try config.encoded().write(to: bridge.configFile)
-    precondition(!server.instructions.contains("suggest_summary"))
+    precondition(metadata() == initialMetadata)
     precondition(
-      !call("get_meeting", ["meeting_id": .string(teams.id)]).contains("suggest_summary"))
+      !call("get_meeting", ["meeting_id": .string(teams.id)]).contains(summaryRequest))
     _ = call(
       "update_meeting",
       [
@@ -290,11 +314,13 @@ enum AgentEditingSmoke {
     long.audioFile = nil
     try library.save(long)
     var page = call("get_meeting", ["meeting_id": .string(long.id)])
+    precondition(page.range(of: followUp)!.lowerBound > page.range(of: "next_cursor:")!.lowerBound)
     let firstCursor = cursor(page)!
     var combined = page
     var pages = 1
     while let next = cursor(page) {
       page = call("get_meeting", ["cursor": .string(next)])
+      precondition(page.contains(summaryRequest) && !page.contains(titleRequest))
       combined += "\n" + page
       pages += 1
       precondition(pages < 20)
@@ -307,6 +333,22 @@ enum AgentEditingSmoke {
       "get_meeting", ["meeting_id": .string(long.id), "passage": "s230", "context": 1])
     precondition(
       targeted.contains("Unique passage 229.") && !targeted.contains("Unique passage 0."))
+    precondition(targeted.contains(summaryRequest))
+    precondition(targeted.contains("read from the beginning"))
+    var empty = long
+    empty.segments = []
+    precondition(
+      try! MeetingAgentView.page(
+        empty, library: library, arguments: [:], namesMeetings: true,
+        correctsTranscripts: true, summarizesMeetings: true
+      ).text.contains(followUp) == false)
+    var processing = long
+    processing.status = .transcribing
+    precondition(
+      try! MeetingAgentView.page(
+        processing, library: library, arguments: [:], namesMeetings: true,
+        correctsTranscripts: true, summarizesMeetings: true
+      ).text.contains(followUp) == false)
     _ = try library.editTranscript(
       long.id, changes: [.init(segmentID: "s1", text: "Changed")], expectedRevision: 0)
     _ = call("get_meeting", ["cursor": .string(firstCursor)], error: true)

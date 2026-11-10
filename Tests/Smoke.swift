@@ -7,6 +7,10 @@ struct Smoke {
   @MainActor
   static func main() async throws {
     setvbuf(stdout, nil, _IOLBF, 0)
+    if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--library-editing-fixture" {
+      try MeetingDetailsSmoke.showFixture(root: URL(fileURLWithPath: CommandLine.arguments[2]))
+      return
+    }
     if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--mcp-fixture" {
       try AgentFixture.run(root: URL(fileURLWithPath: CommandLine.arguments[2]))
       return
@@ -29,6 +33,7 @@ struct Smoke {
     try AgentSmoke.run()
     try TranscriptEditsSmoke.run()
     try MeetingTitlesSmoke.run()
+    try await MeetingDetailsSmoke.run()
     try MigrationSmoke.run()
     try AgentEditingSmoke.run()
     TranscriptScrollSmoke.run()

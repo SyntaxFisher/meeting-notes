@@ -37,6 +37,8 @@ enum LibraryEditor: Identifiable {
 final class LibraryModel {
   let app: AppModel
   let playback = AudioPlayback()
+  let undoManager = UndoManager()
+  @ObservationIgnored private var detailTask: Task<MeetingRecord, Error>?
   private(set) var records: [MeetingRecord] = []
   var selection: String? {
     didSet { if selection != oldValue { selectionChanged() } }
@@ -131,12 +133,70 @@ final class LibraryModel {
     editor = .transcript(record, segment: segment)
   }
 
-  func saveTitle(_ title: String, for record: MeetingRecord) async throws -> MeetingRecord {
-    try await changeRecord { library in
-      try library.updateMeeting(record.id, title: .some(title), expectedRevision: record.revision)
-        .record
-    }
+  func saveDetail(_ text: String, field: MeetingDetailField, for record: MeetingRecord) async throws
+    -> MeetingRecord
+  {
+    let previous = field.value(in: record)
+    let replacement = field.value(text, replacing: record)
+    guard previous != replacement else { return record }
+    let saved = try await enqueueDetailChange(
+      record.id, field: field, expected: previous, replacement: replacement
+    ).value
+    registerDetailUndo(saved.id, field: field, expected: replacement, replacement: previous)
+    return saved
   }
+
+  private func enqueueDetailChange(
+    _ id: String, field: MeetingDetailField, expected: MeetingDetailValue,
+    replacement: MeetingDetailValue
+  ) -> Task<MeetingRecord, Error> {
+    let previousTask = detailTask
+    let task = Task { @MainActor in
+      _ = await previousTask?.result
+      return try await changeRecord { library in
+        let current = try library.load(id)
+        guard field.value(in: current) == expected else {
+          throw MeetingError(
+            "This \(field.label.lowercased()) changed elsewhere. Your draft is kept.")
+        }
+        switch replacement {
+        case .title(let title, let source):
+          return try library.updateMeeting(
+            id, title: .some(title), expectedRevision: current.revision, titleSource: source
+          ).record
+        case .summary(let summary):
+          return try library.updateMeeting(
+            id, summary: summary ?? "", expectedRevision: current.revision
+          ).record
+        }
+      }
+    }
+    detailTask = task
+    return task
+  }
+
+  private func registerDetailUndo(
+    _ id: String, field: MeetingDetailField, expected: MeetingDetailValue,
+    replacement: MeetingDetailValue
+  ) {
+    let group = !undoManager.isUndoing && !undoManager.isRedoing && undoManager.groupingLevel == 0
+    if group { undoManager.beginUndoGrouping() }
+    undoManager.registerUndo(withTarget: self) { model in
+      model.registerDetailUndo(id, field: field, expected: replacement, replacement: expected)
+      let task = model.enqueueDetailChange(
+        id, field: field, expected: expected, replacement: replacement)
+      Task { @MainActor in
+        do { _ = try await task.value } catch {
+          model.errorMessage = error.localizedDescription
+          model.undoManager.removeAllActions(withTarget: model)
+        }
+      }
+    }
+    undoManager.setActionName(field.actionName)
+    if group { undoManager.endUndoGrouping() }
+  }
+
+  func waitForDetailChanges() async { _ = await detailTask?.result }
 
   func editSpeakers(_ record: MeetingRecord) { editor = .speakers(record) }
 
@@ -332,6 +392,12 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
     AppLog.event("library.closed")
   }
 
+  func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { model.undoManager }
+
+  func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
+    (client as? MeetingDetailsTextField)?.editor
+  }
+
   private func startRefreshing() {
     guard refreshTimer == nil else { return }
     refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -394,8 +460,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
     submenu(
       "Edit",
       [
-        item("Undo", Selector(("undo:")), "z"),
-        item("Redo", Selector(("redo:")), "z", [.command, .shift]),
+        item("Undo", #selector(undoEdit), "z", target: self),
+        item("Redo", #selector(redoEdit), "z", [.command, .shift], target: self),
         .separator(),
         item("Cut", #selector(NSText.cut(_:)), "x"),
         item("Copy", #selector(NSText.copy(_:)), "c"),
@@ -431,8 +497,23 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
 
   private var selected: MeetingRecord? { model.selectedRecord }
 
+  private var activeUndoManager: UndoManager {
+    if let text = (window?.attachedSheet?.firstResponder ?? window?.firstResponder) as? NSTextView,
+      text.isEditable, let manager = text.undoManager
+    {
+      return manager
+    }
+    return model.undoManager
+  }
+
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     switch menuItem.action {
+    case #selector(undoEdit):
+      menuItem.title = activeUndoManager.undoMenuItemTitle
+      return activeUndoManager.canUndo
+    case #selector(redoEdit):
+      menuItem.title = activeUndoManager.redoMenuItemTitle
+      return activeUndoManager.canRedo
     case #selector(startRecording): return model.app.canStart
     case #selector(stopRecording): return model.app.isRecording
     case #selector(togglePlayback), #selector(skipBack), #selector(skipForward):
@@ -451,6 +532,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
   @objc private func startRecording() {
     model.app.send(.meeting(.start(title: nil)))
   }
+  @objc private func undoEdit() { activeUndoManager.undo() }
+  @objc private func redoEdit() { activeUndoManager.redo() }
   @objc private func stopRecording() { model.app.send(.meeting(.stop)) }
   @objc private func focusSearch() { model.searchFocused = true }
   @objc private func showPanel() { model.app.send(.showPanel) }

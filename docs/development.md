@@ -78,3 +78,7 @@ Normal local/ad-hoc builds disable Sparkle. To test the visible About update con
 ### Agent search evaluation
 
 `python3 scripts/devenv/eval_search.py` asks Claude Code (Opus, Sonnet) and Codex nine questions about a synthetic two-hour steering meeting (`scripts/devenv/search-eval-meeting.json`) and records every MCP call through the real fixture server. Each answer hides behind wording the question does not use: synonyms, an English passage for a German question, a misheard product name, a vague description, a time window and a request for all decisions; two older meetings act as decoys. It prints per-run queries, missing facts and decoy use, then calls, empty searches, bytes read, time and Claude cost per agent. Narrow runs with `--agents`, `--cases` and `--repeat`; build the fixture binary with `make test` first. Keyword grading is a signal only; read the saved answers before drawing conclusions.
+
+### Inline meeting details
+
+After `make test`, run `build/MeetingNotesSmoke --library-editing-fixture "$(mktemp -d)"` to open the real Library UI against a temporary synthetic meeting. Double-click its title or “Add description...” to edit, click transcript content to commit, and check Command-Z/Shift-Command-Z, clearing the description, and switching directly between fields. The fixture does not open the real meetings folder or start audio capture.
