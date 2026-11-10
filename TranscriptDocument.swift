@@ -26,6 +26,33 @@ enum TranscriptDocument {
     return name
   }
 
+  /// The participant all remote Teams speech belongs to when Teams listed only one besides the
+  /// local participant.
+  private static func soleRemoteParticipant(
+    _ result: TranscriptSegments, roster: ParticipantRoster?
+  )
+    -> String?
+  {
+    let remote = roster?.remoteParticipants ?? []
+    return result.mode == .separateTracks && remote.count == 1 ? remote[0].name : nil
+  }
+
+  /// Each segment's Teams name with its evidence, or nil when Teams speaker readings do not
+  /// apply to this result.
+  static func naming(
+    _ result: TranscriptSegments, localName: String, roster: ParticipantRoster?,
+    speaking: SpeakingTimeline?
+  ) -> [SpeakerFusion.Decision]? {
+    guard result.mode == .separateTracks, soleRemoteParticipant(result, roster: roster) == nil,
+      let speaking
+    else { return nil }
+    return SpeakerNaming.decisions(
+      for: result.segments, timeline: speaking,
+      excluded: [localName, roster?.localParticipant?.name].compactMap { $0 },
+      embeddings: result.voiceEmbeddings ?? [],
+      participants: roster?.sawFullRoster == true ? roster?.remoteParticipants.map(\.name) : nil)
+  }
+
   /// Fills the record's speakers, segments, participants and duration from the helper's result
   /// and returns the transcript text. `speaking` is when Teams showed each participant speaking,
   /// on the result's timeline; it names remote Teams voices.
@@ -33,18 +60,20 @@ enum TranscriptDocument {
     _ result: TranscriptSegments, into record: inout MeetingRecord, localName: String,
     roster: ParticipantRoster?, speaking: SpeakingTimeline? = nil, timeZone: TimeZone = .current
   ) -> String {
-    let remote = roster?.remoteParticipants ?? []
-    let soleRemote = result.mode == .separateTracks && remote.count == 1 ? remote[0].name : nil
-    let excluded = [localName, roster?.localParticipant?.name].compactMap { $0 }
-    let teamsNames =
-      result.mode == .separateTracks && soleRemote == nil
-      ? speaking.map {
-        SpeakerNaming.names(
-          for: result.segments, timeline: $0, excluded: excluded,
-          embeddings: result.voiceEmbeddings ?? []
-        )
-        .map { $0.flatMap(cleanedName) }
-      } : nil
+    compose(
+      result, into: &record, localName: localName, roster: roster,
+      naming: naming(result, localName: localName, roster: roster, speaking: speaking),
+      timeZone: timeZone)
+  }
+
+  /// `compose` with the segments' naming decisions already made by `naming`.
+  static func compose(
+    _ result: TranscriptSegments, into record: inout MeetingRecord, localName: String,
+    roster: ParticipantRoster?, naming decisions: [SpeakerFusion.Decision]?,
+    timeZone: TimeZone = .current
+  ) -> String {
+    let soleRemote = soleRemoteParticipant(result, roster: roster)
+    let teamsNames = decisions?.map { $0.name.flatMap(cleanedName) }
     var anonymousLabels: [String: String] = [:]
     var speakers: [MeetingSpeaker] = []
     var anonymous = 0

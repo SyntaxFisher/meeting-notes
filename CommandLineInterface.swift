@@ -6,7 +6,7 @@ struct CommandLineInterface {
   static let commands: Set<String> = [
     "help", "status", "list", "show", "search", "start", "stop", "discard", "retry", "delete",
     "wait", "set-title", "rename-speaker", "settings", "mcp", "agent-setup",
-    "transcribe", "teams-participants", "check-teams-mute",
+    "transcribe", "replay", "teams-participants", "check-teams-mute",
     "edit-text", "merge-speakers",
   ]
 
@@ -64,6 +64,10 @@ struct CommandLineInterface {
       transcribe <audio> <out.txt> [--capture DIR] [--name N] [--title T]
                                       Transcribe a recording like the app does; writes
                                       <out.txt> and its record <out>.json, never overwriting.
+      replay <archive> <new output directory>
+                                      Run the current Teams detection and transcription
+                                      over a reconstruction archive; writes before and
+                                      after results into the new directory.
       teams-participants              Print the current Teams meeting's participants.
       check-teams-mute                Print the detected Teams mute state.
 

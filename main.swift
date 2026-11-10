@@ -9,6 +9,10 @@ if arguments.count > 1, arguments[1] == "transcribe" {
   Task { @MainActor in exit(await TranscribeCommand.run(options)) }
   dispatchMain()
 }
+if arguments.count > 1, arguments[1] == "replay" {
+  Task { @MainActor in exit(await ReplayCommand.run(Array(arguments.dropFirst(2)))) }
+  dispatchMain()
+}
 
 // Any first argument that is not a flag is a command; the app itself only receives flags.
 if arguments.count > 1, !arguments[1].hasPrefix("-") {

@@ -58,8 +58,8 @@ enum RecordingRetention {
     }
   }
 
-  /// Deletes the oldest eligible recordings until the audio budget fits and returns the files
-  /// that were removed.
+  /// Deletes the oldest eligible recordings until the audio budget fits, with their
+  /// reconstruction archives, and returns the recording files that were removed.
   @discardableResult
   static func enforce(
     root: URL, protected: Set<String> = [], audioBudget: Int64 = audioLimit
@@ -72,6 +72,7 @@ enum RecordingRetention {
       removed.append(file)
       AppLog.event("retention.deleted", file.path)
     }
+    try ReconstructionArchive.remove(Set(plan.audios.map(\.id)))
     AppLog.event(
       "retention.complete",
       "audios=\(plan.audios.count); bytes=\(plan.bytes)")
@@ -86,7 +87,8 @@ enum RecordingRetention {
     return Plan(audios: select(audios, budget: audioBudget, protected: protected).map(\.deletion))
   }
 
-  /// Explicit audio removal includes the newest completed meeting and leaves transcripts intact.
+  /// Explicit audio removal includes the newest completed meeting and its reconstruction archive,
+  /// and leaves transcripts intact.
   static func removeCompletedAudio(root: URL, completed: Set<String>) throws {
     let audios = try units(in: root.appendingPathComponent("audios"), primary: ["m4a", "mp3"])
     for unit in audios where completed.contains(unit.id) {
@@ -95,6 +97,7 @@ enum RecordingRetention {
         AppLog.event("audio.deleted", file.path)
       }
     }
+    try ReconstructionArchive.remove(completed)
   }
 
   /// Bytes of meeting files in each folder, using the same files retention would consider.

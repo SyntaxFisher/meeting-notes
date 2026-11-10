@@ -49,11 +49,27 @@ struct TranscriptSegments: Codable, Equatable {
 
   /// How much of the microphone track was attributed to playback picked up acoustically: the
   /// estimated acoustic delay, the echo level relative to the system track (0 when no echo
-  /// was found), and the seconds of microphone speech discarded as echo.
+  /// was found), the seconds of microphone speech discarded as echo, and the recognized
+  /// microphone words dropped because they repeated the system track.
   struct EchoReport: Codable, Equatable {
     var lagSeconds: Double
     var coupling: Double
     var discardedSeconds: Double
+    var copiedWords: Int? = nil
+  }
+
+  /// What recognition started from, so a transcription can be analyzed and repeated later: the
+  /// diarizer's turns of the system or mixed audio, the microphone ranges kept as local speech,
+  /// and each model file's SHA-256 by name.
+  struct Diagnostics: Codable, Equatable {
+    struct Span: Codable, Equatable {
+      var start: Double
+      var end: Double
+      var speaker: String
+    }
+    var turns: [Span]
+    var localSpeech: [Span]
+    var models: [String: String]
   }
 
   var mode: Mode
@@ -61,6 +77,7 @@ struct TranscriptSegments: Codable, Equatable {
   var segments: [Segment]
   var echo: EchoReport? = nil
   var voiceEmbeddings: [VoiceEmbedding]? = nil
+  var diagnostics: Diagnostics? = nil
   /// The recognition and diarization models that produced the segments.
   var engine: String
 }

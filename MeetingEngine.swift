@@ -404,6 +404,8 @@ final class MeetingEngine {
       onEvent?(.transcriptionStarted, record, [:])
       changed()
       let text: String
+      var helper: TranscriptSegments?
+      var naming: [SpeakerFusion.Decision]?
       if FileManager.default.fileExists(atPath: destination.path) {
         text = try String(contentsOf: destination, encoding: .utf8)
         record.segments = MeetingLibrary.parseTranscript(text)
@@ -415,17 +417,27 @@ final class MeetingEngine {
         let result = try await transcriber.transcribe(
           file: audio, capture: tracks, executable: transcriberExecutable)
         try Task.checkCancellation()
+        let (roster, speaking) = await Task.detached {
+          (
+            tracks.flatMap {
+              try? JSONDecoder().decode(
+                ParticipantRoster.self,
+                from: Data(contentsOf: $0.appendingPathComponent("participants.json")))
+            },
+            tracks.flatMap(SpeakingTimeline.load(fromCapture:))
+          )
+        }.value
+        let localName = localSpeakerName(roster)
+        naming = await Task.detached {
+          TranscriptDocument.naming(
+            result, localName: localName, roster: roster, speaking: speaking)
+        }.value
+        try Task.checkCancellation()
         guard let current = unfinished[id] else { return }
         record = current
-        let roster = tracks.flatMap {
-          try? JSONDecoder().decode(
-            ParticipantRoster.self,
-            from: Data(contentsOf: $0.appendingPathComponent("participants.json")))
-        }
-        let speaking = tracks.flatMap(SpeakingTimeline.load(fromCapture:))
         text = TranscriptDocument.compose(
-          result, into: &record, localName: localSpeakerName(roster), roster: roster,
-          speaking: speaking)
+          result, into: &record, localName: localName, roster: roster, naming: naming)
+        helper = result
         try MeetingFiles.publish(Data(text.utf8), to: destination)
       }
       record.transcriptFile = destination.lastPathComponent
@@ -446,7 +458,30 @@ final class MeetingEngine {
         }
       }
       unfinished[id] = nil
-      if let tracks { try? FileManager.default.removeItem(at: tracks) }
+      if let tracks {
+        let archive = config().keepAudio
+        let revision = record.revision
+        let recordURL = library.recordURL(for: id)
+        let audioURL = library.audioURL(of: record)
+        await Task.detached { [helper, naming] in
+          if archive {
+            do {
+              try ReconstructionArchive.keep(
+                capture: tracks, id: id, result: helper, naming: naming
+              ) {
+                guard let audioURL, FileManager.default.fileExists(atPath: audioURL.path),
+                  let data = try? Data(contentsOf: recordURL),
+                  let current = try? JSONCoding.decoder().decode(MeetingRecord.self, from: data)
+                else { return .nothing }
+                return current.revision == revision ? .everything : .captureOnly
+              }
+            } catch {
+              AppLog.event("reconstruction.keepFailed", "\(id): \(error.localizedDescription)")
+            }
+          }
+          try? FileManager.default.removeItem(at: tracks)
+        }.value
+      }
       AppLog.event("transcription.saved", destination.path)
       enforceRetention()
       onEvent?(.transcriptReady, record, [:])
@@ -627,6 +662,9 @@ final class MeetingEngine {
       return
     }
     let config = config()
+    ReconstructionArchive.enforce(
+      keepAudio: config.keepAudio,
+      protected: protectedIDs.union(library.needingAttention().map(\.id)))
     do {
       try RecordingRetention.enforce(
         root: library.root,

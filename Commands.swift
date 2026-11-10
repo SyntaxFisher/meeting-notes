@@ -134,6 +134,10 @@ final class CommandCenter {
     CommandOutcome, MeetingError
   > {
     let result: Result<CommandOutcome, MeetingError>
+    if ["start", "stop", "stop_and_discard", "toggle_recording"].contains(command.name) {
+      TeamsTrace.shared.record(
+        "command", always: true, ["command": command.name, "source": source.rawValue])
+    }
     do {
       result = .success(try await run(command))
     } catch let error as MeetingError {

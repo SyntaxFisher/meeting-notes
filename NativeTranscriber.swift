@@ -84,7 +84,9 @@ final class NativeTranscriber {
     guard task.terminationStatus == 0 else {
       throw Self.failure(status: status, code: task.terminationStatus)
     }
-    let result = try JSONDecoder().decode(TranscriptSegments.self, from: Data(contentsOf: output))
+    let result = try await Task.detached {
+      try JSONDecoder().decode(TranscriptSegments.self, from: Data(contentsOf: output))
+    }.value
     guard !result.segments.isEmpty else { throw NoSpeechDetected() }
     AppLog.event(
       "native.result",

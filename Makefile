@@ -3,7 +3,7 @@ SOURCES = $(filter-out GenerateIcon.swift,$(wildcard *.swift))
 # The smoke tests link everything except the app's entry point and the parts that need Sparkle
 # or a running app delegate.
 TEST_SOURCES = $(filter-out main.swift AppDelegate.swift AppUpdater.swift AppIntents.swift,$(SOURCES))
-HELPER_SHARED = NativeTranscription/Sources/MeetingTranscriber/SpeechPlan.swift NativeTranscription/Sources/MeetingTranscriber/TranscriptSegments.swift NativeTranscription/Sources/MeetingTranscriber/EchoFilter.swift
+HELPER_SHARED = NativeTranscription/Sources/MeetingTranscriber/SpeechPlan.swift NativeTranscription/Sources/MeetingTranscriber/TranscriptSegments.swift NativeTranscription/Sources/MeetingTranscriber/EchoFilter.swift NativeTranscription/Sources/MeetingTranscriber/EchoCopies.swift
 SWIFT_FLAGS ?=
 
 .DEFAULT_GOAL := build

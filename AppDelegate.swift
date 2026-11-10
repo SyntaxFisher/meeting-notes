@@ -109,6 +109,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     )
     installCommandLineShim()
     configStore.load()
+    ReconstructionArchive.setKeepsAudio(config.keepAudio)
     sounds.isEnabled = config.playSounds
     MeetingFiles.root = config.meetingsRootURL
     libraryStore = LibraryStore(root: config.meetingsRootURL)
@@ -118,7 +119,8 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     engine.onRetention = { [weak self] protected in
       guard let self else { return }
       self.libraryStore.enforceRetention(
-        protected: protected, audioBudget: self.config.retention.audioBytes)
+        protected: protected, audioBudget: self.config.retention.audioBytes,
+        keepAudio: self.config.keepAudio)
     }
     engine.localSpeakerName = { [weak self] roster in
       TranscriptDocument.localSpeakerName(
@@ -200,6 +202,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     teamsMonitor.onLocalParticipant = { name in
       UserDefaults.standard.set(name, forKey: Self.detectedTeamsNameKey)
     }
+    updateTeamsTrace()
     updateTeamsMonitor()
     startControlServer()
     libraryStore.open()
@@ -278,6 +281,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     {
       sounds.play(sound)
     }
+    traceRecording(event, record, details)
     switch event {
     case .recordingStarted:
       autoRecord.recordingStarted(automatically: record.trigger == .automatic)
@@ -289,6 +293,46 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     default: break
     }
     refreshModel()
+  }
+
+  /// Records recording events in the Teams trace and, when a recording ends other than by
+  /// being discarded, keeps the trace around it with the meeting's reconstruction archive.
+  private func traceRecording(
+    _ event: LifecycleEvent, _ record: MeetingRecord, _ details: [String: Any]
+  ) {
+    let recordingEvents: [LifecycleEvent] = [
+      .recordingStarted, .recordingStopped, .recordingDiscarded, .recordingFailed,
+      .recordingInterrupted,
+    ]
+    guard recordingEvents.contains(event) else { return }
+    TeamsTrace.shared.record(
+      "recording",
+      [
+        "event": event.rawValue, "id": record.id, "trigger": record.trigger?.rawValue ?? "",
+        "source": record.source?.rawValue ?? "", "error": details["error"] as? String ?? "",
+      ])
+    guard config.keepAudio, event != .recordingStarted, event != .recordingDiscarded else {
+      return
+    }
+    let id = record.id
+    let start = record.startedAt.addingTimeInterval(-TeamsTrace.preRoll)
+    let recordURL = engine.library.recordURL(for: id)
+    Task.detached { [weak self] in
+      do {
+        let end = Date()
+        try ReconstructionArchive.keepTrace(id: id) { write in
+          try TeamsTrace.shared.export(from: start, to: end, into: write)
+        }
+      } catch {
+        AppLog.event("reconstruction.traceFailed", "\(id): \(error.localizedDescription)")
+      }
+      // Kept audio may have been turned off, or the meeting discarded, while the trace was
+      // written; nothing may then remain of it.
+      let keep = await MainActor.run { self?.config.keepAudio ?? false }
+      if !keep || !FileManager.default.fileExists(atPath: recordURL.path) {
+        try? ReconstructionArchive.remove([id])
+      }
+    }
   }
 
   // MARK: Commands
@@ -732,7 +776,12 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     if old.agentsMaySummarizeMeetings != new.agentsMaySummarizeMeetings {
       changed.append("agentsMaySummarizeMeetings")
     }
-    if old.keepAudio != new.keepAudio { changed.append("keepAudio") }
+    if old.keepAudio != new.keepAudio {
+      changed.append("keepAudio")
+      ReconstructionArchive.setKeepsAudio(new.keepAudio)
+      engine.enforceRetention()
+    }
+    updateTeamsTrace()
     if old.localSpeakerName != new.localSpeakerName { changed.append("localSpeakerName") }
     if old.retention != new.retention {
       changed.append("retention")
@@ -931,6 +980,27 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
 
   // MARK: Auto-record
 
+  /// Traces Teams readings and decisions while audio is kept; see `TeamsTrace`.
+  private func updateTeamsTrace() {
+    let info = Bundle.main.infoDictionary
+    TeamsTrace.shared.setEnabled(
+      config.keepAudio,
+      session: [
+        "app": ReconstructionArchive.appVersion,
+        "macOS": ProcessInfo.processInfo.operatingSystemVersionString,
+        "teams": TeamsTrace.teamsVersion ?? NSNull(),
+        "locale": Locale.current.identifier,
+        "languages": Locale.preferredLanguages,
+        "bundle": info?["CFBundleIdentifier"] as? String ?? "",
+        "pid": Int(ProcessInfo.processInfo.processIdentifier),
+        "config": [
+          "autoRecordTeamsMeetings": config.autoRecordTeamsMeetings,
+          "mirrorTeamsMute": config.mirrorTeamsMute, "keepAudio": config.keepAudio,
+          "localSpeakerName": config.localSpeakerName != nil,
+        ],
+      ])
+  }
+
   private func updateTeamsMonitor() {
     if config.autoRecordTeamsMeetings || engine.active != nil || engine.isStarting {
       teamsMonitor.start()
@@ -941,15 +1011,25 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
 
   private func evaluateAutoRecord() {
     guard config.autoRecordTeamsMeetings, let state = teamsMonitor.currentState else { return }
-    switch autoRecord.observe(
-      state.meetingPresence, at: Date(), isRecording: engine.active != nil || engine.isStarting,
-      canStart: commands.startBlockedReason(automatically: true) == nil
-        && captureRetry.allowsAutomaticStart)
-    {
+    let isRecording = engine.active != nil || engine.isStarting
+    let blocked = commands.startBlockedReason(automatically: true)
+    let canStart = blocked == nil && captureRetry.allowsAutomaticStart
+    let action = autoRecord.observe(
+      state.meetingPresence, at: Date(), isRecording: isRecording, canStart: canStart)
+    TeamsTrace.shared.record(
+      "auto-record",
+      [
+        "presence": "\(state.meetingPresence)", "recording": isRecording, "canStart": canStart,
+        "blocked": blocked.map { "\($0)" } ?? "", "action": action.map { "\($0)" } ?? "",
+        "owns": autoRecord.ownsRecording, "waiting": autoRecord.waitingForMeetingEnd,
+      ])
+    switch action {
     case .start:
       AppLog.event("autoRecord.start")
       Task {
         if let error = await commands.startAutomatically() {
+          TeamsTrace.shared.record(
+            "recording", ["event": "start-failed", "error": error.message])
           report("Recording could not start", error.message)
         }
         if engine.active == nil { autoRecord.recordingEnded() }

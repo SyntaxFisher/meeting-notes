@@ -111,10 +111,14 @@ final class LibraryReader: @unchecked Sendable {
     }
   }
 
-  /// Applies retention, also protecting every meeting that needs attention.
-  func enforceRetention(protected: Set<String>, audioBudget: Int64) async {
+  /// Applies retention to recordings and reconstruction archives, also protecting every meeting
+  /// that needs attention.
+  func enforceRetention(protected: Set<String>, audioBudget: Int64, keepAudio: Bool) async {
     await run { library in
       let ids = protected.union(library.needingAttention().map(\.id))
+      ReconstructionArchive.enforce(
+        keepAudio: keepAudio, protected: ids,
+        exists: { FileManager.default.fileExists(atPath: library.recordURL(for: $0).path) })
       do {
         try RecordingRetention.enforce(
           root: library.root, protected: ids, audioBudget: audioBudget)
@@ -299,12 +303,17 @@ final class LibraryStore {
     return snapshot
   }
 
-  func enforceRetention(protected: Set<String>, audioBudget: Int64) {
-    guard isReady else { return }
+  /// Applies retention in the background. Reconstruction archives live outside the meetings
+  /// folder, so turning off kept audio removes them even while the folder is not readable.
+  func enforceRetention(protected: Set<String>, audioBudget: Int64, keepAudio: Bool) {
+    guard isReady else {
+      if !keepAudio { Task.detached { ReconstructionArchive.enforce(keepAudio: false) } }
+      return
+    }
     let reader = reader
     Task {
       await reader.enforceRetention(
-        protected: protected, audioBudget: audioBudget)
+        protected: protected, audioBudget: audioBudget, keepAudio: keepAudio)
       refresh()
     }
   }

@@ -32,6 +32,7 @@ enum MeetingSmoke {
     try await testAudioRemoval(root.appendingPathComponent("remove-audio"))
     try testDeleteAll(root.appendingPathComponent("delete-all"))
     try testRetention(root.appendingPathComponent("retention"))
+    try testReconstructionArchive(root.appendingPathComponent("reconstruction"))
     print(
       "Retention by meeting id, with extra files, audio, protected meetings and its preview: OK")
   }
@@ -485,6 +486,13 @@ enum MeetingSmoke {
     engine.transcriberExecutable = helper
     let failed = try write(library, "20261107T090000Z", .queued, audio: true)
     let audio = library.audioURL(of: failed)!
+    func capture(_ id: String) throws -> URL {
+      let capture = library.captureURL(for: id)
+      try manager.createDirectory(at: capture, withIntermediateDirectories: true)
+      try Data("tracks".utf8).write(to: capture.appendingPathComponent("microphone.aac"))
+      return capture
+    }
+    let failedCapture = try capture(failed.id)
     try Data().write(to: root.appendingPathComponent("fail"))
     engine.recover([failed])
     await waitUntil { engine.queue.isEmpty && engine.transcribingID == nil }
@@ -499,14 +507,136 @@ enum MeetingSmoke {
     precondition(completed.audioFile == nil && library.audioURL(of: completed) == nil)
     precondition(!manager.fileExists(atPath: audio.path))
     precondition(library.transcriptURL(of: completed) != nil)
+    let archive = ReconstructionArchive.url(for: failed.id)
+    precondition(
+      !manager.fileExists(atPath: failedCapture.path) && !manager.fileExists(atPath: archive.path),
+      "Without kept audio the capture tracks are deleted and nothing is archived")
     config.keepAudio = true
     let kept = try write(library, "20261107T100000Z", .queued, audio: true)
+    let keptCapture = try capture(kept.id)
     engine.recover([kept])
     await waitUntil { engine.queue.isEmpty && engine.transcribingID == nil }
     precondition(library.audioURL(of: kept) != nil)
+    let archived = ReconstructionArchive.url(for: kept.id)
+    let details = try JSONDecoder().decode(
+      ReconstructionArchive.Transcription.self,
+      from: Data(contentsOf: archived.appendingPathComponent("transcription.json")))
+    precondition(
+      !manager.fileExists(atPath: keptCapture.path)
+        && manager.fileExists(
+          atPath: archived.appendingPathComponent("capture/microphone.aac").path)
+        && details.helper?.segments.count == 2,
+      "With kept audio the capture tracks move to the archive with the helper's result")
+    precondition(library.files(of: kept.id).contains(archived))
+    let corrected = try library.load(kept.id)
+    try library.editTranscript(
+      kept.id, changes: [MeetingTextChange(segmentID: "s1", text: "Corrected.")],
+      expectedRevision: corrected.revision)
+    precondition(
+      !manager.fileExists(atPath: archived.appendingPathComponent("transcription.json").path)
+        && manager.fileExists(
+          atPath: archived.appendingPathComponent("capture/microphone.aac").path),
+      "A correction leaves no uncorrected transcription in the archive")
+    config.keepAudio = false
+    engine.enforceRetention()
+    precondition(
+      !manager.fileExists(atPath: archived.path), "Turning off kept audio removes the archive")
     print(
       "Temporary audio: failures retain audio, successful transcripts delete it only when selected: OK"
     )
+  }
+
+  static func testReconstructionArchive(_ root: URL) throws {
+    let manager = FileManager.default
+    let result = TranscriptSegments(
+      mode: .separateTracks, duration: 2,
+      segments: [.init(start: 0, end: 2, source: .teams, speaker: "S1", text: "Hi")],
+      voiceEmbeddings: [.init(speaker: "S1", start: 0, end: 2, values: [1, 0])],
+      engine: "fixture")
+    let ids = ["20261101T090000Z", "20261102T090000Z", "20261103T090000Z", "20261104T090000Z"]
+    for (id, size) in zip(ids, [60, 50, 70, 40]) {
+      let capture = root.appendingPathComponent("capture-\(id)")
+      try manager.createDirectory(at: capture, withIntermediateDirectories: true)
+      try Data(repeating: 1, count: size).write(to: capture.appendingPathComponent("system.aac"))
+      try ReconstructionArchive.keepTrace(Data("{}\n".utf8), id: id, in: root)
+      try ReconstructionArchive.keep(
+        capture: capture, id: id, result: result,
+        naming: [.init(name: "Anna", reason: .teamsReading, anchor: true)], app: "fixture",
+        in: root)
+    }
+    let first = ReconstructionArchive.url(for: ids[0], in: root)
+    let json = try String(
+      contentsOf: first.appendingPathComponent("transcription.json"), encoding: .utf8)
+    precondition(
+      !json.contains("voiceEmbeddings") && json.contains("teams-reading")
+        && manager.fileExists(atPath: first.appendingPathComponent("teams-trace.jsonl").path),
+      "The archive keeps the trace and naming evidence but no voice embeddings")
+    func archived() -> [String] {
+      ((try? manager.contentsOfDirectory(atPath: root.path)) ?? []).filter {
+        $0.hasPrefix("2026")
+      }.sorted()
+    }
+    precondition(
+      ReconstructionArchive.enforce(keepAudio: true, budget: 2_000_000, in: root) == []
+        && archived() == ids, "Archives within the budget stay")
+    let overhead = Int64(
+      (try Data(contentsOf: first.appendingPathComponent("transcription.json"))).count + 3)
+    precondition(
+      ReconstructionArchive.enforce(
+        keepAudio: true, protected: [ids[0]], budget: 110 + 2 * overhead, in: root)
+        == [ids[1], ids[2]] && archived() == [ids[0], ids[3]],
+      "The oldest archives go first, sparing unfinished and failed meetings")
+    precondition(
+      ReconstructionArchive.enforce(keepAudio: true, budget: 1, in: root) == [ids[0]]
+        && archived() == [ids[3]], "The newest archive stays even above the budget")
+    try ReconstructionArchive.remove([ids[3]], in: root)
+    precondition(archived().isEmpty, "Removing a meeting's audio removes its archive")
+    for id in ids.prefix(3) { try ReconstructionArchive.keepTrace(Data(), id: id, in: root) }
+    precondition(
+      ReconstructionArchive.enforce(
+        keepAudio: true, protected: [ids[1]], exists: { $0 == ids[2] }, in: root)
+        == [ids[0]] && archived() == [ids[1], ids[2]],
+      "An archive whose meeting is gone is removed, unless the meeting is still unfinished")
+    precondition(
+      ReconstructionArchive.enforce(keepAudio: false, in: root) == [ids[1], ids[2]]
+        && archived().isEmpty,
+      "Without kept audio nothing stays")
+    func capture(_ name: String) throws -> URL {
+      let folder = root.appendingPathComponent(name)
+      try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+      try Data([1]).write(to: folder.appendingPathComponent("microphone.aac"))
+      return folder
+    }
+    let id = ids[0]
+    let target = ReconstructionArchive.url(for: id, in: root)
+    try ReconstructionArchive.keep(
+      capture: try capture("first"), id: id, result: result, naming: nil, in: root)
+    let corrected = try capture("corrected")
+    try ReconstructionArchive.keep(
+      capture: corrected, id: id, result: result, naming: nil, in: root
+    ) { .captureOnly }
+    precondition(
+      manager.fileExists(atPath: target.appendingPathComponent("capture/microphone.aac").path)
+        && !manager.fileExists(atPath: target.appendingPathComponent("transcription.json").path)
+        && !manager.fileExists(atPath: corrected.path),
+      "A transcript corrected before archiving leaves only its capture tracks")
+    try ReconstructionArchive.remove([id], in: root)
+    let deleted = try capture("deleted")
+    try ReconstructionArchive.keep(
+      capture: deleted, id: id, result: result, naming: nil, in: root
+    ) { .nothing }
+    precondition(
+      !manager.fileExists(atPath: target.path) && !manager.fileExists(atPath: deleted.path),
+      "A meeting deleted or without audio before archiving leaves nothing")
+    ReconstructionArchive.setKeepsAudio(false)
+    try ReconstructionArchive.keep(
+      capture: try capture("off"), id: id, result: result, naming: nil, in: root)
+    try ReconstructionArchive.keepTrace(Data("{}\n".utf8), id: id, in: root)
+    precondition(
+      !manager.fileExists(atPath: target.path),
+      "Nothing is archived after kept audio was turned off")
+    ReconstructionArchive.setKeepsAudio(true)
+    print("Reconstruction archive: budget, oldest first, newest kept, no embeddings: OK")
   }
 
   static func testRetention(_ root: URL) throws {
@@ -539,9 +669,19 @@ enum MeetingSmoke {
     precondition(plan.files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
     let fits = try RecordingRetention.plan(root: root, audioBudget: 90)
     precondition(fits.isEmpty)
+    for id in ["20260101T100000Z", "20260102T100000Z"] {
+      try ReconstructionArchive.keepTrace(Data("{}\n".utf8), id: id)
+    }
     let removed = try RecordingRetention.enforce(
       root: root, protected: ["20260102T100000Z"], audioBudget: 40)
     precondition(removed == plan.files)
+    precondition(
+      !FileManager.default.fileExists(
+        atPath: ReconstructionArchive.url(for: "20260101T100000Z").path)
+        && FileManager.default.fileExists(
+          atPath: ReconstructionArchive.url(for: "20260102T100000Z").path),
+      "Retention removes the archive of every recording whose audio it deletes")
+    try ReconstructionArchive.remove(["20260102T100000Z"])
     let audio = Set(try FileManager.default.contentsOfDirectory(atPath: audios.path))
     precondition(audio == ["20260102T100000Z.m4a", "20260104T100000Z.m4a"])
     for (file, bytes) in original {

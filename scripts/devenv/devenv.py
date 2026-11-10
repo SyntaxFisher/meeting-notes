@@ -461,7 +461,7 @@ def replay(args):
 
     Live captures are archived when the app's `captureArchiveDirectory` default is set. With
     `--echo`, a delayed, filtered copy of the Teams track is added to the microphone track, which
-    simulates a call without headphones.
+    simulates a call without headphones; `--echo-room` makes that copy sound like laptop speakers.
     """
     scenario = load_scenario(args.scenario)
     truth_path = WORK / "scenarios" / scenario["name"] / "truth.json"
@@ -470,7 +470,7 @@ def replay(args):
     manifest = json.loads((capture / "capture.json").read_text())
     if manifest.get("systemStart") is None or manifest.get("microphoneStart") is None:
         fail("The capture needs both a microphone and a Teams track.")
-    suffix = f"-echo{args.echo:g}" if args.echo else ""
+    suffix = f"-echo{args.echo:g}{'-room' if args.echo_room else ''}" if args.echo else ""
     directory = WORK / "replays" / f"{scenario['name']}{suffix}-{time.strftime('%Y%m%d-%H%M%S')}"
     tracks = directory / "capture"
     tracks.mkdir(parents=True)
@@ -481,8 +481,14 @@ def replay(args):
     microphone, system = capture / "microphone.aac", capture / "system.aac"
     if args.echo:
         lag = manifest["systemStart"] - manifest["microphoneStart"] + args.echo_delay
+        path = (
+            # Laptop speakers into the built-in microphone: reflections, a saturating speaker
+            # and a level that drifts as people move, unlike a clean linear copy.
+            "highpass=f=300,lowpass=f=6000,aecho=0.8:0.6:23|41|67|113:0.5|0.4|0.3|0.2,"
+            f"asoftclip=type=tanh:threshold=0.5,volume='{args.echo}*(1+0.5*sin(2*PI*t/5.3))'"
+            ":eval=frame" if args.echo_room else f"lowpass=f=3800,highpass=f=150,volume={args.echo}")
         run(*ffmpeg, "-i", microphone, "-i", system, "-filter_complex",
-            f"[1]{shift_filter(lag)},lowpass=f=3800,highpass=f=150,volume={args.echo}[echo];"
+            f"[1]{shift_filter(lag)},{path}[echo];"
             "[0][echo]amix=inputs=2:normalize=0:duration=first[out]",
             "-map", "[out]", "-ar", RATE, "-ac", "1", "-c:a", "aac", "-b:a", "96k", "-f", "adts",
             tracks / "microphone.aac", quiet=True)
@@ -1008,6 +1014,8 @@ def main():
                          help="add Teams playback to the microphone at this gain, e.g. 0.3")
     command.add_argument("--echo-delay", type=float, default=0.06,
                          help="acoustic delay of the simulated echo in seconds")
+    command.add_argument("--echo-room", action="store_true",
+                         help="simulate laptop speakers: reverb, saturation and drifting level")
     command = commands.add_parser("meeting", help="play a scenario in a live Teams meeting")
     command.add_argument("scenario")
     command.add_argument("--url", help="Teams meeting link (defaults to the saved one)")

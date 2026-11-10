@@ -68,12 +68,23 @@ struct Transcriber {
         reporter.report("Downloading the transcription model \(Int(fraction * 100))%")
       }
       let detector = try VoiceActivityDetector(model: vadModel)
-      var (tracks, result) = try await diarize(
+      var (tracks, result, echoFilter) = try await diarize(
         input, capture: capture, workspace: workspace, reporter: reporter, detector: detector)
       guard tracks.contains(where: { !$0.turns.isEmpty }) else {
         throw TranscriptionFailure(
           message: "No speech was detected in the recording.", noSpeech: true)
       }
+      func spans(_ source: (TranscriptSegments.Source) -> Bool) -> [TranscriptSegments
+        .Diagnostics.Span]
+      {
+        tracks.filter { source($0.source) }.flatMap(\.turns).map {
+          .init(start: $0.start, end: $0.end, speaker: $0.speaker)
+        }
+      }
+      result.diagnostics = .init(
+        turns: spans { $0 != .microphone }, localSpeech: spans { $0 == .microphone },
+        models: Dictionary(
+          uniqueKeysWithValues: [ModelFile.whisper, .silero].map { ($0.name, $0.sha256) }))
       reporter.report("Preparing whisper large-v3-turbo")
       let recognizer = try WhisperRecognizer(model: whisperModel)
       for index in tracks.indices {
@@ -98,15 +109,32 @@ struct Transcriber {
           message: "No speech was detected in the recording.", noSpeech: true)
       }
       var part = 0
-      for track in tracks where !track.chunks.isEmpty {
+      var words: [[[(word: SpeechPlan.Word, speaker: String)]]] = tracks.map { _ in [] }
+      for (index, track) in tracks.enumerated() where !track.chunks.isEmpty {
         let samples = try samples(of: track.file)
         for chunk in track.chunks {
           part += 1
           reporter.report("Transcribing part \(part)/\(total)")
-          let words = chunk.place(
-            try recognizer.words(in: audio(of: chunk, in: samples), language: chunk.language))
+          words[index].append(
+            chunk.place(
+              try recognizer.words(in: audio(of: chunk, in: samples), language: chunk.language)))
+        }
+      }
+      if let echo = result.echo, let echoFilter,
+        let local = tracks.firstIndex(where: { $0.source == .microphone }),
+        let remote = tracks.firstIndex(where: { $0.source != .microphone })
+      {
+        let copies = EchoCopies.removing(
+          from: words[local], heard: words[remote].flatMap { $0.map(\.word) },
+          coupling: echo.coupling, lag: echo.lagSeconds,
+          playing: { echoFilter.isPlaying(start: $0.start - 0.2, end: $0.end + 0.2) })
+        words[local] = copies.chunks
+        result.echo?.copiedWords = copies.removed
+      }
+      for (index, track) in tracks.enumerated() {
+        for chunk in words[index] {
           result.segments += SpeechPlan.segments(
-            words: words, turns: track.turns, policy: track.policy
+            words: chunk, turns: track.turns, policy: track.policy
           ).map {
             .init(
               start: $0.start, end: $0.end, source: track.source, speaker: $0.speaker,
@@ -136,7 +164,7 @@ struct Transcriber {
   private static func diarize(
     _ input: URL, capture: URL?, workspace: URL, reporter: ProgressReporter,
     detector: VoiceActivityDetector
-  ) async throws -> ([Track], TranscriptSegments) {
+  ) async throws -> ([Track], TranscriptSegments, EchoFilter?) {
     reporter.report("Preparing speaker models")
     var config = OfflineDiarizerConfig.default
     config.exposeChunkEmbeddings = true
@@ -157,13 +185,15 @@ struct Transcriber {
         [Track(file: input, source: .mix, turns: turns, policy: .speakers)],
         TranscriptSegments(
           mode: .mixed, duration: Double(audio.length) / audio.processingFormat.sampleRate,
-          segments: [], engine: engine)
+          segments: [], engine: engine),
+        nil
       )
     }
     reporter.report("Finding your speech")
     let local = try detector.regions(in: samples(of: tracks.microphone))
     let echo = EchoFilter(microphone: tracks.microphoneLoudness, teams: tracks.systemLoudness)
-    // Development switch for measuring the filter's effect.
+    // Development switch for measuring the filter's effect; it also turns off removing
+    // repeated words, which needs the filter.
     let filtering = ProcessInfo.processInfo.environment["MEETING_NOTES_ECHO_FILTER"] != "off"
     let ranges = local.flatMap {
       let start = Double($0.start)
@@ -188,7 +218,8 @@ struct Transcriber {
           lagSeconds: Double(echo.lagFrames) * EchoFilter.frameSeconds,
           coupling: Double(echo.coupling),
           discardedSeconds: (max(0, localSeconds - keptSeconds) * 10).rounded() / 10),
-        voiceEmbeddings: tracks.systemSource == .teams ? embeddings : nil, engine: engine)
+        voiceEmbeddings: tracks.systemSource == .teams ? embeddings : nil, engine: engine),
+      filtering ? echo : nil
     )
   }
 

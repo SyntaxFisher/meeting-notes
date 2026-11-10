@@ -217,7 +217,8 @@ final class TeamsBackgroundReader: @unchecked Sendable {
   }
 
   private func mirrorMicrophone(_ state: TeamsMuteState) {
-    guard let muted = state.microphoneMuted else { return }
-    mirrored?.setMicrophoneMuted(muted)
+    guard let muted = state.microphoneMuted, let mirrored else { return }
+    TeamsTrace.shared.record("mirror", ["muted": muted])
+    mirrored.setMicrophoneMuted(muted)
   }
 }

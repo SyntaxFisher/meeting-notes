@@ -307,6 +307,50 @@ struct TeamsMeetingSnapshot: Equatable {
   var speaker: String??
 }
 
+/// One element the participant reader uses, in document order: a button title, a speaking
+/// frame inside a participant's tile (`role` "frame", `text` the tile's name), or a text of
+/// one of the roles that carry participant, section and speaker labels.
+struct TeamsAXItem: Codable, Equatable {
+  var role: String
+  var text: String
+}
+
+/// One Teams window as the participant reader read it.
+struct TeamsParticipantWindowInput: Codable, Equatable {
+  var id: Int
+  var minimized = false
+  var items: [TeamsAXItem] = []
+}
+
+/// One participant reading's input, or nil windows when Teams could not be read.
+struct TeamsParticipantInput: Codable, Equatable {
+  var hidden = false
+  var windows: [TeamsParticipantWindowInput]?
+
+  /// The input with only the items the reader recognizes: meeting controls, speaking frames,
+  /// section headers, participant descriptions and speaker labels. Chat messages and their
+  /// previews, file names and notifications stay out of the trace. Reading the traced input
+  /// gives the same snapshot.
+  var traced: TeamsParticipantInput {
+    var input = self
+    input.windows = windows?.map { window in
+      var window = window
+      window.items = window.items.filter { item in
+        switch item.role {
+        case "AXButton": return TeamsMuteClassifier.isMeetingControl([item.text])
+        case "frame": return true
+        default:
+          return TeamsParticipantParser.section(item.text) != nil
+            || TeamsParticipantParser.parse(role: item.role, description: item.text) != nil
+            || (item.role == "AXGroup" && TeamsSpeakingParser.label(item.text) != nil)
+        }
+      }
+      return window
+    }
+    return input
+  }
+}
+
 enum TeamsParticipantReader {
   /// Reads participant descriptions from the single Teams meeting window without changing the
   /// Teams interface. Returns nil when no single meeting window can be read.
@@ -323,24 +367,48 @@ enum TeamsParticipantReader {
 
   /// Reads participants and the active speaker in one pass over all Teams windows.
   static func snapshot() -> TeamsMeetingSnapshot? {
-    guard AXIsProcessTrusted() else { return nil }
+    let input = self.input()
+    TeamsTrace.shared.record("participants-input", value: input.traced)
+    let snapshot = self.snapshot(input)
+    TeamsTrace.shared.record(
+      "participants",
+      [
+        "count": snapshot?.participants?.count ?? -1,
+        "speaker": snapshot?.speaker.map { $0 ?? "" } ?? NSNull(),
+      ])
+    TeamsTrace.shared.record("participants-read", always: true, [:])
+    return snapshot
+  }
+
+  /// The snapshot `input` describes.
+  static func snapshot(_ input: TeamsParticipantInput) -> TeamsMeetingSnapshot? {
+    guard let windows = input.windows else { return nil }
+    return combine(
+      windows.map { reading($0.items, framesAreCurrent: !$0.minimized) }, hidden: input.hidden)
+  }
+
+  private static func input() -> TeamsParticipantInput {
+    guard AXIsProcessTrusted() else { return TeamsParticipantInput() }
     let apps = NSRunningApplication.runningApplications(
       withBundleIdentifier: "com.microsoft.teams2")
-    guard apps.count == 1, let app = apps.first else { return nil }
+    guard apps.count == 1, let app = apps.first else { return TeamsParticipantInput() }
     let application = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(application, 0.5)
     _ = AXUIElementSetAttributeValue(
       application, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
     guard let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) else {
-      return nil
+      return TeamsParticipantInput()
     }
     // Teams keeps the speaking frame current in a meeting window behind other apps, but not in
     // a minimized window or while Teams is hidden.
-    let hidden: Bool = attribute(application, kAXHiddenAttribute) ?? false
-    let readings = windows.map { window in
-      read(window, framesAreCurrent: !(attribute(window, kAXMinimizedAttribute) ?? false))
-    }
-    return combine(readings, hidden: hidden)
+    return TeamsParticipantInput(
+      hidden: attribute(application, kAXHiddenAttribute) ?? false,
+      windows: windows.map { window in
+        let minimized: Bool = attribute(window, kAXMinimizedAttribute) ?? false
+        return TeamsParticipantWindowInput(
+          id: TeamsWindowRegistry.shared.id(of: window), minimized: minimized,
+          items: items(of: window, frames: !minimized))
+      })
   }
 
   /// Teams can show one meeting in two windows: the meeting window with participant tiles and,
@@ -367,10 +435,40 @@ enum TeamsParticipantReader {
     return TeamsMeetingSnapshot(participants: participants, speaker: .some(framed.first))
   }
 
-  private static func read(_ window: AXUIElement, framesAreCurrent: Bool) -> WindowReading {
+  static let textRoles: Set<String> = ["AXRow", "AXGroup", "AXMenuItem", "AXImage", "AXStaticText"]
+
+  /// What one window's items show. Children follow their parent in document order, so section
+  /// headers precede their rows.
+  static func reading(_ items: [TeamsAXItem], framesAreCurrent: Bool) -> WindowReading {
     var reading = WindowReading()
-    var pending: [(element: AXUIElement, tile: String?)] = [(window, nil)]
     var inMeetingSection = true
+    for item in items {
+      switch item.role {
+      case "AXButton":
+        if TeamsMuteClassifier.isMeetingControl([item.text]) { reading.isMeeting = true }
+      case "frame":
+        if framesAreCurrent { reading.framed.insert(item.text) }
+      default:
+        if let present = TeamsParticipantParser.section(item.text) {
+          inMeetingSection = present
+        } else if let sighting = TeamsParticipantParser.parse(
+          role: item.role, description: item.text)
+        {
+          if sighting.source != .roster || inMeetingSection { reading.sightings.append(sighting) }
+        } else if item.role == "AXGroup", let label = TeamsSpeakingParser.label(item.text) {
+          reading.labels.append(label)
+        }
+      }
+    }
+    return reading
+  }
+
+  /// The window's items in document order, with speaking `frames` only where Teams keeps them
+  /// current. A frame belongs to the remote participant whose tile encloses it; your own tile
+  /// never names a voice in the Teams audio.
+  private static func items(of window: AXUIElement, frames: Bool) -> [TeamsAXItem] {
+    var items: [TeamsAXItem] = []
+    var pending: [(element: AXUIElement, tile: String?)] = [(window, nil)]
     var visited = 0
     while let (element, enclosingTile) = pending.popLast(), visited < 6_000 {
       visited += 1
@@ -378,38 +476,34 @@ enum TeamsParticipantReader {
       var tile = enclosingTile
       if role == kAXButtonRole as String,
         let title: String = attribute(element, kAXTitleAttribute)
-          ?? attribute(element, kAXDescriptionAttribute),
-        TeamsMuteClassifier.isMeetingControl([title])
+          ?? attribute(element, kAXDescriptionAttribute)
       {
-        reading.isMeeting = true
+        items.append(TeamsAXItem(role: role, text: title))
       }
-      if framesAreCurrent, let tile, role == "AXGroup",
+      if frames, let tile, role == "AXGroup",
         let classes: [String] = attribute(element, "AXDOMClassList"),
         classes.contains(TeamsSpeakingParser.speakingFrameClass)
       {
-        reading.framed.insert(tile)
+        items.append(TeamsAXItem(role: "frame", text: tile))
       }
-      if ["AXRow", "AXGroup", "AXMenuItem", "AXImage", "AXStaticText"].contains(role),
+      if textRoles.contains(role),
         let text = [kAXDescriptionAttribute, kAXValueAttribute].lazy.compactMap({
           (name: String) -> String? in attribute(element, name)
         }).first(where: { !$0.isEmpty })
       {
-        if let present = TeamsParticipantParser.section(text) {
-          inMeetingSection = present
-        } else if let sighting = TeamsParticipantParser.parse(role: role, description: text) {
-          if sighting.source != .roster || inMeetingSection { reading.sightings.append(sighting) }
-          // Your own tile never names a voice in the Teams audio.
-          if sighting.source == .tile { tile = sighting.isLocal ? nil : sighting.name }
-        } else if role == "AXGroup", let label = TeamsSpeakingParser.label(text) {
-          reading.labels.append(label)
+        items.append(TeamsAXItem(role: role, text: text))
+        if TeamsParticipantParser.section(text) == nil,
+          let sighting = TeamsParticipantParser.parse(role: role, description: text),
+          sighting.source == .tile
+        {
+          tile = sighting.isLocal ? nil : sighting.name
         }
       }
-      // Children are visited in document order, so section headers precede their rows.
       if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {
         pending.append(contentsOf: children.reversed().map { ($0, tile) })
       }
     }
-    return reading
+    return items
   }
 
   private static func attribute<T>(_ element: AXUIElement, _ name: String) -> T? {

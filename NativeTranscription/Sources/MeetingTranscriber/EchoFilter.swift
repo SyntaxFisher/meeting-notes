@@ -19,6 +19,7 @@ struct EchoFilter {
   private let microphone: [Float]
   private let teams: [Float]
   private let microphoneFloor: Float
+  private let teamsThreshold: Float
 
   /// - Parameters: Per-frame RMS loudness of both tracks on the same timeline.
   init(microphone: [Float], teams: [Float]) {
@@ -26,6 +27,7 @@ struct EchoFilter {
     self.teams = teams
     microphoneFloor = max(1e-4, Self.percentile(microphone.filter { $0 > 0 }, 0.1))
     let teamsThreshold = max(0.002, 0.05 * Self.percentile(teams, 0.95))
+    self.teamsThreshold = teamsThreshold
     var best = (lag: 0, correlation: Float(0))
     for lag in Self.lagFrames {
       var pairs: [(Float, Float)] = []
@@ -47,6 +49,19 @@ struct EchoFilter {
       ratios.append(microphone[t] / teams[t - best.lag])
     }
     coupling = ratios.count >= 50 ? Self.percentile(ratios, 0.5) : 0
+  }
+
+  /// Whether Teams played audible sound, delayed by the echo's lag, during a good part of the
+  /// time from `start` to `end`: only then can microphone speech there be its echo.
+  func isPlaying(start: Double, end: Double) -> Bool {
+    let first = max(0, Int(start / Self.frameSeconds))
+    let last = Int((end / Self.frameSeconds).rounded(.up))
+    guard last > first else { return false }
+    let playing = (first..<last).filter { t in
+      let source = t - lagFrames
+      return source >= 0 && source < teams.count && teams[source] > teamsThreshold
+    }.count
+    return Double(playing) >= 0.3 * Double(last - first)
   }
 
   /// Whether the microphone frame contains speech that Teams playback does not explain.
