@@ -36,9 +36,9 @@ Everything here is optional; Meeting Notes works without any of it. For coding a
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `autoRecordTeamsMeetings` | `true` | Record when you join a Teams meeting, transcribe after you leave. |
-| `agentsMayNameMeetings` | `true` | Suggest naming untitled meetings when agents work with them. Existing titles stay unchanged. |
-| `agentsMaySummarizeMeetings` | `true` | Suggest saving a short summary when agents work with a meeting. |
-| `agentsMayCorrectTranscripts` | `false` | Suggest fixing clear recognition errors when agents work with a transcript. |
+| `agentsMayNameMeetings` | `true` | Request naming untitled meetings whenever agents read them. Existing titles stay unchanged. |
+| `agentsMaySummarizeMeetings` | `true` | Require reading the whole transcript and saving a missing short summary, regardless of the current question. |
+| `agentsMayCorrectTranscripts` | `false` | Require correcting every confidently identified recognition error in the transcript passages read. |
 | `keepAudio` | `true` | Keep recordings after successful transcription. |
 | `mirrorTeamsMute` | `true` | Exclude the microphone while Teams shows you as muted, only when recording Teams audio. |
 | `localSpeakerName` | `null` | Label for everything the microphone records. `null` uses your Teams display name once seen, otherwise your macOS name. No colons. |

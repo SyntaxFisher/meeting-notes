@@ -89,7 +89,7 @@ Recording, storage and agent preferences live in `~/.config/meeting-notes/config
 
 ## Transcripts and speaker names
 
-A transcript starts with a short header: the title, the recording time, what each speaker label means and the participants Teams showed. Every turn follows as `[hh:mm:ss] Label: text`; header lines never start with `[`. Transcription itself does not summarize or rewrite the meeting. Connected agents can save a short summary and correct clear recognition errors according to your preferences or explicit requests. The summary appears below the meeting title in the Library.
+A transcript starts with a short header: the title, the recording time, what each speaker label means and the participants Teams showed. Every turn follows as `[hh:mm:ss] Label: text`; header lines never start with `[`. Transcription itself does not summarize or rewrite the meeting. Connected agents can save a short summary and correct clear recognition errors according to your preferences or explicit requests. The summary appears below the meeting title in the Library. Double-click the title or description to edit it in place; when no description exists, the placeholder reads “Add description...”. Click outside the input to save, or press Escape to discard the draft. There are no Save or Cancel buttons. Use Command-Z to undo a saved title/description edit and Shift-Command-Z to redo it during the app session. Typing inside an active input has its own text undo.
 
 ```
 Weekly Sync

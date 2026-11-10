@@ -81,6 +81,9 @@ extension MCPServer {
         "Speakers: "
           + result.record.speakers.map { "\($0.label)=\($0.displayName)" }.joined(separator: "; "))
     }
+    lines += MeetingAgentView.requiredActions(
+      result.record, namesMeetings: agentsMayNameMeetings,
+      summarizesMeetings: agentsMaySummarizeMeetings, correctsTranscripts: false)
     return .init(text: lines.joined(separator: "\n"))
   }
 
@@ -121,7 +124,7 @@ extension MCPServer {
     tool(
       "update_meeting", title: "Update meeting details",
       description:
-        "Save a short summary, name an untitled meeting, or rename speakers. Existing meeting titles cannot be changed.",
+        "Save a short summary, name an untitled meeting, or rename speakers.",
       properties: editIdentity.merging([
         "topic": [
           "type": "string", "description": "Title for an untitled meeting only.",

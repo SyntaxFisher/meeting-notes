@@ -41,12 +41,12 @@
     "agentsMayNameMeetings": {
       "type": "boolean",
       "default": true,
-      "description": "Allow connected agents to name meetings without a title when reading them. Existing titles stay unchanged."
+      "description": "Request that connected agents name meetings without a title when reading them. Existing titles stay unchanged."
     },
     "agentsMaySummarizeMeetings": {
       "type": "boolean",
       "default": true,
-      "description": "Nudge connected agents to save a short summary while reading a complete meeting."
+      "description": "Require connected agents to read the full transcript and save a missing short summary, regardless of the current question."
     },
     "keepAudio": {
       "type": "boolean",
@@ -56,7 +56,7 @@
     "agentsMayCorrectTranscripts": {
       "type": "boolean",
       "default": false,
-      "description": "Nudge connected agents to fix clear transcription errors while reading, without rewriting or guessing. Explicitly requested corrections remain available when disabled."
+      "description": "Require connected agents to correct every confidently identified transcription error in passages read, without rewriting or guessing. Explicitly requested corrections remain available when disabled."
     }
   },
   "additionalProperties": false

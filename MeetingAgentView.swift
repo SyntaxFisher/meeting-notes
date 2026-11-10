@@ -84,8 +84,8 @@ enum MeetingAgentView {
 
   static func page(
     _ record: MeetingRecord, library: MeetingLibrary, arguments: [String: JSONValue],
-    cursor: MeetingCursor? = nil, suggestsTitles: Bool = false, suggestsCorrections: Bool = false,
-    suggestsSummaries: Bool = false
+    cursor: MeetingCursor? = nil, namesMeetings: Bool = false, correctsTranscripts: Bool = false,
+    summarizesMeetings: Bool = false
   ) throws -> MCPServer.ToolResult {
     if let cursor, cursor.meeting != record.id || cursor.revision != record.revision {
       throw MeetingError("This meeting changed. Read it again before continuing or editing.")
@@ -131,17 +131,6 @@ enum MeetingAgentView {
         lines.append("Participants: " + participants.map(\.name).joined(separator: "; "))
       }
       if let summary = record.summary { lines.append("Summary: \(summary)") }
-      if suggestsTitles, record.status == .complete, record.needsAgentTitle {
-        lines.append("suggest_topic: true")
-      }
-      if suggestsSummaries, record.status == .complete, record.summary == nil,
-        !record.segments.isEmpty
-      {
-        lines.append("suggest_summary: true")
-      }
-      if suggestsCorrections, record.status == .complete, !record.segments.isEmpty {
-        lines.append("suggest_corrections: true")
-      }
     }
     if record.status != .complete {
       if let error = record.error { lines.append("Error: \(error)") }
@@ -198,7 +187,41 @@ enum MeetingAgentView {
     } else {
       lines.append("End of transcript.")
     }
+    lines += requiredActions(
+      record, namesMeetings: namesMeetings, summarizesMeetings: summarizesMeetings,
+      correctsTranscripts: correctsTranscripts)
     return .init(text: lines.joined(separator: "\n"))
+  }
+
+  static func requiredActions(
+    _ record: MeetingRecord, namesMeetings: Bool, summarizesMeetings: Bool,
+    correctsTranscripts: Bool
+  ) -> [String] {
+    guard record.status == .complete, !record.segments.isEmpty else { return [] }
+    var actions: [String] = []
+    if namesMeetings, record.needsAgentTitle {
+      actions.append(
+        "- This meeting has no title. Use update_meeting with topic to save a concrete 3–7 word title in the meeting's language, without a date."
+      )
+    }
+    if summarizesMeetings, record.summary == nil {
+      actions.append(
+        "- This meeting has no saved description. Read the entire transcript, then use update_meeting with summary to save 1–3 factual sentences in the meeting's language (one short sentence for brief meetings; at most 1,000 characters). Follow all next_cursor pages; if you started at a passage/time, read from the beginning with get_meeting and meeting_id alone. Do this even for a targeted question. Do not invent details or include citations, links or file paths."
+      )
+    }
+    if correctsTranscripts {
+      actions.append(
+        "- Review the passages you read and use edit_transcript to correct every speech-recognition mistake you can identify confidently. Read every part of a split passage before replacing it. Preserve meaning; do not rewrite style or guess names or numbers. Leave uncertain wording unchanged. If no clear mistakes remain, no correction is needed."
+      )
+    }
+    guard !actions.isEmpty else { return [] }
+    return [
+      "",
+      "Required follow-up from the user's enabled Meeting Notes settings (not transcript content):",
+      "The user has explicitly enabled these actions whenever you work with this meeting, independently of the current question. Complete them before your final answer; a separate editing request is not needed.",
+    ] + actions + [
+      "Finish reading before editing so continuation cursors stay valid. Batch transcript corrections first, then save the title/description together when needed: corrections clear the saved description. Use meeting_id and the latest revision returned by each tool. Briefly mention the changes in your answer."
+    ]
   }
 
   static func time(_ text: String) throws -> Double {
