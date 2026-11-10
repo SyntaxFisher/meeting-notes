@@ -379,7 +379,7 @@ enum TeamsParticipantReader {
       if role == kAXButtonRole as String,
         let title: String = attribute(element, kAXTitleAttribute)
           ?? attribute(element, kAXDescriptionAttribute),
-        title.range(of: #"^(?:Leave|Verlassen)\b"#, options: .regularExpression) != nil
+        TeamsMuteClassifier.isMeetingControl([title])
       {
         reading.isMeeting = true
       }

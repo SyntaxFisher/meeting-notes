@@ -26,12 +26,20 @@ enum TeamsMuteState: Hashable {
     }
   }
 
-  var microphoneMuted: Bool { self == .muted }
+  var microphoneMuted: Bool? {
+    switch self {
+    case .muted: return true
+    case .unmuted: return false
+    case .unavailable: return nil
+    }
+  }
 }
 
 struct TeamsWindowSnapshot {
   var title: String? = nil
   let buttons: [[String]]
+  var sharingPicker = false
+  var meetingEnded = false
   /// Whether Teams keeps this window's controls current: the compact meeting view, or the
   /// main window of Teams while it is in front. A meeting window behind other apps or
   /// minimized keeps showing the mute state it last drew.
@@ -99,14 +107,35 @@ enum TeamsMuteClassifier {
     }
   }
 
-  private static func isMeetingWindow(_ window: TeamsWindowSnapshot) -> Bool {
-    window.buttons.contains { labels in labels.contains(where: isLeaveButton) }
+  static func isMeetingWindow(_ window: TeamsWindowSnapshot) -> Bool {
+    !window.meetingEnded
+      && (window.sharingPicker || window.buttons.contains(where: isMeetingControl))
   }
 
-  private static func isLeaveButton(_ label: String) -> Bool {
-    label.range(
-      of: #"^(?:Leave|Verlassen)(?:\b|$)"#, options: [.regularExpression, .caseInsensitive])
-      != nil
+  static func isMeetingControl(_ labels: [String]) -> Bool {
+    labels.contains { label in
+      label.range(
+        of: #"^(?:Leave|Verlassen|Stop sharing|Freigabe beenden)(?:\b|$)"#,
+        options: [.regularExpression, .caseInsensitive]) != nil
+    }
+  }
+
+  static func isMeetingEndControl(_ labels: [String]) -> Bool {
+    labels.contains { label in
+      label.range(
+        of:
+          #"^(?:Rejoin(?: the call)?|Erneut beitreten|Anruf erneut beitreten|Erneut teilnehmen)(?:\b|$)"#,
+        options: [.regularExpression, .caseInsensitive]) != nil
+    }
+  }
+
+  /// Teams exposes only this popover through Accessibility while choosing what to share.
+  static func isSharingPicker(role: String, labels: [String]) -> Bool {
+    role == "AXHeading"
+      && labels.contains {
+        ["share content", "inhalt freigeben", "inhalte freigeben", "inhalt teilen"].contains(
+          $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+      }
   }
 
   private static func classifyButton(_ labels: [String]) -> TeamsMuteState? {
@@ -135,7 +164,36 @@ enum TeamsMuteClassifier {
   }
 }
 
-enum TeamsMuteReader {
+/// A Teams popover can hide every call control while its meeting window remains open.
+/// A closed window or explicit post-call controls establish absence; missing controls do not.
+struct TeamsMeetingWindowTracker<Window: Equatable> {
+  private var knownWindows: [Window] = []
+
+  mutating func observe(_ windows: [(id: Window, snapshot: TeamsWindowSnapshot)]) -> TeamsReading {
+    knownWindows.removeAll { known in
+      !windows.contains { $0.id == known && !$0.snapshot.meetingEnded }
+    }
+    for window in windows where TeamsMuteClassifier.isMeetingWindow(window.snapshot) {
+      if !knownWindows.contains(window.id) { knownWindows.append(window.id) }
+    }
+    var state = TeamsMuteClassifier.classify(windows.map(\.snapshot))
+    if state == .unavailable(.noMeeting), !knownWindows.isEmpty {
+      state = .unavailable(.noControl)
+    }
+    return TeamsReading(
+      state: state, meetingTitle: TeamsMuteClassifier.meetingTitle(windows.map(\.snapshot)))
+  }
+}
+
+final class TeamsMuteReader {
+  private struct WindowIdentity: Equatable {
+    let element: AXUIElement
+
+    static func == (lhs: Self, rhs: Self) -> Bool { CFEqual(lhs.element, rhs.element) }
+  }
+
+  private var tracker = TeamsMeetingWindowTracker<WindowIdentity>()
+
   static var hasAccessibilityAccess: Bool { AXIsProcessTrusted() }
 
   static func requestAccess() {
@@ -143,8 +201,8 @@ enum TeamsMuteReader {
     _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
   }
 
-  static func read() -> TeamsReading {
-    guard hasAccessibilityAccess else {
+  func read() -> TeamsReading {
+    guard Self.hasAccessibilityAccess else {
       return TeamsReading(state: .unavailable(.accessibilityPermission))
     }
     let apps = NSRunningApplication.runningApplications(
@@ -161,7 +219,7 @@ enum TeamsMuteReader {
       return TeamsReading(state: .unavailable(.accessibilityError))
     }
     let frontmost: Bool = attribute(application, kAXFrontmostAttribute) ?? false
-    var snapshots: [TeamsWindowSnapshot] = []
+    var snapshots: [(id: WindowIdentity, snapshot: TeamsWindowSnapshot)] = []
     for window in windows {
       guard var snapshot = scan(window) else {
         return TeamsReading(state: .unavailable(.accessibilityError))
@@ -170,33 +228,44 @@ enum TeamsMuteReader {
       let main: Bool = attribute(window, kAXMainAttribute) ?? false
       snapshot.isCurrent =
         !minimized && (TeamsMuteClassifier.isCompactView(snapshot.title) || (frontmost && main))
-      snapshots.append(snapshot)
+      snapshots.append((WindowIdentity(element: window), snapshot))
     }
-    return TeamsReading(
-      state: TeamsMuteClassifier.classify(snapshots),
-      meetingTitle: TeamsMuteClassifier.meetingTitle(snapshots))
+    return tracker.observe(snapshots)
   }
 
-  private static func scan(_ window: AXUIElement) -> TeamsWindowSnapshot? {
+  private func scan(_ window: AXUIElement) -> TeamsWindowSnapshot? {
     var pending: [AXUIElement] = [window]
     var buttons: [[String]] = []
+    var sharingPicker = false
+    var meetingEnded = false
     var visited = 0
     while let element = pending.popLast() {
       visited += 1
       guard visited <= 4_000 else { return nil }
-      if let role: String = attribute(element, kAXRoleAttribute), role == kAXButtonRole as String {
-        let labels: [String] = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute]
-          .compactMap { attribute(element, $0) }
-        buttons.append(labels)
+      if let role: String = attribute(element, kAXRoleAttribute),
+        role == kAXButtonRole as String || role == "AXHeading"
+      {
+        let labels: [String] = [
+          kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute, kAXValueAttribute,
+        ]
+        .compactMap { attribute(element, $0) }
+        if role == kAXButtonRole as String {
+          buttons.append(labels)
+          meetingEnded = meetingEnded || TeamsMuteClassifier.isMeetingEndControl(labels)
+        }
+        sharingPicker =
+          sharingPicker || TeamsMuteClassifier.isSharingPicker(role: role, labels: labels)
       }
       if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {
         pending.append(contentsOf: children)
       }
     }
-    return TeamsWindowSnapshot(title: attribute(window, kAXTitleAttribute), buttons: buttons)
+    return TeamsWindowSnapshot(
+      title: attribute(window, kAXTitleAttribute), buttons: buttons, sharingPicker: sharingPicker,
+      meetingEnded: meetingEnded)
   }
 
-  private static func attribute<T>(_ element: AXUIElement, _ name: String) -> T? {
+  private func attribute<T>(_ element: AXUIElement, _ name: String) -> T? {
     var value: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else {
       return nil

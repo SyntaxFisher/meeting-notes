@@ -37,6 +37,8 @@ Logs: `~/Library/Logs/Meeting Notes/meeting-notes.log` and one rotated `meeting-
 - `devenv.py meeting <scenario> --leave --score --repeat 2 [--rejoin-delay 8]` tests back-to-back meetings: the desktop leaves, waits, and rejoins the same call while the guests stay, so the next recording starts while the previous meeting is transcribing. Every meeting is scored, and the report says from `events.jsonl` how long before the previous transcript was ready the next recording started.
 - `devenv.py score <scenario> <transcript>` scores any transcript.
 
+For recording continuity, open and hold the Share content picker, start and stop screen sharing, open menus and chat, resize the meeting, and minimize both the meeting and its compact view during playback. The recording ID must stay the same throughout. Leaving must stop recording even when Teams keeps a post-call window with a Rejoin button open. Scoring rejects multiple recordings during one scenario and recordings that end before playback finishes.
+
 `devenv.py offline solo --tracks` checks a solo call with a silent Teams track through the real transcription engine. It fails if microphone speech loses its local-speaker identity. Silence from other participants must not turn a known microphone track into anonymous mixed audio.
 
 - `devenv.py replay <scenario> <capture directory>` transcribes an archived live capture twice, as one mixed recording and as separate microphone and Teams tracks, and compares the scores. `--echo 4` first adds a delayed, band-limited copy of the Teams track to the microphone at that gain, which simulates a call without headphones (`--echo-delay` sets the delay, 0.06 s by default).

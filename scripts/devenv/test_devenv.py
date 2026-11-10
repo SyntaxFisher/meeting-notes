@@ -12,6 +12,21 @@ import devenv
 
 
 class LivePlaybackTests(unittest.TestCase):
+    def test_scoring_rejects_split_and_truncated_recordings(self):
+        first = {"id": "first", "started_at": "2026-01-01T12:00:00+00:00",
+                 "ended_at": "2026-01-01T12:00:10+00:00", "status": "complete"}
+        second = {**first, "id": "second", "started_at": "2026-01-01T12:00:12+00:00",
+                  "ended_at": "2026-01-01T12:01:00+00:00"}
+        from datetime import datetime
+        expected_end = datetime.fromisoformat(second["ended_at"]).timestamp()
+        with self.assertRaisesRegex(SystemExit, "split into multiple recordings"):
+            devenv.check_recording_continuity([first, second], expected_end)
+        with self.assertRaisesRegex(SystemExit, "before playback finished"):
+            devenv.check_recording_continuity([first], expected_end)
+        devenv.check_recording_continuity([{**first, "ended_at": second["ended_at"]}],
+                                         expected_end)
+        devenv.check_recording_continuity([{**first, "status": "recording"}], expected_end)
+
     def test_unmute_ignores_another_windows_stale_button(self):
         live = "Unmute mic"
         stale = "Mute mic"
