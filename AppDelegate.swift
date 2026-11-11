@@ -283,7 +283,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
       }
       lines.append("Otherwise the update installs once recording and transcription finish.")
       alert.informativeText = lines.filter { !$0.isEmpty }.joined(separator: " ")
-      addConfirmation("Install and Relaunch", to: alert)
+      addConfirmation("Relaunch", to: alert)
       guard await present(alert) == .alertFirstButtonReturn else {
         AppLog.event("update.relaunchDeclined")
         return
