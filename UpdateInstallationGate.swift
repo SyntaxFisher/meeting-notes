@@ -19,7 +19,11 @@ final class UpdateInstallationGate {
   }
 
   func resumeIfIdle(_ idle: Bool) {
-    guard idle, let install = pendingInstallation else { return }
+    if idle { installNow() }
+  }
+
+  func installNow() {
+    guard let install = pendingInstallation else { return }
     pendingInstallation = nil
     installationStarted = true
     install()

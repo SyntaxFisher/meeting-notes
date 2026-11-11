@@ -76,7 +76,14 @@ struct Smoke {
     updateGate.reset()
     updateGate.resumeIfIdle(true)
     precondition(installs == 2 && !updateGate.installationStarted)
-    print("Update installation waits for work, resumes once, and clears failed attempts: OK")
+    precondition(updateGate.postpone(whileBusy: true) { installs += 1 })
+    updateGate.installNow()
+    updateGate.installNow()
+    precondition(installs == 3 && updateGate.installationStarted)
+    updateGate.reset()
+    print(
+      "Update installation waits for work, resumes once, installs on request, and clears failed attempts: OK"
+    )
     SpeechPlanSmoke.run()
     for microphone in [false, true] {
       for systemAudio in [false, true] {
