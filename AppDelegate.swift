@@ -64,6 +64,8 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
   private var agentActions: Set<String> = []
   /// Changes whenever an agent action starts or ends, so a check that overlapped it is dropped.
   private var agentActionRevision = 0
+  /// Set once the user agreed to quit while busy, so termination does not ask again.
+  private var quitConfirmed = false
 
   private var config: AppConfig { configStore.config }
   private var updateIsBusy: Bool {
@@ -207,6 +209,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     startControlServer()
     libraryStore.open()
     appUpdater.isBusy = { [weak self] in self?.updateIsBusy ?? true }
+    appUpdater.confirmRelaunch = { [weak self] in self?.confirmUpdateRelaunch() }
     appUpdater.start()
     var details: [String: Any] = [
       "build": Bundle.main.infoDictionary?["CFBundleVersion"] ?? "unknown",
@@ -240,24 +243,14 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    if engine.isBusy {
+    if engine.isBusy && !quitConfirmed {
       let alert = NSAlert()
       alert.messageText = "Quit Meeting Notes?"
-      var lines: [String] = []
-      if engine.active != nil {
-        lines.append("The recording stops and is saved first.")
-      }
-      let waiting = engine.queue.count + engine.saving.count
-      if waiting > 0 || engine.active != nil {
-        lines.append(
-          "Meetings waiting for their transcript stay queued and continue when you open Meeting Notes again."
-        )
-      }
-      alert.informativeText = lines.joined(separator: " ")
-      alert.addButton(withTitle: "Keep Open")
-      alert.addButton(withTitle: "Quit")
+      alert.informativeText = interruptedWork(
+        resumes: "continue when you open Meeting Notes again.")
+      addConfirmation("Quit", to: alert)
       NSApp.activate(ignoringOtherApps: true)
-      guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+      guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
     }
     controlServer?.stop()
     Task {
@@ -267,6 +260,59 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
       NSApp.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater
+  }
+
+  /// Asks whether to relaunch into an update that Sparkle postponed because the app is busy.
+  /// Declining keeps the update waiting until the app is idle.
+  private func confirmUpdateRelaunch() {
+    Task {
+      let alert = NSAlert()
+      guard !requestingPermissions, !onboarding.isVisible else {
+        alert.messageText = "The update installs after setup"
+        alert.informativeText =
+          "Meeting Notes relaunches with the update once the setup is finished."
+        _ = await present(alert)
+        return
+      }
+      alert.messageText = "Install Update and Relaunch?"
+      var lines = [interruptedWork(resumes: "continue after the relaunch.")]
+      if config.autoRecordTeamsMeetings
+        && (autoRecord.ownsRecording || autoRecord.waitingForMeetingEnd)
+      {
+        lines.append("A Teams meeting that is still running is recorded again after the relaunch.")
+      }
+      lines.append("Otherwise the update installs once recording and transcription finish.")
+      alert.informativeText = lines.filter { !$0.isEmpty }.joined(separator: " ")
+      addConfirmation("Install and Relaunch", to: alert)
+      guard await present(alert) == .alertFirstButtonReturn else {
+        AppLog.event("update.relaunchDeclined")
+        return
+      }
+      AppLog.event("update.relaunchConfirmed")
+      quitConfirmed = true
+      appUpdater.installation.installNow()
+    }
+  }
+
+  /// Describes what quitting does to the current recording and the transcription queue.
+  private func interruptedWork(resumes: String) -> String {
+    var lines: [String] = []
+    if engine.active != nil {
+      lines.append("The recording stops and is saved first.")
+    }
+    if engine.active != nil || !engine.queue.isEmpty || !engine.saving.isEmpty {
+      lines.append("Meetings waiting for their transcript stay queued and \(resumes)")
+    }
+    return lines.joined(separator: " ")
+  }
+
+  /// Adds a destructive confirmation on the right and a Cancel button on the left that
+  /// Return and Escape choose.
+  private func addConfirmation(_ title: String, to alert: NSAlert) {
+    let confirm = alert.addButton(withTitle: title)
+    confirm.hasDestructiveAction = true
+    confirm.keyEquivalent = ""
+    alert.addButton(withTitle: "Cancel").keyEquivalent = "\r"
   }
 
   // MARK: Lifecycle events

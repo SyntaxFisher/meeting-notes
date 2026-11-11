@@ -5,6 +5,8 @@ import Sparkle
 final class AppUpdater: NSObject, SPUUpdaterDelegate {
   let installation = UpdateInstallationGate()
   var isBusy: () -> Bool = { false }
+  /// Called when the user chose to install and relaunch while the app is busy.
+  var confirmRelaunch: () -> Void = {}
   private let enabled = Bundle.main.object(forInfoDictionaryKey: "MNEnableUpdater") as? Bool == true
   private lazy var controller = SPUStandardUpdaterController(
     startingUpdater: false, updaterDelegate: self, userDriverDelegate: nil)
@@ -69,7 +71,10 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
     _ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
     untilInvokingBlock installHandler: @escaping () -> Void
   ) -> Bool {
-    installation.postpone(whileBusy: isBusy(), install: installHandler)
+    guard installation.postpone(whileBusy: isBusy(), install: installHandler) else { return false }
+    AppLog.event("update.relaunchPostponed", "build=\(item.versionString)")
+    confirmRelaunch()
+    return true
   }
 
   func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
