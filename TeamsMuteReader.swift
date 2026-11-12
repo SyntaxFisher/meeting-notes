@@ -66,6 +66,9 @@ struct TeamsWindowInput: Codable, Equatable {
   var buttons: [[String]] = []
   var headings: [[String]] = []
   var clock: TeamsCallClock?
+  /// Whether the window exposed no button and no heading below its title bar. Teams can keep
+  /// the window of a call that ended like this, without its content, for a minute.
+  var blank: Bool?
 }
 
 /// The elapsed-time clock of a Teams call window: "--:--" while the call has not connected,
@@ -99,7 +102,8 @@ extension TeamsWindowInput {
       main: try values.decode(Bool.self, forKey: .main),
       buttons: try values.decode([[String]].self, forKey: .buttons),
       headings: try values.decode([[String]].self, forKey: .headings),
-      clock: try values.decodeIfPresent(TeamsCallClock.self, forKey: .clock))
+      clock: try values.decodeIfPresent(TeamsCallClock.self, forKey: .clock),
+      blank: try values.decodeIfPresent(Bool.self, forKey: .blank))
   }
 }
 
@@ -172,7 +176,7 @@ enum TeamsMuteClassifier {
     TeamsWindowSnapshot(
       title: window.title, buttons: window.buttons,
       sharingPicker: window.headings.contains { isSharingPicker(role: "AXHeading", labels: $0) },
-      meetingEnded: window.buttons.contains(where: isMeetingEndControl),
+      meetingEnded: window.blank == true || window.buttons.contains(where: isMeetingEndControl),
       clock: window.clock,
       isCurrent: !window.minimized && (isCompactView(window.title) || (frontmost && window.main)))
   }
@@ -300,7 +304,8 @@ enum TeamsMuteClassifier {
 }
 
 /// A Teams popover can hide every call control while its meeting window remains open.
-/// A closed window or explicit post-call controls establish absence; missing controls do not.
+/// A closed window, a blank one or explicit post-call controls establish absence; missing
+/// controls do not.
 /// A call that showed it is connecting stays so until a window shows it connected or the
 /// meeting ends, since a compact view that replaces its window shows neither.
 struct TeamsMeetingWindowTracker<Window: Equatable> {
@@ -409,11 +414,14 @@ final class TeamsMuteReader {
     return input
   }
 
+  /// Reads one window, or nil when Teams did not answer for part of it: a window Teams is too
+  /// busy to describe would read like a blank one.
   private func scan(_ window: AXUIElement) -> TeamsWindowInput? {
-    var pending: [AXUIElement] = [window]
+    var pending: [(element: AXUIElement, inTitleBar: Bool)] = [(window, false)]
     var input = TeamsWindowInput(id: 0, title: attribute(window, kAXTitleAttribute))
     var visited = 0
-    while let element = pending.popLast() {
+    var blank = true
+    while let (element, inTitleBar) = pending.popLast() {
       visited += 1
       guard visited <= 4_000 else { return nil }
       if let role: String = attribute(element, kAXRoleAttribute),
@@ -426,16 +434,25 @@ final class TeamsMuteReader {
         .compactMap { attribute(element, $0) }
         if role == kAXButtonRole as String {
           input.buttons.append(labels)
+          if !inTitleBar { blank = false }
         } else if role == "AXHeading" {
           input.headings.append(labels)
+          blank = false
         } else {
           input.clock = TeamsCallClock(role: role, labels: labels)
         }
       }
-      if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {
-        pending.append(contentsOf: children)
+      var children: CFTypeRef?
+      let result = AXUIElementCopyAttributeValue(
+        element, kAXChildrenAttribute as CFString, &children)
+      if result == .cannotComplete { return nil }
+      if let children = children as? [AXUIElement] {
+        // The window's own buttons close, minimize and zoom it.
+        let titleBar = CFEqual(element, window)
+        pending.append(contentsOf: children.map { ($0, titleBar) })
       }
     }
+    input.blank = blank
     return input
   }
 

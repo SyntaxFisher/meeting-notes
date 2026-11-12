@@ -19,7 +19,9 @@ struct TeamsParticipantSighting: Equatable {
 /// every participant with role and mute state ("Anna Schmidt (Unverified), Meeting guest,
 /// Unmuted"); video tiles list visible participants ("Sam Carter (Guest), Context menu is
 /// available", "Myself video, Jona Bihl, Muted, Has context menu"); transient notices announce
-/// joins ("Sam Carter joined the call").
+/// joins ("Sam Carter joined the call"). A 1:1 call and the compact meeting view describe a
+/// tile with the name alone ("Sam Carter", "Myself video, Jona Bihl"), which only counts on
+/// the call stage (`stageTileRole`), where every menu item is a tile.
 enum TeamsParticipantParser {
   private static let roles: [String: String] = [
     "organizer": "Organizer", "co-organizer": "Co-organizer", "presenter": "Presenter",
@@ -69,6 +71,7 @@ enum TeamsParticipantParser {
     switch axRole {
     case "AXRow", "AXGroup": return rosterEntry(text)
     case "AXMenuItem", "AXImage": return tile(text)
+    case stageTileRole: return tile(text, onStage: true)
     case "AXStaticText": return notice(text)
     default: return nil
     }
@@ -88,7 +91,10 @@ enum TeamsParticipantParser {
     return TeamsParticipantSighting(name: name, tag: tag, role: role, muted: muted, source: .roster)
   }
 
-  private static func tile(_ text: String) -> TeamsParticipantSighting? {
+  /// The role the reader gives a menu item on the call stage.
+  static let stageTileRole = "tile"
+
+  private static func tile(_ text: String, onStage: Bool = false) -> TeamsParticipantSighting? {
     var body = text
     var isLocal = false
     for prefix in localPrefixes where body.hasPrefix(prefix) {
@@ -96,8 +102,10 @@ enum TeamsParticipantParser {
       isLocal = true
     }
     let parts = components(body)
-    guard let last = parts.last, tileSuffixes.contains(last.lowercased()) else { return nil }
-    let states = parts.dropLast()
+    guard let last = parts.last else { return nil }
+    let hasSuffix = tileSuffixes.contains(last.lowercased())
+    guard hasSuffix || onStage else { return nil }
+    let states = hasSuffix ? parts.dropLast() : parts[...]
     let nameParts = states.prefix {
       muteWords[$0.lowercased()] == nil && !tileStates.contains($0.lowercased())
     }
@@ -318,6 +326,7 @@ struct TeamsAXItem: Codable, Equatable {
 /// One Teams window as the participant reader read it.
 struct TeamsParticipantWindowInput: Codable, Equatable {
   var id: Int
+  var title: String?
   var minimized = false
   var items: [TeamsAXItem] = []
 }
@@ -359,6 +368,7 @@ enum TeamsParticipantReader {
   /// What one Teams window shows, gathered in a single pass.
   struct WindowReading: Equatable {
     var isMeeting = false
+    var isCompactView = false
     var sightings: [TeamsParticipantSighting] = []
     /// Tiles framed as the active speaker; only collected from a window Teams keeps current.
     var framed: Set<String> = []
@@ -384,7 +394,11 @@ enum TeamsParticipantReader {
   static func snapshot(_ input: TeamsParticipantInput) -> TeamsMeetingSnapshot? {
     guard let windows = input.windows else { return nil }
     return combine(
-      windows.map { reading($0.items, framesAreCurrent: !$0.minimized) }, hidden: input.hidden)
+      windows.map {
+        var reading = reading($0.items, framesAreCurrent: !$0.minimized)
+        reading.isCompactView = TeamsMuteClassifier.isCompactView($0.title)
+        return reading
+      }, hidden: input.hidden)
   }
 
   private static func input() -> TeamsParticipantInput {
@@ -406,20 +420,23 @@ enum TeamsParticipantReader {
       windows: windows.map { window in
         let minimized: Bool = attribute(window, kAXMinimizedAttribute) ?? false
         return TeamsParticipantWindowInput(
-          id: TeamsWindowRegistry.shared.id(of: window), minimized: minimized,
+          id: TeamsWindowRegistry.shared.id(of: window),
+          title: attribute(window, kAXTitleAttribute), minimized: minimized,
           items: items(of: window, frames: !minimized))
       })
   }
 
   /// Teams can show one meeting in two windows: the meeting window with participant tiles and,
   /// while another app or Teams view is in front, a compact view whose label names the
-  /// speaker. Participants come from the one meeting window that lists any; the compact view's
-  /// label wins over a gallery frame.
+  /// speaker. Participants come from the one meeting window that lists any, together with the
+  /// compact view, which shows the same meeting; the compact view's label wins over a gallery
+  /// frame.
   static func combine(_ readings: [WindowReading], hidden: Bool) -> TeamsMeetingSnapshot {
     let meetings = readings.filter(\.isMeeting)
     let listing = meetings.filter { !$0.sightings.isEmpty }
     let participants =
-      meetings.isEmpty || listing.count > 1 ? nil : (listing.first?.sightings ?? [])
+      meetings.isEmpty || listing.filter({ !$0.isCompactView }).count > 1
+      ? nil : listing.flatMap(\.sightings)
     guard !hidden, !meetings.isEmpty else {
       return TeamsMeetingSnapshot(participants: participants)
     }
@@ -468,12 +485,17 @@ enum TeamsParticipantReader {
   /// never names a voice in the Teams audio.
   private static func items(of window: AXUIElement, frames: Bool) -> [TeamsAXItem] {
     var items: [TeamsAXItem] = []
-    var pending: [(element: AXUIElement, tile: String?)] = [(window, nil)]
+    var pending: [(element: AXUIElement, tile: String?, onStage: Bool)] = [(window, nil, false)]
     var visited = 0
-    while let (element, enclosingTile) = pending.popLast(), visited < 6_000 {
+    while let (element, enclosingTile, enclosingStage) = pending.popLast(), visited < 6_000 {
       visited += 1
-      let role: String = attribute(element, kAXRoleAttribute) ?? ""
+      var role: String = attribute(element, kAXRoleAttribute) ?? ""
       var tile = enclosingTile
+      // Teams marks the call stage as the main landmark in every language.
+      let onStage =
+        enclosingStage
+        || (role == "AXGroup" && attribute(element, kAXSubroleAttribute) == "AXLandmarkMain")
+      if onStage, role == "AXMenuItem" { role = TeamsParticipantParser.stageTileRole }
       if role == kAXButtonRole as String,
         let title: String = attribute(element, kAXTitleAttribute)
           ?? attribute(element, kAXDescriptionAttribute)
@@ -486,7 +508,7 @@ enum TeamsParticipantReader {
       {
         items.append(TeamsAXItem(role: "frame", text: tile))
       }
-      if textRoles.contains(role),
+      if textRoles.contains(role) || role == TeamsParticipantParser.stageTileRole,
         let text = [kAXDescriptionAttribute, kAXValueAttribute].lazy.compactMap({
           (name: String) -> String? in attribute(element, name)
         }).first(where: { !$0.isEmpty })
@@ -500,7 +522,7 @@ enum TeamsParticipantReader {
         }
       }
       if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {
-        pending.append(contentsOf: children.reversed().map { ($0, tile) })
+        pending.append(contentsOf: children.reversed().map { ($0, tile, onStage) })
       }
     }
     return items

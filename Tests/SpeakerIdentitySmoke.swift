@@ -131,6 +131,53 @@ enum SpeakerIdentitySmoke {
         [Reading(isMeeting: true, sightings: [anna]), Reading(isMeeting: true, sightings: [anna])],
         hidden: false
       ).participants == nil)
+    let callee = TeamsParticipantSighting(name: "Sam Carter", joined: true, source: .notice)
+    precondition(
+      TeamsParticipantReader.combine(
+        [gallery, Reading(isMeeting: true, isCompactView: true, sightings: [callee])],
+        hidden: false
+      ).participants == [anna, callee],
+      "The compact view lists participants of the meeting window's own meeting")
+    let stage = TeamsParticipantParser.stageTileRole
+    func parse(_ role: String, _ text: String) -> TeamsParticipantSighting? {
+      TeamsParticipantParser.parse(role: role, description: text)
+    }
+    precondition(
+      parse(stage, "Sam Carter") == TeamsParticipantSighting(name: "Sam Carter", source: .tile)
+        && parse(stage, "Muster, Léa (Design)")?.name == "Muster, Léa (Design)"
+        && parse(stage, "Sam Carter (Guest), Muted, Context menu is available")
+          == TeamsParticipantSighting(name: "Sam Carter", tag: "Guest", muted: true, source: .tile),
+      "A 1:1 call names the other person's tile without a suffix")
+    precondition(
+      parse(stage, "Myself video, Jona Bihl")
+        == TeamsParticipantSighting(name: "Jona Bihl", isLocal: true, source: .tile))
+    precondition(
+      parse("AXMenuItem", "Sam Carter") == nil && parse(stage, "+3") == nil
+        && parse(stage, "Video is off") == nil,
+      "A bare name is a tile only on the call stage")
+    let oneToOne = TeamsParticipantInput(
+      windows: [
+        TeamsParticipantWindowInput(
+          id: 1, title: "Sam Carter", minimized: true,
+          items: [
+            TeamsAXItem(role: "AXButton", text: "Leave"),
+            TeamsAXItem(
+              role: "AXImage", text: "Myself video, Jona Bihl, Unmuted, Has context menu"),
+          ]),
+        TeamsParticipantWindowInput(
+          id: 2, title: "Meeting compact view | Sam Carter",
+          items: [
+            TeamsAXItem(role: "AXButton", text: "Leave"),
+            TeamsAXItem(role: stage, text: "Myself video, Jona Bihl"),
+            TeamsAXItem(role: stage, text: "Sam Carter"),
+          ]),
+      ])
+    var callRoster = ParticipantRoster()
+    callRoster.observe(TeamsParticipantReader.snapshot(oneToOne)?.participants ?? [], at: 1)
+    precondition(
+      callRoster.remoteParticipants.map(\.name) == ["Sam Carter"]
+        && callRoster.localParticipant?.name == "Jona Bihl" && oneToOne.traced == oneToOne,
+      "The compact view of a 1:1 call names the other person: \(callRoster)")
 
     var timeline = SpeakingTimeline()
     precondition(timeline.observe("Anna", at: 10))
