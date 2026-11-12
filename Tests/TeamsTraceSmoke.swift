@@ -328,6 +328,17 @@ enum TeamsTraceSmoke {
     precondition(
       TeamsMuteClassifier.reading(legacy, tracker: &fresh).meetingPresence == .inMeeting,
       "Traced inputs without the clock read as a connected call")
+    var ended = call(.running)
+    precondition(presence(ended) == .inMeeting)
+    ended.windows[0].buttons = [["More options"]]
+    ended.windows[0].blank = false
+    precondition(presence(ended) == .inMeeting, "A popover hides the controls of a running call")
+    ended.windows[0].buttons = []
+    ended.windows[0].blank = true
+    precondition(
+      presence(ended) == .noMeeting && ended.traced == ended,
+      "A call window Teams keeps without its content has ended")
+    precondition(presence(chat) == .noMeeting)
     let traced = call(.pending, compactView: controls + [["People"], ["Chat"]]).traced
     precondition(
       traced.windows.map(\.clock) == [.pending, nil]
