@@ -418,6 +418,24 @@ private struct AttentionRow: View {
   }
 }
 
+/// The age of a date as text, such as "yesterday". The panel's view lives for days while hidden,
+/// so the text is formatted against the system clock each minute and each time a window becomes
+/// key, never left to a self-updating date text.
+private struct RelativeAge: View {
+  let date: Date
+  @State private var shownAt = Date.now
+
+  var body: some View {
+    TimelineView(.everyMinute) { _ in
+      Text(date.formatted(.relative(presentation: .named)))
+        .id(shownAt)
+    }
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+      shownAt = .now
+    }
+  }
+}
+
 private struct RecentMeetingRow: View {
   let model: AppModel
   let meeting: MeetingRecord
@@ -447,7 +465,7 @@ private struct RecentMeetingRow: View {
               ThinProgress(fraction: progressFraction, label: progressLabel)
                 .accessibilityHidden(true)
             } else {
-              Text(meeting.startedAt, format: .relative(presentation: .named))
+              RelativeAge(date: meeting.startedAt)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
