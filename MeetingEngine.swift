@@ -31,6 +31,8 @@ final class MeetingEngine {
   private var quitting = false
 
   var config: () -> AppConfig = { AppConfig() }
+  /// Where voices of named speakers are kept across meetings; nil keeps and uses none.
+  var voiceProfiles: VoiceProfileStore?
   /// The transcription helper; nil uses the one inside the app bundle.
   var transcriberExecutable: URL?
   /// The label for the microphone speaker of a meeting with this participant list.
@@ -428,15 +430,36 @@ final class MeetingEngine {
           )
         }.value
         let localName = localSpeakerName(roster)
-        naming = await Task.detached {
-          TranscriptDocument.naming(
+        let voices = config().recognizeVoices ? voiceProfiles : nil
+        let recordedAt = record.startedAt
+        let knownVoices: [String?]?
+        (naming, knownVoices) = await Task.detached {
+          let naming = TranscriptDocument.naming(
             result, localName: localName, roster: roster, speaking: speaking)
+          var known: [String?]?
+          do {
+            try voices?.update { profiles in
+              let outcome = TranscriptDocument.knownVoices(
+                result, localName: localName, roster: roster, naming: naming,
+                voices: &profiles, at: recordedAt)
+              known = outcome.names
+              AppLog.event(
+                "voices",
+                "recognizedTurns=\(outcome.names.compactMap { $0 }.count); learned=\(outcome.learned); \(outcome.comparison)"
+              )
+              return outcome.learned
+            }
+          } catch {
+            AppLog.event("voices.save.failed", error.localizedDescription)
+          }
+          return (naming, known)
         }.value
         try Task.checkCancellation()
         guard let current = unfinished[id] else { return }
         record = current
         text = TranscriptDocument.compose(
-          result, into: &record, localName: localName, roster: roster, naming: naming)
+          result, into: &record, localName: localName, roster: roster, naming: naming,
+          knownVoices: knownVoices)
         helper = result
         try MeetingFiles.publish(Data(text.utf8), to: destination)
       }

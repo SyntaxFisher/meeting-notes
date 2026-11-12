@@ -10,6 +10,8 @@ struct AppConfig: Equatable, Sendable {
   var agentsMaySummarizeMeetings = true
   var agentsMayCorrectTranscripts = false
   var keepAudio = true
+  /// Whether voices of named speakers are kept to name them in later meetings.
+  var recognizeVoices = true
   /// The label for everything the microphone records. Nil uses the Teams display name once it
   /// was detected, otherwise the macOS full name.
   var localSpeakerName: String?
@@ -55,6 +57,7 @@ struct AppConfig: Equatable, Sendable {
     reader.bool(root, "mirrorTeamsMute") { config.mirrorTeamsMute = $0 }
     reader.bool(root, "playSounds") { config.playSounds = $0 }
     reader.bool(root, "keepAudio") { config.keepAudio = $0 }
+    reader.bool(root, "recognizeVoices") { config.recognizeVoices = $0 }
     reader.bool(root, "agentsMayNameMeetings") { config.agentsMayNameMeetings = $0 }
     reader.bool(root, "agentsMaySummarizeMeetings") { config.agentsMaySummarizeMeetings = $0 }
     reader.bool(root, "agentsMayCorrectTranscripts") { config.agentsMayCorrectTranscripts = $0 }
@@ -90,6 +93,7 @@ struct AppConfig: Equatable, Sendable {
       "agentsMayCorrectTranscripts": agentsMayCorrectTranscripts,
       "keepAudio": keepAudio,
       "localSpeakerName": localSpeakerName ?? NSNull(),
+      "recognizeVoices": recognizeVoices,
       "retention": [
         "audioBytes": retention.audioBytes
       ],
@@ -106,7 +110,7 @@ struct AppConfig: Equatable, Sendable {
   private static let topLevelKeys: Set<String> = [
     "$schema", "autoRecordTeamsMeetings", "mirrorTeamsMute", "localSpeakerName",
     "retention", "agentsMayNameMeetings", "agentsMaySummarizeMeetings",
-    "agentsMayCorrectTranscripts", "keepAudio", "playSounds",
+    "agentsMayCorrectTranscripts", "keepAudio", "playSounds", "recognizeVoices",
   ]
 
   private static func describe(_ error: Error) -> String {

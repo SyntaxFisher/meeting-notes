@@ -53,6 +53,41 @@ enum TranscriptDocument {
       participants: roster?.sawFullRoster == true ? roster?.remoteParticipants.map(\.name) : nil)
   }
 
+  /// The name the recording's own Teams evidence gives each segment: the only remote
+  /// participant, or the participant `decisions` chose. Microphone segments have none.
+  static func teamsNames(
+    _ result: TranscriptSegments, localName: String, roster: ParticipantRoster?,
+    naming decisions: [SpeakerFusion.Decision]?
+  ) -> [String?] {
+    let soleRemote = soleRemoteParticipant(result, roster: roster)
+    return result.segments.enumerated().map { index, segment in
+      guard segment.source == .teams else { return nil }
+      if let soleRemote { return soleRemote }
+      let name = decisions?[index].name.flatMap(cleanedName)
+      return name == localName ? nil : name
+    }
+  }
+
+  /// Names from earlier meetings for the voices `teamsNames` leaves anonymous, and what this
+  /// recording teaches `voices` about the voices it names.
+  static func knownVoices(
+    _ result: TranscriptSegments, localName: String, roster: ParticipantRoster?,
+    naming decisions: [SpeakerFusion.Decision]?, voices: inout VoiceProfiles, at date: Date
+  ) -> (names: [String?], learned: Bool, comparison: String) {
+    let named = teamsNames(result, localName: localName, roster: roster, naming: decisions)
+    let excluded = [localName, roster?.localParticipant?.name].compactMap { $0 }
+    let names = voices.names(
+      for: result, named: named, excluded: excluded,
+      participants: roster?.sawFullRoster == true ? roster?.remoteParticipants.map(\.name) : nil
+    ).map { $0.flatMap(cleanedName) }
+    let comparison = voices.comparison(for: result, named: named)
+    let learned = voices.learn(
+      from: result, named: named,
+      soleRemote: soleRemoteParticipant(result, roster: roster) != nil, excluded: excluded,
+      at: date)
+    return (names, learned, comparison)
+  }
+
   /// Fills the record's speakers, segments, participants and duration from the helper's result
   /// and returns the transcript text. `speaking` is when Teams showed each participant speaking,
   /// on the result's timeline; it names remote Teams voices.
@@ -70,7 +105,7 @@ enum TranscriptDocument {
   static func compose(
     _ result: TranscriptSegments, into record: inout MeetingRecord, localName: String,
     roster: ParticipantRoster?, naming decisions: [SpeakerFusion.Decision]?,
-    timeZone: TimeZone = .current
+    knownVoices: [String?]? = nil, timeZone: TimeZone = .current
   ) -> String {
     let soleRemote = soleRemoteParticipant(result, roster: roster)
     let teamsNames = decisions?.map { $0.name.flatMap(cleanedName) }
@@ -95,6 +130,9 @@ enum TranscriptDocument {
         label = teamsNames![index]!
         identity = .teamsSpeaker
         participant = label
+      case _ where knownVoices?[index] != nil:
+        label = knownVoices![index]!
+        identity = .knownVoice
       case .teams, .deviceAudio, .app, .mix:
         let key = "\(segment.source.rawValue)/\(segment.speaker)"
         if anonymousLabels[key] == nil {
@@ -169,6 +207,8 @@ enum TranscriptDocument {
       case .teamsSpeaker:
         lines.append(
           "- \(speaker.label): a voice in the Teams audio while Teams showed them speaking")
+      case .knownVoice:
+        lines.append("- \(speaker.label): a voice recognized from earlier meetings")
       case .unidentified: break
       }
     }

@@ -218,7 +218,7 @@ struct Transcriber {
           lagSeconds: Double(echo.lagFrames) * EchoFilter.frameSeconds,
           coupling: Double(echo.coupling),
           discardedSeconds: (max(0, localSeconds - keptSeconds) * 10).rounded() / 10),
-        voiceEmbeddings: tracks.systemSource == .teams ? embeddings : nil, engine: engine),
+        voiceEmbeddings: embeddings, engine: engine),
       filtering ? echo : nil
     )
   }

@@ -42,6 +42,7 @@ struct SettingsChange: Equatable, Sendable {
   var autoRecordTeamsMeetings: Bool?
   var mirrorTeamsMute: Bool?
   var playSounds: Bool?
+  var recognizeVoices: Bool?
   var agentsMayNameMeetings: Bool?
   /// `.some(nil)` restores the default name.
   var localSpeakerName: String??
@@ -60,6 +61,7 @@ struct SettingsChange: Equatable, Sendable {
     if let value = autoRecordTeamsMeetings { config.autoRecordTeamsMeetings = value }
     if let value = mirrorTeamsMute { config.mirrorTeamsMute = value }
     if let value = playSounds { config.playSounds = value }
+    if let value = recognizeVoices { config.recognizeVoices = value }
     if let value = agentsMayNameMeetings { config.agentsMayNameMeetings = value }
     if let value = localSpeakerName { config.localSpeakerName = value }
     if let value = audioBytes { config.retention.audioBytes = value }
