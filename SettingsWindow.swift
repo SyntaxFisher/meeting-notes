@@ -215,6 +215,17 @@ private struct GeneralSettings: View {
           )
           .labelsHidden()
         }
+        SettingRow(
+          title: "Recognize voices",
+          explanation:
+            "Names a voice Teams did not name when it sounds like someone from earlier meetings. Turning this off deletes the stored voices."
+        ) {
+          Toggle(
+            "Recognize voices",
+            isOn: setting(model.config.recognizeVoices) { SettingsChange(recognizeVoices: $0) }
+          )
+          .labelsHidden()
+        }
         SettingRow(title: "Your name in transcripts") {
           TextField("Your name", text: $localName, prompt: Text(model.defaultLocalSpeakerName))
             .labelsHidden()

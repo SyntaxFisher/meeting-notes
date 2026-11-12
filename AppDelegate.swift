@@ -118,6 +118,8 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     engine = MeetingEngine(
       library: MeetingLibrary(root: config.meetingsRootURL), teams: teamsMonitor)
     engine.config = { [weak self] in self?.config ?? AppConfig() }
+    engine.voiceProfiles = .shared
+    if !config.recognizeVoices { VoiceProfileStore.shared.removeAll() }
     engine.onRetention = { [weak self] protected in
       guard let self else { return }
       self.libraryStore.enforceRetention(
@@ -821,6 +823,10 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     }
     if old.agentsMaySummarizeMeetings != new.agentsMaySummarizeMeetings {
       changed.append("agentsMaySummarizeMeetings")
+    }
+    if old.recognizeVoices != new.recognizeVoices {
+      changed.append("recognizeVoices")
+      if !new.recognizeVoices { VoiceProfileStore.shared.removeAll() }
     }
     if old.keepAudio != new.keepAudio {
       changed.append("keepAudio")

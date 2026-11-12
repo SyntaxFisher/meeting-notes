@@ -58,6 +58,11 @@
       "default": false,
       "description": "Require connected agents to correct every confidently identified transcription error in passages read, without rewriting or guessing. Explicitly requested corrections remain available when disabled."
     },
+    "recognizeVoices": {
+      "type": "boolean",
+      "default": true,
+      "description": "Keep the voices of named remote speakers on this Mac and name otherwise anonymous voices in later meetings after them. Turning it off deletes the stored voices."
+    },
     "playSounds": {
       "type": "boolean",
       "default": true,
