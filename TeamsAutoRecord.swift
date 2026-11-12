@@ -2,6 +2,9 @@ import Foundation
 
 enum TeamsMeetingPresence {
   case inMeeting
+  /// A call window is open but its call has not connected, such as an outgoing call that is
+  /// still ringing.
+  case connecting
   case noMeeting
   case unknown
 }
@@ -19,8 +22,9 @@ extension TeamsMuteState {
 }
 
 /// Starts a recording when a Teams meeting is detected and stops it once the meeting has been
-/// gone for the grace period. Only recordings it started are stopped. When any recording ends
-/// while a meeting may still be running, no new recording starts until that meeting ends.
+/// gone for the grace period. A call that has not connected starts nothing yet. Only
+/// recordings it started are stopped. When any recording ends while a meeting may still be
+/// running, no new recording starts until that meeting ends.
 struct TeamsAutoRecordPolicy {
   enum Action { case start, stop }
 
@@ -47,7 +51,7 @@ struct TeamsAutoRecordPolicy {
       meetingHasEnded = true
       waitingForMeetingEnd = false
       return isRecording && ownsRecording ? .stop : nil
-    case .unknown:
+    case .connecting, .unknown:
       absentSince = nil
       return nil
     }

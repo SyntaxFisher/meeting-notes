@@ -137,8 +137,8 @@ final class MeetingEngine {
     teams.start()
     let teamsMeeting: TeamsMeetingPresence =
       automatically
-      ? teams.currentState?.meetingPresence ?? .unknown
-      : await teams.readState().meetingPresence
+      ? teams.meetingPresence ?? .unknown
+      : await teams.readMeetingPresence()
     let systemAudio = SystemAudioScope.forRecording(
       automatic: automatically, teamsMeeting: teamsMeeting)
     let now = Date()

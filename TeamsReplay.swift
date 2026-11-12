@@ -124,19 +124,23 @@ enum TeamsReplay {
         }
       case "mute-input":
         guard let input = decode(TeamsMuteInput.self, line) else { continue }
-        let state = TeamsMuteClassifier.reading(input, tracker: &tracker).state
-        let description = state.name
+        let reading = TeamsMuteClassifier.reading(input, tracker: &tracker)
+        let description =
+          reading.connecting ? "\(reading.state.name) connecting" : reading.state.name
         if description != replayedState {
           result.replayed.states.append(Step(t: time, value: description))
           replayedState = description
         }
-        presence = state.meetingPresence
+        presence = reading.meetingPresence
       case "read":
         evaluate(at: time)
       case "mute":
-        if let state = line["state"] as? String, state != recordedState {
-          result.recorded.states.append(Step(t: time, value: state))
-          recordedState = state
+        if var state = line["state"] as? String {
+          if line["connecting"] as? Bool == true { state += " connecting" }
+          if state != recordedState {
+            result.recorded.states.append(Step(t: time, value: state))
+            recordedState = state
+          }
         }
       case "auto-record":
         // The app logs each evaluation with what it knew then, such as whether a start was
