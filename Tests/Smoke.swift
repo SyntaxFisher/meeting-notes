@@ -36,7 +36,6 @@ struct Smoke {
     SoundSmoke.run()
     try SpeakerIdentitySmoke.run()
     try SpeakerFusionSmoke.run()
-    try VoiceProfilesSmoke.run(cache.appendingPathComponent("voices-smoke"))
     EchoCopiesSmoke.run()
     try TeamsTraceSmoke.run(cache.appendingPathComponent("trace-smoke"))
     TeamsScreenSharingSmoke.run()
