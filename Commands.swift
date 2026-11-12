@@ -336,9 +336,9 @@ final class CommandCenter {
     let teamsStatus: StatusSnapshot.Teams? =
       teams.isRunning
       ? StatusSnapshot.Teams(
-        meetingDetected: teams.currentState.flatMap {
-          switch $0.meetingPresence {
-          case .inMeeting: return true
+        meetingDetected: teams.meetingPresence.flatMap {
+          switch $0 {
+          case .inMeeting, .connecting: return true
           case .noMeeting: return false
           case .unknown: return nil
           }

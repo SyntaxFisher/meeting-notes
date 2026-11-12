@@ -8,6 +8,7 @@ import Foundation
 final class TeamsMonitor {
   private let reader = TeamsBackgroundReader()
   private(set) var currentState: TeamsMuteState?
+  private(set) var meetingPresence: TeamsMeetingPresence?
   private(set) var meetingTitle: String?
   /// The local user's display name in the most recent Teams participant list.
   private(set) var localParticipantName: String?
@@ -47,14 +48,15 @@ final class TeamsMonitor {
     isRunning = false
     reader.stop()
     currentState = nil
+    meetingPresence = nil
     meetingTitle = nil
   }
 
   /// Reads Teams now instead of waiting for the next periodic reading, which may be two
   /// seconds old or, while the monitor was stopped, missing.
-  func readState() async -> TeamsMuteState {
+  func readMeetingPresence() async -> TeamsMeetingPresence {
     await withCheckedContinuation { continuation in
-      reader.readNow { continuation.resume(returning: $0) }
+      reader.readNow { continuation.resume(returning: $0.meetingPresence) }
     }
   }
 
@@ -77,9 +79,11 @@ final class TeamsMonitor {
       AppLog.event("teams.meetingTitle", reading.meetingTitle ?? "none")
       meetingTitle = reading.meetingTitle
     }
-    if reading.state != currentState {
-      AppLog.event("teams.detection", String(describing: reading.state))
+    if reading.state != currentState || reading.meetingPresence != meetingPresence {
+      AppLog.event(
+        "teams.detection", "\(reading.state); presence=\(reading.meetingPresence)")
       currentState = reading.state
+      meetingPresence = reading.meetingPresence
       onStateChanged?()
     }
     onReading?()
@@ -87,7 +91,8 @@ final class TeamsMonitor {
 }
 
 /// The Accessibility reads behind `TeamsMonitor`, on one serial queue: the mute state every
-/// 0.4 s while recording and every 2 s otherwise, and while a recording collects them the
+/// 0.4 s while recording or while a call is connecting, so its recording starts as soon as it
+/// connects, and every 2 s otherwise, and while a recording collects them the
 /// active speaker every 0.8 s and the participant roster every 2 s, from the same reading.
 final class TeamsBackgroundReader: @unchecked Sendable {
   private let queue = DispatchQueue(label: "com.jona.meeting-notes.teams", qos: .userInitiated)
@@ -95,6 +100,7 @@ final class TeamsBackgroundReader: @unchecked Sendable {
   private var timer: DispatchSourceTimer?
   private var mirrored: NativeRecorder?
   private var collection: Collection?
+  private var connecting = false
   private var lastStateRead = Date.distantPast
   private var lastMeetingRead = Date.distantPast
   private var lastRosterRead = Date.distantPast
@@ -137,13 +143,14 @@ final class TeamsBackgroundReader: @unchecked Sendable {
     }
   }
 
-  func readNow(_ done: @escaping @Sendable (TeamsMuteState) -> Void) {
+  func readNow(_ done: @escaping @Sendable (TeamsReading) -> Void) {
     queue.async { [self] in
       lastStateRead = Date()
       let reading = muteReader.read()
+      connecting = reading.connecting
       mirrorMicrophone(reading.state)
       deliver?(reading)
-      done(reading.state)
+      done(reading)
     }
   }
 
@@ -165,9 +172,11 @@ final class TeamsBackgroundReader: @unchecked Sendable {
 
   private func tick() {
     let now = Date()
-    if now.timeIntervalSince(lastStateRead) >= (mirrored == nil && collection == nil ? 2 : 0.4) {
+    let frequent = mirrored != nil || collection != nil || connecting
+    if now.timeIntervalSince(lastStateRead) >= (frequent ? 0.4 : 2) {
       lastStateRead = now
       let reading = muteReader.read()
+      connecting = reading.connecting
       mirrorMicrophone(reading.state)
       deliver?(reading)
       let seconds = Date().timeIntervalSince(now)

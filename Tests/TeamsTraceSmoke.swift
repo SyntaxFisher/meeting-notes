@@ -17,6 +17,7 @@ enum TeamsTraceSmoke {
     testTracedParticipants()
     testSharingRegression()
     testReplayTiming()
+    testOutgoingCall()
     testEverydayReplay()
     try testEmptySpeakerReplay(root.appendingPathComponent("empty-speakers"))
     testWindowNumbers()
@@ -270,6 +271,99 @@ enum TeamsTraceSmoke {
       result.replayed.states.map(\.value).contains("unavailable(noControl)")
         && result.differences.contains { $0.hasPrefix("stop 132.0 recorded") },
       "The replay reports where the decisions differ: \(result.differences)")
+  }
+
+  /// An outgoing call opens its window with call controls while it still rings; the window's
+  /// clock shows "--:--" until the callee answers. When Teams replaces a minimized call window
+  /// with its compact view, which has no clock, the stale window keeps "--:--" and the People
+  /// button marks the connected call. Recording starts once the call connects, and a call
+  /// nobody answers records nothing.
+  private static func testOutgoingCall() {
+    let controls = [["Leave"], ["Mute mic"]]
+    func call(_ clock: TeamsCallClock?, compactView: [[String]]? = nil) -> TeamsMuteInput {
+      var windows = [
+        TeamsWindowInput(
+          id: 2, title: "Called Dev", minimized: compactView != nil, main: true,
+          buttons: controls + (clock == .running ? [["People"]] : []), clock: clock)
+      ]
+      if let compactView {
+        windows.append(
+          TeamsWindowInput(
+            id: 3, title: "Meeting compact view | Called Dev", buttons: compactView))
+      }
+      return TeamsMuteInput(frontmost: compactView == nil, windows: windows)
+    }
+    let chat = TeamsMuteInput(
+      frontmost: true, windows: [TeamsWindowInput(id: 1, title: "Chat | Called Dev", main: true)])
+    var tracker = TeamsMeetingWindowTracker<Int>()
+    func presence(_ input: TeamsMuteInput) -> TeamsMeetingPresence {
+      TeamsMuteClassifier.reading(input, tracker: &tracker).meetingPresence
+    }
+    let ringing = TeamsMuteClassifier.reading(call(.pending), tracker: &tracker)
+    precondition(
+      ringing.state == .unmuted && ringing.meetingPresence == .connecting,
+      "A ringing call mirrors mute but is not yet a meeting to record: \(ringing)")
+    precondition(
+      presence(call(.pending, compactView: controls)) == .connecting
+        && presence(call(nil, compactView: controls)) == .connecting,
+      "The compact view of a ringing call shows no clock, so the call stays connecting")
+    precondition(
+      presence(call(.pending, compactView: controls + [["People"]])) == .inMeeting,
+      "The compact view's People button connects the call despite the stale window's clock")
+    precondition(presence(chat) == .noMeeting && presence(call(nil)) == .inMeeting)
+    precondition(
+      presence(call(.pending)) == .connecting && presence(call(.running)) == .inMeeting,
+      "The running clock connects the call")
+    precondition(
+      TeamsCallClock(role: "AXStaticText", labels: ["--:--"]) == .pending
+        && TeamsCallClock(role: "AXStaticText", labels: ["01:02:03"]) == .running
+        && TeamsCallClock(role: "AXStaticText", labels: ["Calling Called Dev"]) == nil
+        && TeamsCallClock(role: "AXButton", labels: ["--:--"]) == nil)
+    let legacy = try! JSONDecoder().decode(
+      TeamsMuteInput.self,
+      from: Data(
+        #"{"frontmost":true,"windows":[{"id":2,"title":"Called Dev","main":true,"minimized":false,"buttons":[["Leave"],["Mute mic"]],"headings":[]}]}"#
+          .utf8))
+    var fresh = TeamsMeetingWindowTracker<Int>()
+    precondition(
+      TeamsMuteClassifier.reading(legacy, tracker: &fresh).meetingPresence == .inMeeting,
+      "Traced inputs without the clock read as a connected call")
+    let traced = call(.pending, compactView: controls + [["People"], ["Chat"]]).traced
+    precondition(
+      traced.windows.map(\.clock) == [.pending, nil]
+        && traced.windows[1].buttons == controls + [["People"]],
+      "The trace keeps the clock and the People button: \(traced)")
+
+    func at(_ kind: String, _ time: Double, _ fields: [String: Any] = [:]) -> String {
+      line(["k": kind, "t": time, "w": 1000 + time].merging(fields) { $1 })
+    }
+    func reading(_ time: Double, _ input: TeamsMuteInput? = nil) -> [String] {
+      (input.map { [at("mute-input", time, encoded($0))] } ?? []) + [at("read", time + 0.001)]
+    }
+    func evaluated(_ time: Double) -> String {
+      at("auto-record", time + 0.01, ["canStart": true, "action": ""])
+    }
+    let session = at("session", 99, ["pid": 7, "config": ["autoRecordTeamsMeetings": true]])
+    var lines = [session] + reading(100, chat) + [evaluated(100)]
+    lines += reading(102, call(.pending)) + [evaluated(102)]
+    for time in stride(from: 102.4, through: 126.8, by: 0.4) {
+      lines += reading(time) + [evaluated(time)]
+    }
+    let unanswered = TeamsReplay.replay(
+      Data(
+        (lines + reading(127, chat) + [evaluated(127)] + reading(128) + [evaluated(128)])
+          .joined(separator: "\n").utf8))
+    precondition(
+      unanswered.replayed.recordings.isEmpty,
+      "A call nobody answers records nothing: \(unanswered.replayed.recordings)")
+    lines += reading(127, call(.running)) + [evaluated(127)]
+    let answered = TeamsReplay.replay(Data(lines.joined(separator: "\n").utf8))
+    precondition(
+      answered.replayed.recordings.map { $0.start.rounded() } == [127]
+        && answered.replayed.states.map(\.value) == [
+          "unavailable(noMeeting)", "unmuted connecting", "unmuted",
+        ],
+      "Recording starts when the call connects: \(answered.replayed)")
   }
 
   /// Failed starts, user actions, slow readings, repeated sessions and recordings that continue

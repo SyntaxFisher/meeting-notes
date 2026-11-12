@@ -489,6 +489,17 @@ struct Smoke {
   private static func testAutoRecordPolicy() {
     let start = Date(timeIntervalSince1970: 0)
     let grace = TeamsAutoRecordPolicy.leaveGracePeriod
+    var ringing = TeamsAutoRecordPolicy()
+    precondition(
+      ringing.observe(.connecting, at: start, isRecording: false, canStart: true) == nil,
+      "A call that has not connected starts nothing")
+    precondition(
+      ringing.observe(.inMeeting, at: start + 20, isRecording: false, canStart: true) == .start)
+    ringing.recordingStarted(automatically: true)
+    _ = ringing.observe(.connecting, at: start + 30, isRecording: true, canStart: false)
+    precondition(
+      ringing.observe(.connecting, at: start + 31, isRecording: true, canStart: false) == nil,
+      "A call window that shows connecting again is not an absence")
     var manual = TeamsAutoRecordPolicy()
     _ = manual.observe(.noMeeting, at: start, isRecording: false, canStart: true)
     _ = manual.observe(.noMeeting, at: start + grace, isRecording: false, canStart: true)

@@ -49,6 +49,7 @@ struct TeamsWindowSnapshot {
   let buttons: [[String]]
   var sharingPicker = false
   var meetingEnded = false
+  var clock: TeamsCallClock? = nil
   /// Whether Teams keeps this window's controls current: the compact meeting view, or the
   /// main window of Teams while it is in front. A meeting window behind other apps or
   /// minimized keeps showing the mute state it last drew.
@@ -64,6 +65,42 @@ struct TeamsWindowInput: Codable, Equatable {
   var main = false
   var buttons: [[String]] = []
   var headings: [[String]] = []
+  var clock: TeamsCallClock?
+}
+
+/// The elapsed-time clock of a Teams call window: "--:--" while the call has not connected,
+/// such as an outgoing call that is still ringing, then the running call time.
+enum TeamsCallClock: String, Codable {
+  case pending
+  case running
+
+  init?(role: String, labels: [String]) {
+    guard role == kAXStaticTextRole as String else { return nil }
+    let texts = labels.map { $0.trimmingCharacters(in: .whitespaces) }
+    if texts.contains("--:--") {
+      self = .pending
+    } else if texts.contains(where: {
+      $0.range(of: #"^\d{1,2}:\d{2}(?::\d{2})?$"#, options: .regularExpression) != nil
+    }) {
+      self = .running
+    } else {
+      return nil
+    }
+  }
+}
+
+extension TeamsWindowInput {
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try values.decode(Int.self, forKey: .id),
+      title: try values.decodeIfPresent(String.self, forKey: .title),
+      minimized: try values.decode(Bool.self, forKey: .minimized),
+      main: try values.decode(Bool.self, forKey: .main),
+      buttons: try values.decode([[String]].self, forKey: .buttons),
+      headings: try values.decode([[String]].self, forKey: .headings),
+      clock: try values.decodeIfPresent(TeamsCallClock.self, forKey: .clock))
+  }
 }
 
 /// One mute reading's input: Teams' windows and whether Teams was in front, or why Teams could
@@ -94,6 +131,12 @@ struct TeamsMuteInput: Codable, Equatable {
 struct TeamsReading: Equatable {
   let state: TeamsMuteState
   var meetingTitle: String? = nil
+  var connecting = false
+
+  var meetingPresence: TeamsMeetingPresence {
+    let presence = state.meetingPresence
+    return presence == .inMeeting && connecting ? .connecting : presence
+  }
 }
 
 enum TeamsMuteClassifier {
@@ -130,6 +173,7 @@ enum TeamsMuteClassifier {
       title: window.title, buttons: window.buttons,
       sharingPicker: window.headings.contains { isSharingPicker(role: "AXHeading", labels: $0) },
       meetingEnded: window.buttons.contains(where: isMeetingEndControl),
+      clock: window.clock,
       isCurrent: !window.minimized && (isCompactView(window.title) || (frontmost && window.main)))
   }
 
@@ -140,6 +184,28 @@ enum TeamsMuteClassifier {
     if let failure = input.failure { return TeamsReading(state: .unavailable(failure)) }
     return tracker.observe(
       input.windows.map { ($0.id, snapshot($0, frontmost: input.frontmost)) })
+  }
+
+  /// Whether the meeting windows show the call connected, still connecting, or neither. A
+  /// connected call shows its running clock or the People button in every view, so either
+  /// wins over a pending clock: Teams stops updating a minimized meeting window, which then
+  /// keeps showing "--:--" next to a current compact view. The compact view has no clock.
+  static func callConnected(_ windows: [TeamsWindowSnapshot]) -> Bool? {
+    let meetingWindows = windows.filter(isMeetingWindow)
+    if meetingWindows.contains(where: {
+      $0.clock == .running || $0.buttons.contains(where: isPeopleControl)
+    }) {
+      return true
+    }
+    return meetingWindows.contains { $0.clock == .pending } ? false : nil
+  }
+
+  static func isPeopleControl(_ labels: [String]) -> Bool {
+    labels.contains { label in
+      label.range(
+        of: #"^(?:People|Personen)(?:\b|$)"#, options: [.regularExpression, .caseInsensitive])
+        != nil
+    }
   }
 
   static func meetingTitle(_ windows: [TeamsWindowSnapshot]) -> String? {
@@ -204,6 +270,7 @@ enum TeamsMuteClassifier {
   /// Whether a button label is one the classifier decides from.
   static func isRecognized(_ label: String) -> Bool {
     microphoneLabel(label) != nil || isMeetingControl([label]) || isMeetingEndControl([label])
+      || isPeopleControl([label])
   }
 
   private static func classifyButton(_ labels: [String]) -> TeamsMuteState? {
@@ -234,8 +301,11 @@ enum TeamsMuteClassifier {
 
 /// A Teams popover can hide every call control while its meeting window remains open.
 /// A closed window or explicit post-call controls establish absence; missing controls do not.
+/// A call that showed it is connecting stays so until a window shows it connected or the
+/// meeting ends, since a compact view that replaces its window shows neither.
 struct TeamsMeetingWindowTracker<Window: Equatable> {
   private var knownWindows: [Window] = []
+  private var connecting = false
 
   mutating func observe(_ windows: [(id: Window, snapshot: TeamsWindowSnapshot)]) -> TeamsReading {
     knownWindows.removeAll { known in
@@ -244,12 +314,19 @@ struct TeamsMeetingWindowTracker<Window: Equatable> {
     for window in windows where TeamsMuteClassifier.isMeetingWindow(window.snapshot) {
       if !knownWindows.contains(window.id) { knownWindows.append(window.id) }
     }
-    var state = TeamsMuteClassifier.classify(windows.map(\.snapshot))
+    let snapshots = windows.map(\.snapshot)
+    var state = TeamsMuteClassifier.classify(snapshots)
     if state == .unavailable(.noMeeting), !knownWindows.isEmpty {
       state = .unavailable(.noControl)
     }
+    if knownWindows.isEmpty {
+      connecting = false
+    } else if let connected = TeamsMuteClassifier.callConnected(snapshots) {
+      connecting = !connected
+    }
     return TeamsReading(
-      state: state, meetingTitle: TeamsMuteClassifier.meetingTitle(windows.map(\.snapshot)))
+      state: state, meetingTitle: TeamsMuteClassifier.meetingTitle(snapshots),
+      connecting: connecting)
   }
 }
 
@@ -294,7 +371,11 @@ final class TeamsMuteReader {
     TeamsTrace.shared.record("mute-input", value: input.traced)
     let reading = TeamsMuteClassifier.reading(input, tracker: &tracker)
     TeamsTrace.shared.record(
-      "mute", ["state": reading.state.name, "title": reading.meetingTitle ?? ""])
+      "mute",
+      [
+        "state": reading.state.name, "title": reading.meetingTitle ?? "",
+        "connecting": reading.connecting,
+      ])
     TeamsTrace.shared.record("read", always: true, [:])
     return reading
   }
@@ -337,6 +418,7 @@ final class TeamsMuteReader {
       guard visited <= 4_000 else { return nil }
       if let role: String = attribute(element, kAXRoleAttribute),
         role == kAXButtonRole as String || role == "AXHeading"
+          || (role == kAXStaticTextRole as String && input.clock == nil)
       {
         let labels: [String] = [
           kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute, kAXValueAttribute,
@@ -344,8 +426,10 @@ final class TeamsMuteReader {
         .compactMap { attribute(element, $0) }
         if role == kAXButtonRole as String {
           input.buttons.append(labels)
-        } else {
+        } else if role == "AXHeading" {
           input.headings.append(labels)
+        } else {
+          input.clock = TeamsCallClock(role: role, labels: labels)
         }
       }
       if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {

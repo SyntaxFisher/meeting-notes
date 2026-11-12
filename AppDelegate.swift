@@ -1056,16 +1056,18 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func evaluateAutoRecord() {
-    guard config.autoRecordTeamsMeetings, let state = teamsMonitor.currentState else { return }
+    guard config.autoRecordTeamsMeetings, let presence = teamsMonitor.meetingPresence else {
+      return
+    }
     let isRecording = engine.active != nil || engine.isStarting
     let blocked = commands.startBlockedReason(automatically: true)
     let canStart = blocked == nil && captureRetry.allowsAutomaticStart
     let action = autoRecord.observe(
-      state.meetingPresence, at: Date(), isRecording: isRecording, canStart: canStart)
+      presence, at: Date(), isRecording: isRecording, canStart: canStart)
     TeamsTrace.shared.record(
       "auto-record",
       [
-        "presence": "\(state.meetingPresence)", "recording": isRecording, "canStart": canStart,
+        "presence": "\(presence)", "recording": isRecording, "canStart": canStart,
         "blocked": blocked.map { "\($0)" } ?? "", "action": action.map { "\($0)" } ?? "",
         "owns": autoRecord.ownsRecording, "waiting": autoRecord.waitingForMeetingEnd,
       ])
@@ -1152,7 +1154,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
         && commands.startBlockedReason(automatically: true) == nil
         && captureRetry.allowsAutomaticStart,
       autoRecordPaused: autoRecord.waitingForMeetingEnd
-        && teamsMonitor.currentState?.meetingPresence == .inMeeting)
+        && [.inMeeting, .connecting].contains(teamsMonitor.meetingPresence))
     model.status = PanelStatus.make(statusInputs)
     model.headerStatus = PanelStatus.header(statusInputs)
     model.startBlockedReason = commands.startBlockedReason

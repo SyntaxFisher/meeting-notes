@@ -42,7 +42,7 @@ enum SystemAudioScope: RawRepresentable, Codable, Hashable, Sendable {
   /// The scope is fixed at recording start. Unknown Teams state captures all device audio,
   /// which includes Teams, so a call is never lost.
   static func forRecording(automatic: Bool, teamsMeeting: TeamsMeetingPresence) -> Self {
-    automatic || teamsMeeting == .inMeeting ? .teams : .deviceAudio
+    automatic || [.inMeeting, .connecting].contains(teamsMeeting) ? .teams : .deviceAudio
   }
 
   private static func bundleID(_ text: String) -> String? {
