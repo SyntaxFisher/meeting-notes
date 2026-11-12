@@ -38,8 +38,8 @@ struct TranscriptSegments: Codable, Equatable {
     var text: String
   }
 
-  /// Speaker embeddings are evidence for naming voices. They are not stored in meeting
-  /// records; the app keeps the voices of named speakers apart from them, when that is on.
+  /// Speaker embeddings are temporary evidence for naming voices within this recording.
+  /// They are not stored in meeting records or reused across meetings.
   struct VoiceEmbedding: Codable, Equatable {
     var speaker: String
     var start: Double
