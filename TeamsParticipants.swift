@@ -40,12 +40,21 @@ enum TeamsParticipantParser {
     "hat kontextmenü",
   ]
   /// States Teams appends to a tile's name, such as "Muster, Léa (Design), Video ist ein,
-  /// Hat die Kontrolle über Produktionstools, Kontextmenü ist verfügbar".
+  /// Hat die Kontrolle über Produktionstools, Kontextmenü ist verfügbar", in the wording of
+  /// Teams' English and German calling strings. Any other component starting with "Video "
+  /// also counts as a camera state (`isTileState`).
   private static let tileStates: Set<String> = [
-    "video is on", "video is off", "has control of production tools", "fill frame",
-    "fit to frame", "pinned", "spotlighted", "hand raised", "video ist ein",
-    "video deaktiviert", "hat die kontrolle über produktionstools", "frame ausfüllen",
-    "an frame anpassen", "angeheftet", "im spotlight", "hand erhoben",
+    "video is on", "video is off", "video reconnecting", "video briefly stopped",
+    "camera is on", "camera is off", "has control of production tools", "fill frame",
+    "fit to frame", "pinned", "spotlighted", "hand raised", "presenting", "on hold",
+    "poor connection", "poor network quality", "connection problem", "connection is weak",
+    "connection is unstable",
+    "video ist ein", "video deaktiviert", "videoverbindung wird wiederhergestellt",
+    "video kurz angehalten", "kamera ist aktiviert.", "kamera ist aus.",
+    "hat die kontrolle über produktionstools", "frame ausfüllen", "an frame anpassen",
+    "angeheftet", "im spotlight", "hand erhoben", "erhobene hände", "präsentation", "gehalten",
+    "warteschleife", "schlechte verbindung", "schlechte netzwerkqualität", "verbindungsproblem",
+    "die verbindung ist schwach", "verbindung ist instabil",
   ]
   private static let localPrefixes = [
     "Myself video, ", "Video von mir selbst, ", "Eigenes Video, ",
@@ -106,9 +115,7 @@ enum TeamsParticipantParser {
     let hasSuffix = tileSuffixes.contains(last.lowercased())
     guard hasSuffix || onStage else { return nil }
     let states = hasSuffix ? parts.dropLast() : parts[...]
-    let nameParts = states.prefix {
-      muteWords[$0.lowercased()] == nil && !tileStates.contains($0.lowercased())
-    }
+    let nameParts = states.prefix { muteWords[$0.lowercased()] == nil && !isTileState($0) }
     let muted = states.dropFirst(nameParts.count).lazy.compactMap { muteWords[$0.lowercased()] }
       .first
     let (name, tag) = splitTag(nameParts.joined(separator: ", "))
@@ -129,6 +136,11 @@ enum TeamsParticipantParser {
       return TeamsParticipantSighting(name: name, tag: tag, left: true, source: .notice)
     }
     return nil
+  }
+
+  private static func isTileState(_ component: String) -> Bool {
+    let state = component.lowercased()
+    return tileStates.contains(state) || state.hasPrefix("video ")
   }
 
   /// Rejects counts and groups such as "2 participants" (an aggregated join notice or a gallery

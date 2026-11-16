@@ -52,6 +52,24 @@ enum SpeakerIdentitySmoke {
         == TeamsParticipantSighting(
           name: "Beispiel, Alex (Engineering)", muted: false, isLocal: true, source: .tile))
     precondition(
+      parse("AXMenuItem", "Sam Carter, Video reconnecting, Muted, Context menu is available")
+        == TeamsParticipantSighting(name: "Sam Carter", muted: true, source: .tile))
+    precondition(
+      parse(TeamsParticipantParser.stageTileRole, "Sam Carter - W25, Video reconnecting")?.name
+        == "Sam Carter - W25")
+    precondition(
+      parse(
+        "AXMenuItem",
+        "Demo, Jan (Engineering), Videoverbindung wird wiederhergestellt, Angeheftet, "
+          + "Hand erhoben, Kontextmenü ist verfügbar")
+        == TeamsParticipantSighting(name: "Demo, Jan (Engineering)", source: .tile))
+    precondition(
+      parse(TeamsParticipantParser.stageTileRole, "Sam Carter, Poor network quality, Pinned")?
+        .name == "Sam Carter")
+    precondition(
+      parse(TeamsParticipantParser.stageTileRole, "Demo, Jan, Schlechte Verbindung")?.name
+        == "Demo, Jan")
+    precondition(
       parse("AXMenuItem", "Demo, Jan (Engineering), Stummgeschaltet, Kontextmenü ist verfügbar")?
         .muted == true)
     precondition(
