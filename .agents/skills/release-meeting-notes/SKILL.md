@@ -24,6 +24,13 @@ Local `~/.config/meeting-notes-release/config.json` (0600) contains the signing 
 
 Sparkle's private key is in login Keychain under `com.jona.meeting-notes`; `Info.plist` has its public key. Reuse the existing key.
 
+Sparkle's command-line tools are ad-hoc signed, so the key item trusts `generate_keys`, `sign_update` and `generate_appcast` by cdhash, both in its access list and its partition list. After a Sparkle upgrade or a key import, `make release` can hang on a SecurityAgent approval prompt; on an unattended Mac synthetic clicks cannot answer it. Grant access from the shell instead:
+
+1. Export with `generate_keys --account com.jona.meeting-notes -x <owner-only file>` (already trusted) and confirm it with `sign_update --ed-key-file <file> --verify <previous appcast.xml>`.
+2. Delete the item and re-add the same key with `security add-generic-password -a com.jona.meeting-notes -s https://sparkle-project.org -l "Private key for signing Sparkle updates" -D "private key" -T <each of the three tools> -w`, with `-w` last so the key is read from the prompt, never from arguments.
+3. Run `security set-generic-password-partition-list -S "apple-tool:,apple:,cdhash:<each tool's CDHash from codesign -dvvv>" -s https://sparkle-project.org -a com.jona.meeting-notes <login keychain>`, answering its keychain password prompt through a pseudo-terminal.
+4. Check that `generate_keys -p` prints the `Info.plist` public key and `sign_update --verify` finishes without a prompt, then delete the export.
+
 ## Prepare and verify
 
 1. Check the working tree and fetch `origin/main`; preserve unrelated changes. Inspect GitHub releases and feed before selecting a version. Increase both marketing version (three parts) and integer build; write `releases/<version>.md`.
