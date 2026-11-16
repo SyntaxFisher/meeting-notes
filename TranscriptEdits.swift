@@ -69,6 +69,22 @@ extension MeetingRecord {
     )
   }
 
+  /// Clears the summary after a speaker change when it uses a word of a speaker name that is
+  /// gone: a merged label or a former name. A summary may paraphrase what was said, so text
+  /// corrections clear it unconditionally, but it names people as the transcript does. Words
+  /// shorter than four letters without a digit don't count.
+  fileprivate mutating func clearSummary(ifRemoving before: [String], keeping after: [String]) {
+    guard let summary else { return }
+    let removed = Self.nameWords(before).subtracting(Self.nameWords(after))
+    if !removed.isDisjoint(with: Self.nameWords([summary])) { self.summary = nil }
+  }
+
+  private static func nameWords(_ texts: [String]) -> Set<String> {
+    Set(
+      texts.flatMap { $0.lowercased().split { !$0.isLetter && !$0.isNumber } }
+        .filter { $0.count >= 4 || $0.contains(where: \.isNumber) }.map(String.init))
+  }
+
   fileprivate mutating func orderSpeakers() {
     let order = segments.map(\.speaker)
     speakers.sort {
@@ -135,6 +151,7 @@ extension MeetingLibrary {
       guard assignedNames.count <= 1 || suppliedName != nil else {
         throw MeetingError("These speakers have different assigned names. Supply the name to keep.")
       }
+      let previousNames = record.speakers.map(\.displayName)
       return try record.edit { next in
         for index in next.segments.indices where sources.contains(next.segments[index].speaker) {
           next.segments[index].speaker = survivor
@@ -161,7 +178,7 @@ extension MeetingLibrary {
         next.speakers[index].seconds = MeetingRecord.seconds(
           spoken.reduce(0) { $0 + max(0, $1.end - $1.start) })
         next.orderSpeakers()
-        next.summary = nil
+        next.clearSummary(ifRemoving: previousNames, keeping: next.speakers.map(\.displayName))
       }
     }
   }
@@ -210,7 +227,9 @@ extension MeetingLibrary {
         for index in next.speakers.indices {
           if let value = resolved[next.speakers[index].label] { next.speakers[index].name = value }
         }
-        if next.speakers != previousSpeakers { next.summary = nil }
+        next.clearSummary(
+          ifRemoving: previousSpeakers.map(\.displayName),
+          keeping: next.speakers.map(\.displayName))
         if let summary {
           let cleaned = summary.split(whereSeparator: \.isWhitespace).joined(separator: " ")
           next.summary = cleaned.isEmpty ? nil : cleaned

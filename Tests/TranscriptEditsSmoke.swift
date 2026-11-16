@@ -7,6 +7,7 @@ enum TranscriptEditsSmoke {
     defer { try? FileManager.default.removeItem(at: root) }
     try testCorrections(root.appendingPathComponent("corrections"))
     try testMerge(root.appendingPathComponent("merge"))
+    try testSummaryInvalidation(root.appendingPathComponent("summary"))
     try testConcurrentWriters(root.appendingPathComponent("concurrent"))
     try testWriterProcesses(root.appendingPathComponent("processes"))
     try testPersistenceFailure(root.appendingPathComponent("failure"))
@@ -150,6 +151,26 @@ enum TranscriptEditsSmoke {
     try expect(
       try String(contentsOf: library.transcriptURL(of: baseline)!, encoding: .utf8)
         == MeetingLibrary.transcriptText(mixed.record))
+  }
+
+  static func testSummaryInvalidation(_ root: URL) throws {
+    let (library, _) = try fixture(root)
+    let summary = "Lena and Alex review the launch budget."
+    _ = try library.updateMeeting(meetingID, summary: summary, expectedRevision: 0)
+    let merged = try library.mergeSpeakers(
+      meetingID, keep: "Lena", merge: ["Speaker 2"], expectedRevision: 1)
+    precondition(merged.record.summary == summary)
+    let renamed = try library.updateMeeting(
+      meetingID, names: ["Speaker 3": "Alexandra"], expectedRevision: 2)
+    precondition(renamed.record.summary == nil)
+    _ = try library.updateMeeting(meetingID, summary: summary, expectedRevision: 3)
+    let mergedAway = try library.mergeSpeakers(
+      meetingID, keep: "Jona", merge: ["Lena"], expectedRevision: 4)
+    precondition(mergedAway.record.summary == nil)
+    _ = try library.updateMeeting(meetingID, summary: summary, expectedRevision: 5)
+    let corrected = try library.editTranscript(
+      meetingID, changes: [.init(segmentID: "s2", text: "We use Kubernetes.")], expectedRevision: 6)
+    precondition(corrected.record.summary == nil)
   }
 
   static func testConcurrentWriters(_ root: URL) throws {
