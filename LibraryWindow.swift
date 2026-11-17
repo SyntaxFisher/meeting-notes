@@ -402,6 +402,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
 
   var isVisible: Bool { window?.isVisible ?? false }
 
+  private var dockObserver: NSObjectProtocol?
+
   func show(selecting id: String? = nil) {
     let window = self.window ?? makeWindow()
     self.window = window
@@ -431,8 +433,32 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
     refreshTimer?.invalidate()
     refreshTimer = nil
     model.playback.pause()
-    NSApp.setActivationPolicy(.accessory)
+    leaveDock(closing: notification.object as? NSWindow)
     AppLog.event("library.closed")
+  }
+
+  /// Leaving the Dock deactivates the app, which would drop its other open windows, such as
+  /// Settings, behind other apps. The Dock icon therefore stays until they are closed too.
+  private func leaveDock(closing: NSWindow?) {
+    let othersOpen = NSApp.windows.contains {
+      $0 !== closing && $0.isVisible && $0.styleMask.contains(.titled)
+    }
+    guard othersOpen else {
+      if let dockObserver { NotificationCenter.default.removeObserver(dockObserver) }
+      dockObserver = nil
+      NSApp.setActivationPolicy(.accessory)
+      return
+    }
+    guard dockObserver == nil else { return }
+    dockObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.willCloseNotification, object: nil, queue: .main
+    ) { [weak self] notification in
+      let closing = notification.object as? NSWindow
+      MainActor.assumeIsolated {
+        guard let self, closing !== self.window, self.window?.isVisible != true else { return }
+        self.leaveDock(closing: closing)
+      }
+    }
   }
 
   func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { model.undoManager }
@@ -456,13 +482,40 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
     window.title = "Meeting Notes"
     window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
     window.setContentSize(NSSize(width: 1040, height: 700))
-    window.contentMinSize = NSSize(width: 720, height: 460)
+    window.contentMinSize = Self.minimumContentSize
     window.isReleasedWhenClosed = false
     window.toolbarStyle = .unified
     window.delegate = self
     window.center()
     window.setFrameAutosaveName("MeetingNotesLibrary")
+    // A frame saved by a version without the minimum, or changed by a window manager, can be
+    // smaller than the layout supports.
+    let minimum = window.frameRect(
+      forContentRect: NSRect(origin: .zero, size: window.contentMinSize)
+    )
+    .size
+    if window.frame.width < minimum.width || window.frame.height < minimum.height {
+      var frame = window.frame
+      let top = frame.maxY
+      frame.size = NSSize(
+        width: max(frame.width, minimum.width), height: max(frame.height, minimum.height))
+      frame.origin.y = top - frame.height
+      window.setFrame(frame, display: false)
+    }
     return window
+  }
+
+  /// Room for the meeting list beside a readable transcript, and for the header, player and a
+  /// few passages.
+  static let minimumContentSize = NSSize(width: 760, height: 480)
+
+  /// SwiftUI's scene bridging can replace the window's own minimum, so drags are limited here.
+  func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+    let minimum = sender.frameRect(
+      forContentRect: NSRect(origin: .zero, size: Self.minimumContentSize)
+    ).size
+    return NSSize(
+      width: max(frameSize.width, minimum.width), height: max(frameSize.height, minimum.height))
   }
 
   private func makeMainMenu() -> NSMenu {
