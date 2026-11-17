@@ -50,7 +50,7 @@ enum ReplayCommand {
         ReconstructionArchive.Transcription.self,
         from: Data(contentsOf: archive.appendingPathComponent("transcription.json")))
       let source = archive.appendingPathComponent("capture", isDirectory: true)
-      guard manager.fileExists(atPath: source.path) else {
+      guard CaptureTrack.hasTracks(in: source) else {
         try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
           .write(to: output.appendingPathComponent("summary.json"))
         print("No capture tracks in the archive; only the Teams trace was replayed.")

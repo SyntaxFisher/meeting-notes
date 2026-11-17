@@ -74,7 +74,7 @@ enum DiagnosticsExportSmoke {
     }
     precondition(
       text("capture/system.aac") == "track" && text("teams-trace.jsonl") != nil
-        && text("meeting/\(id).m4a") == "audio" && text("meeting/\(id).summary.md") == "Summary"
+        && text("meeting/\(id).m4a") == nil && text("meeting/\(id).summary.md") == "Summary"
         && text("meeting/\(id).json") != nil && text("config.json") != nil
         && text("manifest.json") != nil
         && !manager.fileExists(atPath: folder.appendingPathComponent("meeting/\(other).m4a").path),
@@ -87,8 +87,20 @@ enum DiagnosticsExportSmoke {
         && events.contains(id) && !events.contains(other),
       "Logs are limited to the meeting")
     precondition(
-      manifest.files["meeting/\(id).m4a"] == 5 && manifest.files["capture/system.aac"] == 5,
-      "The manifest lists file sizes")
+      manifest.files["capture/system.aac"] == 5 && manifest.files["meeting/\(id).m4a"] == nil
+        && manifest.omitted.count == 1 && manifest.omitted[0].hasPrefix("Mixed recording"),
+      "The manifest lists file sizes and leaves out the mix its capture tracks replace")
+
+    var silent = export
+    silent.includesAudio = false
+    let small = try silent.write(id, to: root.appendingPathComponent("no-audio.zip"))
+    precondition(
+      small.files.keys.allSatisfy {
+        !DiagnosticsExport.audioExtensions.contains(($0 as NSString).pathExtension)
+      }
+        && small.files["meeting/\(id).summary.md"] != nil && small.files["teams-trace.jsonl"] != nil
+        && small.omitted.count == 1 && small.omitted[0].hasPrefix("Audio"),
+      "Without audio, the zip holds everything but the audio: \(small.files.keys.sorted())")
 
     do {
       try export.write(id, to: zip)
@@ -103,11 +115,13 @@ enum DiagnosticsExportSmoke {
     let unfinished = MeetingFiles.capture(for: failed, in: library.audios)
     try manager.createDirectory(at: unfinished, withIntermediateDirectories: true)
     try Data("mic".utf8).write(to: unfinished.appendingPathComponent("microphone.aac"))
+    try Data("mix".utf8).write(to: unfinished.appendingPathComponent("mixed.m4a"))
     let interrupted = try export.write(
       failed, to: root.appendingPathComponent(DiagnosticsExport.fileName(for: failed)))
     precondition(
       interrupted.files["meeting/unfinished-capture/microphone.aac"] == 3
         && interrupted.missing.contains { $0.hasPrefix("Reconstruction archive") }
+        && interrupted.files["meeting/unfinished-capture/mixed.m4a"] == nil
         && interrupted.missing.contains { $0.hasPrefix("Audio") },
       "An interrupted meeting exports its unfinished capture and says what is missing")
     print("Diagnostics export: meeting files, archive, logs and manifest in one zip: OK")

@@ -328,6 +328,12 @@ final class CaptureTrack {
     directory.appendingPathComponent(source.rawValue + ".aac")
   }
 
+  static func hasTracks(in directory: URL) -> Bool {
+    [CaptureSource.system, .microphone].contains {
+      FileManager.default.fileExists(atPath: url(for: $0, in: directory).path)
+    }
+  }
+
   private let handle: FileHandle
   private let start: Double
   private let encoder: AVAudioConverter

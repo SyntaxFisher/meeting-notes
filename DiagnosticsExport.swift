@@ -7,9 +7,14 @@ import Foundation
 ///   archived trace, the Teams trace around the recording is taken from the live trace.
 /// - `<id>/meeting/`: every file of the meeting in the meetings folder, such as the audio,
 ///   transcript, record and summary, and an unfinished capture as `meeting/unfinished-capture/`.
+///   A mixed recording is left out when its capture tracks are included, since replay mixes
+///   them again.
 /// - `<id>/logs/`: the diagnostic log around the meeting and the meeting's lifecycle events.
-/// - `<id>/config.json` and `<id>/manifest.json` with versions, the included files and what was
-///   missing, and why.
+/// - `<id>/config.json` and `<id>/manifest.json` with versions, the included files, what was
+///   missing and what was left out, and why.
+///
+/// Without `includesAudio`, every audio file is left out, so the zip stays small enough to
+/// attach; replay then only replays the Teams trace.
 ///
 /// The library and the archive are only read.
 struct DiagnosticsExport {
@@ -19,6 +24,7 @@ struct DiagnosticsExport {
   var logs = AutomationPaths.standard.logDirectory
   var config = AutomationPaths.standard.configFile
   var app = ReconstructionArchive.appVersion
+  var includesAudio = true
   /// How much of the diagnostic log before and after the meeting is included.
   static let logMargin: TimeInterval = 600
 
@@ -33,9 +39,10 @@ struct DiagnosticsExport {
     var locale: String
     var files: [String: Int64]
     var missing: [String]
+    var omitted: [String]
 
     enum CodingKeys: String, CodingKey {
-      case id, title, status, app, teams, locale, files, missing
+      case id, title, status, app, teams, locale, files, missing, omitted
       case exportedAt = "exported_at"
       case macOS = "macos"
     }
@@ -113,11 +120,12 @@ struct DiagnosticsExport {
     if manager.fileExists(atPath: config.path) {
       try manager.copyItem(at: config, to: folder.appendingPathComponent("config.json"))
     }
+    let omitted = try leaveOutAudio(in: folder, mixed: library.audioURL(of: record))
 
     var manifest = Manifest(
       id: id, title: record.title, status: record.status, exportedAt: Date(), app: app,
       macOS: ProcessInfo.processInfo.operatingSystemVersionString, teams: TeamsTrace.teamsVersion,
-      locale: Locale.current.identifier, files: [:], missing: missing)
+      locale: Locale.current.identifier, files: [:], missing: missing, omitted: omitted)
     manifest.files = Self.sizes(in: folder)
     try JSONCoding.encoder(pretty: true).encode(manifest)
       .write(to: folder.appendingPathComponent("manifest.json"))
@@ -131,6 +139,34 @@ struct DiagnosticsExport {
     }
     AppLog.event("diagnostics.exported", "\(id) \(destination.lastPathComponent)")
     return manifest
+  }
+
+  static let audioExtensions: Set<String> = ["aac", "m4a", "mp3", "wav", "caf"]
+
+  /// Removes the audio the export leaves out from the staged `folder` and says what it left out:
+  /// with `includesAudio`, the mixed recordings whose capture tracks are included, otherwise
+  /// every audio file.
+  private func leaveOutAudio(in folder: URL, mixed: URL?) throws -> [String] {
+    let manager = FileManager.default
+    guard includesAudio else {
+      let audio = Self.sizes(in: folder).keys.filter {
+        Self.audioExtensions.contains(($0 as NSString).pathExtension.lowercased())
+      }.sorted()
+      for path in audio { try manager.removeItem(at: folder.appendingPathComponent(path)) }
+      return audio.isEmpty ? [] : ["Audio: left out on export (\(audio.joined(separator: ", ")))."]
+    }
+    var omitted: [String] = []
+    for (mix, tracks) in [
+      (mixed.map { "meeting/" + $0.lastPathComponent }, "capture"),
+      ("meeting/unfinished-capture/mixed.m4a", "meeting/unfinished-capture"),
+    ] {
+      guard let mix, manager.fileExists(atPath: folder.appendingPathComponent(mix).path),
+        CaptureTrack.hasTracks(in: folder.appendingPathComponent(tracks, isDirectory: true))
+      else { continue }
+      try manager.removeItem(at: folder.appendingPathComponent(mix))
+      omitted.append("Mixed recording \(mix): replay mixes it from the tracks in \(tracks)/.")
+    }
+    return omitted
   }
 
   /// The `time` of each JSON line, with or without fractional seconds.

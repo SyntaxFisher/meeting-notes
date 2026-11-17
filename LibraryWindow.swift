@@ -275,8 +275,15 @@ final class LibraryModel {
     let panel = NSSavePanel()
     panel.title = "Export Diagnostics"
     panel.message =
-      "The zip file contains this meeting's audio, transcript, participant names, Teams trace "
-      + "and logs. Share it only with people who may hear the meeting."
+      "The zip file contains this meeting's transcript, participant names, Teams trace, logs "
+      + "and, if included, its audio. Share it only with people who may hear the meeting."
+    let audio = NSButton(checkboxWithTitle: "Include audio", target: nil, action: nil)
+    audio.state = .on
+    audio.toolTip =
+      "Replaying the transcription needs the audio. Without it, the zip is much smaller."
+    let accessory = NSStackView(views: [audio])
+    accessory.edgeInsets = NSEdgeInsets(top: 8, left: 20, bottom: 8, right: 20)
+    panel.accessoryView = accessory
     panel.nameFieldStringValue = DiagnosticsExport.fileName(for: record.id)
     panel.allowedContentTypes = [.zip]
     panel.directoryURL =
@@ -284,14 +291,16 @@ final class LibraryModel {
       .first
     NSApp.activate()
     guard panel.runModal() == .OK, let destination = panel.url else { return }
+    let includesAudio = audio.state == .on
     showNotice("Exporting diagnostics…")
     let root = library.root
     let id = record.id
     Task {
       do {
         _ = try await Task.detached(priority: .userInitiated) {
-          try DiagnosticsExport(library: MeetingLibrary(root: root))
-            .write(id, to: destination, replacing: true)
+          var export = DiagnosticsExport(library: MeetingLibrary(root: root))
+          export.includesAudio = includesAudio
+          return try export.write(id, to: destination, replacing: true)
         }.value
         dismissNotice()
         NSWorkspace.shared.activateFileViewerSelecting([destination])
