@@ -28,6 +28,32 @@ enum MeetingDetailsSmoke {
     let described = try await model.saveDetail(
       "  We discussed the launch.  ", field: .summary, for: original)
     precondition(described.title == named.title && described.summary == "We discussed the launch.")
+    let copied = TranscriptDocument.shareableText(
+      described, timeZone: TimeZone(identifier: "Europe/Berlin")!)
+    precondition(
+      copied.hasPrefix(
+        "Release planning\nRecorded 2026-11-06 22:20–22:20 (24 s)\n\nSummary:\nWe discussed the launch.\n\nSpeakers:\n"
+      ))
+    precondition(
+      copied.contains(
+        "- Jona: everything this Mac's microphone recorded; \"Jona Bihl\" in Teams\n"))
+    precondition(
+      copied.contains(
+        "- Lena: one of the remote voices in the Teams audio, told apart by sound; named after transcription\n"
+      ))
+    precondition(
+      copied.contains(
+        "- Speaker 2: remote voices in the Teams audio, told apart by sound; not matched to names\n"
+      ))
+    precondition(copied.hasSuffix("[00:00:12] Alex: Please check the budget.\n"))
+    let agentLines = TranscriptDocument.speakerLines(described, naming: .labelsWithAssignedNames)
+    precondition(
+      agentLines == [
+        "- Jona (you): everything this Mac's microphone recorded; \"Jona Bihl\" in Teams",
+        "- Speaker 1=Lena: one of the remote voices in the Teams audio, told apart by sound; named after transcription",
+        "- Speaker 3=Alex: one of the remote voices in the Teams audio, told apart by sound; named after transcription",
+        "- Speaker 2: remote voices in the Teams audio, told apart by sound; not matched to names",
+      ])
     model.undoManager.undo()
     await model.waitForDetailChanges()
     var current = try library.load(original.id)

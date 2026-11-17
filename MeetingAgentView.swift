@@ -121,15 +121,10 @@ enum MeetingAgentView {
           + (record.durationSeconds.map { " | \(MeetingLibrary.timestamp($0))" } ?? ""))
       if let path = library.audioURL(of: record)?.path { lines.append("recording_path: \(path)") }
       if !record.speakers.isEmpty {
-        lines.append(
-          "Speakers: "
-            + record.speakers.map {
-              "\($0.label)=\($0.displayName)\($0.isLocalUser ? " (you)" : $0.name == nil && $0.identity == .unidentified ? " (unidentified)" : "")"
-            }.joined(separator: "; "))
+        lines.append("Speakers:")
+        lines += TranscriptDocument.speakerLines(record, naming: .labelsWithAssignedNames)
       }
-      if let participants = record.participants?.participants, !participants.isEmpty {
-        lines.append("Participants: " + participants.map(\.name).joined(separator: "; "))
-      }
+      lines += TranscriptDocument.participantLines(record)
       if let summary = record.summary { lines.append("Summary: \(summary)") }
     }
     if record.status != .complete {

@@ -152,7 +152,32 @@ enum TranscriptDocument {
     return lines.joined(separator: "\n") + "\n"
   }
 
-  private static func header(_ metadata: MeetingRecord, timeZone: TimeZone) -> [String] {
+  /// The transcript as copied for use outside the app: the header with the names currently
+  /// assigned to the speakers, the saved summary and every turn.
+  static func shareableText(_ record: MeetingRecord, timeZone: TimeZone = .current) -> String {
+    var lines = header(record, timeZone: timeZone, assignedNames: true)
+    if !record.segments.isEmpty {
+      lines.append("")
+      lines.append(
+        record.segments.map {
+          "[\(timestamp($0.start))] \(record.displayName(for: $0.speaker)): \($0.text)"
+        }.joined(separator: "\n\n"))
+    }
+    return lines.joined(separator: "\n") + "\n"
+  }
+
+  enum SpeakerLegend {
+    /// The labels the transcript file uses.
+    case labels
+    /// The names assigned after transcription.
+    case assignedNames
+    /// `label=name`, for readers that see labels in the passages and address speakers by them.
+    case labelsWithAssignedNames
+  }
+
+  private static func header(
+    _ metadata: MeetingRecord, timeZone: TimeZone, assignedNames: Bool = false
+  ) -> [String] {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.timeZone = timeZone
@@ -164,52 +189,84 @@ enum TranscriptDocument {
     var lines = [
       metadata.title ?? "Meeting",
       "Recorded \(formatter.string(from: metadata.startedAt))–\(end.string(from: metadata.endedAt ?? metadata.startedAt)) (\(duration(metadata.durationSeconds ?? 0)))",
-      "",
-      "Speakers:",
     ]
+    if assignedNames, let summary = metadata.summary, !summary.isEmpty {
+      lines += ["", "Summary:", summary]
+    }
+    lines += ["", "Speakers:"]
+    lines += speakerLines(metadata, naming: assignedNames ? .assignedNames : .labels)
+    let participants = participantLines(metadata)
+    if !participants.isEmpty { lines += [""] + participants }
+    return lines
+  }
+
+  /// One line per speaker saying where the name comes from and how far it can be trusted.
+  static func speakerLines(_ metadata: MeetingRecord, naming: SpeakerLegend) -> [String] {
+    let assigned = naming != .labels
+    func name(_ speaker: MeetingSpeaker) -> String {
+      switch naming {
+      case .labels: speaker.label
+      case .assignedNames: speaker.displayName
+      case .labelsWithAssignedNames:
+        speaker.name.map { "\(speaker.label)=\($0)" } ?? speaker.label
+      }
+    }
+    func anonymousSource(_ speaker: MeetingSpeaker?) -> String {
+      switch speaker?.source {
+      case .mix, nil:
+        metadata.source == .microphone
+          ? "voices this Mac's microphone recorded" : "voices in the mixed recording"
+      case .deviceAudio: "remote voices in the device audio (everything this Mac played)"
+      case .app: "remote voices in the \(metadata.source?.systemAudio?.label ?? "app audio")"
+      case .teams, .microphone: "remote voices in the Teams audio"
+      }
+    }
+    var lines: [String] = []
     for speaker in metadata.speakers where speaker.identity != .unidentified {
       switch speaker.identity {
       case .localUser:
         let teams = speaker.participant.map { "; \"\($0)\" in Teams" } ?? ""
-        lines.append("- \(speaker.label): everything this Mac's microphone recorded\(teams)")
+        let you = naming == .labelsWithAssignedNames ? " (you)" : ""
+        lines.append(
+          "- \(name(speaker))\(you): everything this Mac's microphone recorded\(teams)")
       case .soleRemoteParticipant:
         lines.append(
-          "- \(speaker.label): the Teams audio; Teams listed no other remote participant")
+          "- \(name(speaker)): the Teams audio; Teams listed no other remote participant")
       case .teamsSpeaker:
         lines.append(
-          "- \(speaker.label): a voice in the Teams audio while Teams showed them speaking")
+          "- \(name(speaker)): a voice in the Teams audio while Teams showed them speaking")
       case .unidentified: break
       }
     }
     let unidentified = metadata.speakers.filter { $0.identity == .unidentified }
-    let anonymous = unidentified.map(\.label)
-    if !anonymous.isEmpty {
-      let source =
-        switch unidentified.first?.source {
-        case .mix, nil:
-          metadata.source == .microphone
-            ? "voices this Mac's microphone recorded" : "voices in the mixed recording"
-        case .deviceAudio: "remote voices in the device audio (everything this Mac played)"
-        case .app: "remote voices in the \(metadata.source?.systemAudio?.label ?? "app audio")"
-        case .teams, .microphone: "remote voices in the Teams audio"
-        }
+    for speaker in unidentified where assigned && speaker.name != nil {
       lines.append(
-        "- \(anonymous.joined(separator: ", ")): \(source), told apart by sound; not matched to names"
+        "- \(name(speaker)): one of the \(anonymousSource(speaker)), told apart by sound; named after transcription"
       )
     }
-    if let roster = metadata.participants, !roster.participants.isEmpty {
-      lines.append("")
+    let anonymous = unidentified.filter { !(assigned && $0.name != nil) }
+    if !anonymous.isEmpty {
       lines.append(
-        roster.sawFullRoster
-          ? "Participants in Teams:" : "Participants with a visible Teams video tile:")
-      for participant in roster.participants {
-        var details = [participant.role, participant.tag].compactMap { $0 }
-        if participant.isLocal { details.append("this Mac") }
-        let suffix = details.isEmpty ? "" : " (\(details.joined(separator: ", ")))"
-        lines.append(
-          "- \(participant.name)\(suffix), seen \(timestamp(participant.firstSeen))–\(timestamp(participant.lastSeen))"
-        )
-      }
+        "- \(anonymous.map(\.label).joined(separator: ", ")): \(anonymousSource(anonymous.first)), told apart by sound; not matched to names"
+      )
+    }
+    return lines
+  }
+
+  /// The participants Teams showed, under a heading saying whether the list is complete.
+  static func participantLines(_ metadata: MeetingRecord) -> [String] {
+    guard let roster = metadata.participants, !roster.participants.isEmpty else { return [] }
+    var lines = [
+      roster.sawFullRoster
+        ? "Participants in Teams:" : "Participants with a visible Teams video tile:"
+    ]
+    for participant in roster.participants {
+      var details = [participant.role, participant.tag].compactMap { $0 }
+      if participant.isLocal { details.append("this Mac") }
+      let suffix = details.isEmpty ? "" : " (\(details.joined(separator: ", ")))"
+      lines.append(
+        "- \(participant.name)\(suffix), seen \(timestamp(participant.firstSeen))–\(timestamp(participant.lastSeen))"
+      )
     }
     return lines
   }

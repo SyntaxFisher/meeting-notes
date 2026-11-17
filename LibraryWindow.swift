@@ -260,7 +260,7 @@ final class LibraryModel {
   }
 
   func copyTranscript(_ record: MeetingRecord) {
-    app.send(.copyText(MeetingLibrary.transcriptText(record)))
+    app.send(.copyText(TranscriptDocument.shareableText(record)))
   }
 
   func canRetry(_ record: MeetingRecord) -> Bool {
