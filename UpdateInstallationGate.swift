@@ -4,6 +4,9 @@ import Foundation
 final class UpdateInstallationGate {
   private var pendingInstallation: (() -> Void)?
   private(set) var installationStarted = false
+  /// Whether an installation started now could replace the app. A pending installation waits
+  /// while this is false, because starting it quits the app.
+  var canInstall: () -> Bool = { true }
 
   func installWhenIdle(_ install: @escaping () -> Void) {
     pendingInstallation = install
@@ -19,7 +22,7 @@ final class UpdateInstallationGate {
   }
 
   func resumeIfIdle(_ idle: Bool) {
-    if idle { installNow() }
+    if idle && pendingInstallation != nil && canInstall() { installNow() }
   }
 
   func installNow() {

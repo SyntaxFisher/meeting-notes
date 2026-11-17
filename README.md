@@ -60,7 +60,7 @@ Documents access saves your meetings, Microphone captures your voice, System Aud
 
 ## Updates and uninstall
 
-Release builds check for updates about every hour and install them only when nothing is recording, waiting for transcription or transcribing, and no permission setup is running. **Settings > About** has the controls.
+Release builds check for updates about every hour and install them only when nothing is recording, waiting for transcription or transcribing, and no permission setup is running. If your account can replace the app only with admin rights it holds temporarily, the update waits until those rights are active. **Settings > About** has the controls.
 
 To uninstall, quit Meeting Notes and delete it from Applications. Your meetings stay in `~/Documents/meeting-notes/`, the settings in `~/.config/meeting-notes/`, and the models in `~/Library/Application Support/Meeting Notes/Models` and `~/Library/Application Support/FluidAudio/Models`. If you connected an agent, remove it there too, for example with `codex mcp remove meeting-notes`.
 

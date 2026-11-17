@@ -7,11 +7,22 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
   var isBusy: () -> Bool = { false }
   /// Called when the user chose to install and relaunch while the app is busy.
   var confirmRelaunch: () -> Void = {}
+  private static let attemptedBuildKey = "attemptedUpdateBuild"
   private let enabled = Bundle.main.object(forInfoDictionaryKey: "MNEnableUpdater") as? Bool == true
+  private var offeredBuild: String?
+  private var reportedWaiting = false
   private lazy var controller = SPUStandardUpdaterController(
     startingUpdater: false, updaterDelegate: self, userDriverDelegate: nil)
 
   func start() {
+    installation.canInstall = { [weak self] in
+      let replaceable = InstallLocation.isReplaceable(Bundle.main.bundleURL)
+      if let self, !replaceable, !self.reportedWaiting {
+        self.reportedWaiting = true
+        AppLog.event("update.waiting", "The app cannot be replaced without admin rights")
+      }
+      return replaceable
+    }
     if enabled { controller.startUpdater() }
   }
 
@@ -51,14 +62,28 @@ final class AppUpdater: NSObject, SPUUpdaterDelegate {
   }
 
   func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+    offeredBuild = item.versionString
     AppLog.event(
       "update.found", "version=\(item.displayVersionString); build=\(item.versionString)")
+  }
+
+  /// Runs whenever the installer is about to quit the app, for every way an update installs.
+  func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
+    UserDefaults.standard.set(offeredBuild, forKey: Self.attemptedBuildKey)
+    UpdateRelaunchGuard.start()
   }
 
   func updater(
     _ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
     immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
   ) -> Bool {
+    // A build whose installation already quit the app once without replacing it is left to
+    // Sparkle's installation on quit, so a failing installation cannot quit the app repeatedly.
+    guard UserDefaults.standard.string(forKey: Self.attemptedBuildKey) != item.versionString else {
+      AppLog.event("update.skipped", "build=\(item.versionString); installs on quit")
+      return false
+    }
+    reportedWaiting = false
     AppLog.event("update.ready", "build=\(item.versionString); waiting for idle")
     installation.installWhenIdle {
       AppLog.event("update.installing", "build=\(item.versionString)")

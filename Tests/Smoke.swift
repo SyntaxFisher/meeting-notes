@@ -47,6 +47,7 @@ struct Smoke {
     try AgentEditingSmoke.run()
     TranscriptScrollSmoke.run()
     try testPausedMeetingLinks()
+    try UpdateSafetySmoke.run(cache.appendingPathComponent("update-safety-smoke"))
     let updateGate = UpdateInstallationGate()
     var installs = 0
     precondition(updateGate.postpone(whileBusy: true) { installs += 1 })
