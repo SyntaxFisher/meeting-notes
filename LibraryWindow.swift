@@ -490,7 +490,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
           "About Meeting Notes", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
         .separator(),
         item("Hide Meeting Notes", #selector(NSApplication.hide(_:)), "h"),
-        item("Quit Meeting Notes", #selector(NSApplication.terminate(_:)), "q"),
+        item("Close All Windows", #selector(NSApplication.closeAllWindows(_:)), "q"),
+        item("Quit Meeting Notes", #selector(NSApplication.terminate(_:))),
       ])
     submenu(
       "File",
@@ -597,6 +598,16 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
       model.pendingDeletion = selected
     } else {
       model.discard(selected)
+    }
+  }
+}
+
+extension NSApplication {
+  /// The quit shortcut's action: the app keeps recording from the menu bar, so only the menu
+  /// items quit it.
+  @objc func closeAllWindows(_ sender: Any?) {
+    for window in windows where window.isVisible && window.styleMask.contains(.closable) {
+      window.performClose(sender)
     }
   }
 }

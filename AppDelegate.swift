@@ -606,8 +606,11 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     appMenu.addItem(settings)
     appMenu.addItem(.separator())
     appMenu.addItem(
-      withTitle: "Quit Meeting Notes", action: #selector(NSApplication.terminate(_:)),
+      withTitle: "Close All Windows", action: #selector(NSApplication.closeAllWindows(_:)),
       keyEquivalent: "q")
+    appMenu.addItem(
+      withTitle: "Quit Meeting Notes", action: #selector(NSApplication.terminate(_:)),
+      keyEquivalent: "")
     let appItem = NSMenuItem()
     appItem.submenu = appMenu
     main.addItem(appItem)
