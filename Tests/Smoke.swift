@@ -411,6 +411,8 @@ struct Smoke {
       ("Planning | Example GmbH | user@", "Planning | Example GmbH | user@"),
       ("Planning |  | user@example.com", "Planning |  | user@example.com"),
       ("Calendar | Example GmbH | user@example.com | Microsoft Teams", nil),
+      ("Meeting join | Microsoft Teams meeting | Example GmbH | user@example.com", nil),
+      ("Meeting join | Q4 planning", "Meeting join | Q4 planning"),
     ]
     for (leave, unmute, mute) in [
       ("Leave", "Unmute mic", "Mute mic"),

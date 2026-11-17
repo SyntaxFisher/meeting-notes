@@ -146,6 +146,7 @@ struct TeamsReading: Equatable {
 enum TeamsMuteClassifier {
   private static let genericTitles: Set<String> = [
     "", "microsoft teams", "meeting", "calendar", "chat", "activity", "teams", "calls",
+    "meeting join | microsoft teams meeting",
   ]
 
   /// Teams can show the same meeting in more than one window: while another app is in front it

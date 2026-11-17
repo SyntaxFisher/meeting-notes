@@ -46,11 +46,20 @@ enum TranscriptDocument {
     guard result.mode == .separateTracks, soleRemoteParticipant(result, roster: roster) == nil,
       let speaking
     else { return nil }
+    let resolved = roster?.resolvedTileNames
+    var timeline = speaking
+    if let aliases = resolved?.aliases, !aliases.isEmpty {
+      for index in timeline.intervals.indices {
+        let name = timeline.intervals[index].name
+        timeline.intervals[index].name = aliases[name] ?? name
+      }
+    }
     return SpeakerNaming.decisions(
-      for: result.segments, timeline: speaking,
+      for: result.segments, timeline: timeline,
       excluded: [localName, roster?.localParticipant?.name].compactMap { $0 },
       embeddings: result.voiceEmbeddings ?? [],
-      participants: roster?.sawFullRoster == true ? roster?.remoteParticipants.map(\.name) : nil)
+      participants: roster?.sawFullRoster == true
+        ? resolved?.roster.remoteParticipants.map(\.name) : nil)
   }
 
   /// Fills the record's speakers, segments, participants and duration from the helper's result
@@ -133,7 +142,7 @@ enum TranscriptDocument {
       speaker.name = record.speakers.first { $0.label == speaker.label }?.name
       return speaker
     }
-    record.participants = roster
+    record.participants = roster?.resolvedTileNames.roster
     record.segments = segments
     var lines = header(record, timeZone: timeZone)
     lines.append("")

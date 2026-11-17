@@ -281,6 +281,32 @@ struct ParticipantRoster: Codable, Equatable {
   var localParticipant: Participant? { participants.first { $0.isLocal } }
   var remoteParticipants: [Participant] { participants.filter { !$0.isLocal } }
 
+  /// Teams sometimes flattens a guest's changing badge into the tile name. A join notice
+  /// supplies the display name independently. Require the notice and first tile in the same
+  /// reading, then a switch to the other badge without seeing both tiles together.
+  var resolvedTileNames: (roster: ParticipantRoster, aliases: [String: String]) {
+    var roster = self
+    var aliases: [String: String] = [:]
+    for (index, person) in participants.enumerated() {
+      guard !person.isLocal, let joined = person.joinedAt, !person.sources.contains(.tile) else {
+        continue
+      }
+      let variants = ["Unverified", "External unfamiliar"].compactMap { badge in
+        remoteParticipants.first { $0.name == "\(person.name) \(badge)" && $0.sources == [.tile] }
+      }.sorted { $0.firstSeen < $1.firstSeen }
+      guard variants.count == 2, variants[0].firstSeen == joined,
+        variants[0].lastSeen < variants[1].firstSeen,
+        variants[1].firstSeen - variants[0].lastSeen <= 4,
+        person.leftAt.map({ $0 >= variants[1].lastSeen }) ?? true
+      else { continue }
+      for variant in variants { aliases[variant.name] = person.name }
+      roster.participants[index].sources.append(.tile)
+      roster.participants[index].lastSeen = max(person.lastSeen, variants[1].lastSeen)
+    }
+    roster.participants.removeAll { aliases[$0.name] != nil }
+    return (roster, aliases)
+  }
+
   /// Merges one Accessibility snapshot. Returns whether anything changed.
   @discardableResult
   mutating func observe(_ sightings: [TeamsParticipantSighting], at time: Double) -> Bool {

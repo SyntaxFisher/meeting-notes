@@ -5,6 +5,7 @@ enum SpeakerIdentitySmoke {
     testParticipantParser()
     testSpeakingParser()
     testRoster()
+    testGuestBadgeChange()
     testComposer()
     testSpeakerNaming()
     testEchoFilter()
@@ -239,6 +240,68 @@ enum SpeakerIdentitySmoke {
     precondition(
       roster.observe([TeamsParticipantSighting(name: "sam carter", source: .tile)], at: 9))
     precondition(roster.participants.count == 3 && roster.participants[2].lastSeen == 9)
+  }
+
+  private static func testGuestBadgeChange() {
+    let base = "Robin Guest"
+    let first = base + " Unverified"
+    let second = base + " External unfamiliar"
+    let local = "Alex"
+    var roster = ParticipantRoster()
+    var timeline = SpeakingTimeline()
+    func observe(_ items: [TeamsAXItem], at time: Double) {
+      let window = TeamsParticipantWindowInput(
+        id: 1, items: [TeamsAXItem(role: "AXButton", text: "Leave")] + items)
+      let snapshot = TeamsParticipantReader.snapshot(.init(windows: [window]))!
+      roster.observe(snapshot.participants!, at: time)
+      if let speaker = snapshot.speaker { timeline.observe(speaker, at: time) }
+    }
+    func tile(_ label: String) -> TeamsAXItem {
+      .init(role: "AXMenuItem", text: label + ", video is on, Context menu is available")
+    }
+    observe(
+      [
+        tile("Myself video, " + local), tile(first), .init(role: "frame", text: first),
+        .init(role: "AXStaticText", text: base + " joined the call"),
+      ], at: 3)
+    observe([tile(first), .init(role: "frame", text: first)], at: 5)
+    precondition(roster.resolvedTileNames.aliases.isEmpty)
+    let beforeChange = roster
+    observe([tile(second), .init(role: "frame", text: second)], at: 8)
+    observe([tile(second), .init(role: "frame", text: second)], at: 10)
+    let confirmed = roster
+    let result = TranscriptSegments(
+      mode: .separateTracks, duration: 12,
+      segments: [
+        .init(start: 2, end: 3, source: .teams, speaker: "S1", text: "First."),
+        .init(start: 4, end: 5, source: .microphone, speaker: "local", text: "Local."),
+        .init(start: 7, end: 8, source: .teams, speaker: "S2", text: "Second."),
+      ], engine: "fixture")
+    var record = MeetingRecord(id: "fixture", startedAt: Date(), status: .complete)
+    _ = TranscriptDocument.compose(
+      result, into: &record, localName: local, roster: roster, speaking: timeline)
+    precondition(record.segments.map(\.speaker) == [base, local, base])
+    precondition(record.participants?.remoteParticipants.map(\.name) == [base])
+    precondition(record.participants?.remoteParticipants.first?.lastSeen == 10)
+
+    for conflict in [
+      tile(base), TeamsAXItem(role: "AXStaticText", text: first + " joined the call"),
+      TeamsAXItem(role: "AXRow", text: second + ", Presenter, Unmuted"),
+    ] {
+      roster = confirmed
+      observe([conflict], at: 9)
+      precondition(roster.resolvedTileNames.aliases.isEmpty)
+    }
+    roster = beforeChange
+    observe([tile(first), tile(second)], at: 7)
+    precondition(roster.resolvedTileNames.aliases.isEmpty)
+    roster = beforeChange
+    observe([tile(second)], at: 60)
+    precondition(roster.resolvedTileNames.aliases.isEmpty)
+    roster = ParticipantRoster()
+    observe([tile(first)], at: 5)
+    observe([tile(second)], at: 8)
+    precondition(roster.resolvedTileNames.aliases.isEmpty)
   }
 
   private static func testComposer() {
