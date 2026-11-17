@@ -6,7 +6,7 @@ struct CommandLineInterface {
   static let commands: Set<String> = [
     "help", "status", "list", "show", "search", "start", "stop", "discard", "retry", "delete",
     "wait", "set-title", "rename-speaker", "settings", "mcp", "agent-setup",
-    "transcribe", "replay", "teams-participants", "check-teams-mute",
+    "transcribe", "replay", "export-diagnostics", "teams-participants", "check-teams-mute",
     "edit-text", "merge-speakers",
   ]
 
@@ -68,6 +68,10 @@ struct CommandLineInterface {
                                       Run the current Teams detection and transcription
                                       over a reconstruction archive; writes before and
                                       after results into the new directory.
+      export-diagnostics <id> <out.zip>
+                                      Pack the meeting's audio, transcript, record, capture
+                                      tracks, Teams trace, logs and settings into a new zip
+                                      file for debugging; replay runs on its <id> folder.
       teams-participants              Print the current Teams meeting's participants.
       check-teams-mute                Print the detected Teams mute state.
 
@@ -399,6 +403,20 @@ struct CommandLineInterface {
         print("recordings-limit: \(Self.size(settings.retentionAudioBytes))")
         print("config: \(settings.configPath)")
         if let error = settings.configError { print("config error: \(error)") }
+      }
+    case "export-diagnostics":
+      guard arguments.positional.count == 2 else {
+        throw UsageError(message: "export-diagnostics needs a meeting id and a zip file.")
+      }
+      let destination = URL(
+        fileURLWithPath: (arguments.positional[1] as NSString).expandingTildeInPath)
+      let manifest = try DiagnosticsExport(library: library).write(
+        try library.resolve(arguments.positional[0]), to: destination)
+      if json {
+        emitJSON(manifest)
+      } else {
+        print("Wrote \(destination.path)")
+        for item in manifest.missing { print("Missing: \(item)") }
       }
     case "teams-participants":
       let started = Date()

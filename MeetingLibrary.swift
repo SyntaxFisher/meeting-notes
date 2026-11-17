@@ -402,6 +402,18 @@ final class MeetingLibrary {
     return files
   }
 
+  /// Copies the meeting's files from the meetings folder into `destination`, while no edit of
+  /// its record runs, with an unfinished capture as `unfinished-capture`.
+  func copyFiles(of id: String, to destination: URL) throws {
+    try withRecordLock(id) {
+      let capture = captureURL(for: id)
+      for file in files(of: id) where file != ReconstructionArchive.url(for: id) {
+        let name = file == capture ? "unfinished-capture" : file.lastPathComponent
+        try FileManager.default.copyItem(at: file, to: destination.appendingPathComponent(name))
+      }
+    }
+  }
+
   /// Moves every file of the meeting to the Trash and returns where each one was.
   @discardableResult
   func moveToTrash(_ id: String) throws -> [URL] {

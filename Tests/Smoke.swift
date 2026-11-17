@@ -38,6 +38,7 @@ struct Smoke {
     try SpeakerFusionSmoke.run()
     EchoCopiesSmoke.run()
     try TeamsTraceSmoke.run(cache.appendingPathComponent("trace-smoke"))
+    try DiagnosticsExportSmoke.run(cache.appendingPathComponent("diagnostics-smoke"))
     TeamsScreenSharingSmoke.run()
     try AgentSmoke.run()
     try TranscriptEditsSmoke.run()

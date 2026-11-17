@@ -190,6 +190,29 @@ enum ReconstructionArchive {
     }
   }
 
+  /// Copies the meeting's archive contents into `destination`, while no archive change runs.
+  /// Returns false when there is no archive.
+  static func copy(_ id: String, to destination: URL, in directory: URL = defaultDirectory) -> Bool
+  {
+    lock.lock()
+    defer { lock.unlock() }
+    let source = url(for: id, in: directory)
+    let manager = FileManager.default
+    guard
+      let entries = try? manager.contentsOfDirectory(
+        at: source, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+    else { return false }
+    for entry in entries {
+      do {
+        try manager.copyItem(
+          at: entry, to: destination.appendingPathComponent(entry.lastPathComponent))
+      } catch {
+        AppLog.event("reconstruction.copyFailed", "\(id): \(error.localizedDescription)")
+      }
+    }
+    return true
+  }
+
   static var appVersion: String {
     let info = Bundle.main.infoDictionary
     let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"

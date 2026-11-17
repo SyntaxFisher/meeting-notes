@@ -1,6 +1,7 @@
 import AppKit
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TranscriptTurn: Identifiable, Equatable {
   static func rowID(_ segment: Int) -> String { "segment-\(segment)" }
@@ -268,6 +269,39 @@ final class LibraryModel {
 
   func retry(_ record: MeetingRecord) { app.send(.meeting(.retry(id: record.id))) }
 
+  /// Asks where to save the meeting's diagnostics zip, writes it in the background and shows it
+  /// in the Finder.
+  func exportDiagnostics(_ record: MeetingRecord) {
+    let panel = NSSavePanel()
+    panel.title = "Export Diagnostics"
+    panel.message =
+      "The zip file contains this meeting's audio, transcript, participant names, Teams trace "
+      + "and logs. Share it only with people who may hear the meeting."
+    panel.nameFieldStringValue = DiagnosticsExport.fileName(for: record.id)
+    panel.allowedContentTypes = [.zip]
+    panel.directoryURL =
+      FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)
+      .first
+    NSApp.activate()
+    guard panel.runModal() == .OK, let destination = panel.url else { return }
+    showNotice("Exporting diagnostics…")
+    let root = library.root
+    let id = record.id
+    Task {
+      do {
+        _ = try await Task.detached(priority: .userInitiated) {
+          try DiagnosticsExport(library: MeetingLibrary(root: root))
+            .write(id, to: destination, replacing: true)
+        }.value
+        dismissNotice()
+        NSWorkspace.shared.activateFileViewerSelecting([destination])
+      } catch {
+        dismissNotice()
+        errorMessage = "Could not export diagnostics: \(error.localizedDescription)"
+      }
+    }
+  }
+
   func discard(_ record: MeetingRecord) {
     playback.load(nil)
     app.send(.meeting(.discard(id: record.id)))
@@ -483,6 +517,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
         item("Retry Transcription", #selector(retry), "t", [.command, .shift], target: self),
         item("Move to Trash…", #selector(moveToTrash), "\u{8}", target: self),
         .separator(),
+        item("Export Diagnostics…", #selector(exportDiagnostics), "", target: self),
+        .separator(),
         item("Show Panel", #selector(showPanel), "", target: self),
         item("Settings…", #selector(showSettings), ",", target: self),
       ])
@@ -521,6 +557,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
     case #selector(copyTranscript), #selector(renameSpeakers):
       return selected?.status == .complete
     case #selector(retry): return selected.map(model.canRetry) ?? false
+    case #selector(exportDiagnostics): return selected != nil
     case #selector(moveToTrash):
       guard let selected else { return false }
       return selected.status == .complete || selected.status.needsAttention
@@ -544,6 +581,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
   @objc private func copyTranscript() { selected.map(model.copyTranscript) }
   @objc private func renameSpeakers() { selected.map(model.editSpeakers) }
   @objc private func retry() { selected.map(model.retry) }
+  @objc private func exportDiagnostics() { selected.map(model.exportDiagnostics) }
   @objc private func moveToTrash() {
     guard let selected else { return }
     if selected.status == .complete {

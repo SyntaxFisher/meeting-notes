@@ -71,6 +71,7 @@ The gear button at the top right opens Settings directly.
 - The **Copy Transcript** icon (⇧⌘C) copies the entire corrected transcript with timestamps and speaker names, then briefly shows a checkmark. Search, exports and agent reads use the same corrected version. Source links open the current passage with audio paused, and also work without a recording. Edits replace the transcript directly; there is no history, original copy or undo.
 - Double-click the title to edit it directly. **Save** or Return applies it; **Cancel** or Escape keeps the previous title. Titles set here are protected from automatic agent naming.
 - The trash button beside **Copy Transcript** asks for confirmation before moving the meeting to the Trash. **Retry Transcription** (⇧⌘T) remains available for failed work.
+- **Export Diagnostics…** in a meeting's context menu or the **Meeting** menu saves a zip file for debugging, by default in Downloads, and shows it in the Finder. It works for meetings in every state and contains the meeting's audio, transcript, record and summary, an unfinished capture, its [reconstruction archive](development.md#replaying-a-meeting) (capture tracks, Teams trace, transcription result), the diagnostic log around the meeting, its lifecycle events, `config.json`, and `manifest.json` with app, macOS and Teams versions, file sizes and what was not available. It includes audio and participant names, so share it only with people who may hear the meeting.
 - **File > Start Recording** (⇧⌘R) and **Stop & Transcribe** (⌘.).
 
 The app shows a Dock icon only while the Library is open. It does not request notification permission, send macOS notifications or show automatic status popups. The menu-bar icon and meeting rows show progress and errors.
@@ -145,7 +146,7 @@ During capture, AAC tracks (`system.aac` for Teams, app or device audio and `mic
 
 The app's executable is also a command-line tool: `"/Applications/Meeting Notes.app/Contents/MacOS/MeetingNotes" help` (or `meeting-notes help`; the app installs that command in `~/.local/bin` when it launches from an Applications folder). Reading and transcript-editing commands work without the app; recording commands start it. See [MCP server and command line](mcp-and-cli.md#command-line).
 
-Diagnostics: `transcribe <audio> <out.txt> [--capture DIR] [--name N] [--title T]` transcribes a recording like the app and writes `<out.txt>` and `<out>.json` without overwriting; `teams-participants` prints the current meeting's roster; `check-teams-mute` prints the detected mute state and title.
+Diagnostics: `transcribe <audio> <out.txt> [--capture DIR] [--name N] [--title T]` transcribes a recording like the app and writes `<out.txt>` and `<out>.json` without overwriting; `export-diagnostics <id> <out.zip>` writes the same zip file as **Export Diagnostics…**, never overwriting; `teams-participants` prints the current meeting's roster; `check-teams-mute` prints the detected mute state and title.
 
 ## Native engine
 

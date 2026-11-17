@@ -222,6 +222,8 @@ struct MeetingActions: View {
         .disabled(!model.canRetry(record))
     }
     Divider()
+    Button("Export Diagnostics…") { model.exportDiagnostics(record) }
+    Divider()
     if record.status == .complete {
       Button("Move to Trash…", role: .destructive) { model.pendingDeletion = record }
     } else {
