@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build, sign, notarize, and publish Meeting Notes. Invoke via make."""
 
+import argparse
 import hashlib
 from datetime import datetime, timezone
 import json
@@ -393,7 +394,25 @@ def publish(info):
     print(f"Published {URL}/releases/tag/{tag}", flush=True)
 
 
+USAGE = """\
+environment:
+  MODE                  build (default), install, release, publish, or dependencies
+  DEST                  install destination (default /Applications)
+  SWIFT_FLAGS           extra swiftc flags
+  LOCAL_SIGN_IDENTITY   stable signing identity for local builds
+  PROVISIONING_PROFILE  provisioning profile for signed builds
+  ENABLE_UPDATER        1 enables Sparkle in a signed local build
+  SIGN_IDENTITY         Developer ID Application identity for release
+  NOTARY_CONFIG         notarization config (default ~/.config/meeting-notes-release/config.json)
+  NOTARY_PROFILE        notarytool keychain profile, instead of NOTARY_CONFIG
+
+release signs, notarizes and packages; publish uploads that release to GitHub.
+See docs/development.md and docs/releasing.md."""
+
+
 def main():
+    argparse.ArgumentParser(usage="make [build|install|release|publish|dependencies]", description=__doc__,
+                            epilog=USAGE, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
     mode = os.environ.get("MODE", "build")
     require(mode in {"install", "build", "release", "publish", "dependencies"}, "MODE must be install, build, release, publish, or dependencies.")
     info = metadata()
