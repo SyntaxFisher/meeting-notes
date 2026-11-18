@@ -80,6 +80,12 @@ Scenarios live in `scripts/devenv/scenarios/*.json`. Each defines `speakers` (`v
 - Device buffering and Teams' network path can shift live turns relative to the script. Check the captured tracks when evaluating short overlaps. Run the playback harness regression checks with `python3 -m unittest discover -s scripts/devenv -p 'test_*.py'`.
 
 
+### Teams update check
+
+`scripts/devenv/teams_update.py` checks Meeting Notes against new Teams releases. `check` compares the newest production Teams build, read from Teams' own configuration service, with the installed one; `install` downloads that build, verifies that the installer is notarized and signed by Microsoft, and installs it without Microsoft AutoUpdate; `install --build <version>` reinstalls one of the last three archived builds, to confirm that a fix still works with the previous Teams. `verify` builds this checkout, restarts it, records a scored live meeting (`standup-de-en` by default) and compares the result with the previous Teams build's report: a failed meeting, lost participant names or leaked muted speech is red, a regression against the previous build or Teams read trouble in the app log is yellow. Reports, archived builds and state stay outside the repository in `~/Library/Application Support/meeting-notes-dev`.
+
+Set `localSignIdentity` in the devenv config (`~/.config/meeting-notes-dev/config.json`) to a stable signing identity, so the app keeps its permissions across rebuilds. `install-agent` runs `check --trigger` every hour from launchd; when work is pending, it starts a T3 thread with the instructions in `agent-task.md` next to the state.
+
 ### Signed preview builds with updates
 
 Normal local/ad-hoc builds disable Sparkle. To test the visible About update controls in a signed local build, use `ENABLE_UPDATER=1 LOCAL_SIGN_IDENTITY="<Apple signing identity>" PROVISIONING_PROFILE="/absolute/path/to/Matching.provisionprofile" make build`. This opt-in rejects ad-hoc signing. Release builds always enable Sparkle. Update checks and installation still wait while capture, transcription or permission setup is active.

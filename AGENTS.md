@@ -2,6 +2,7 @@
 
 - This is a native Swift macOS menu-bar app. Keep the Makefile; Swift Package Manager builds the bundled transcription helper (whisper.cpp XCFramework for speech recognition and VAD, FluidAudio for diarization). Models download on first use with checksum verification.
 - For live end-to-end checks, use the local Teams test environment in `scripts/devenv` (see `docs/development.md`): a dummy Teams account, virtual audio devices and synthetic speech.
+- Keep the Teams integration working with the newest production Teams and, where possible, the previous release, since Teams updates reach users with a delay. `scripts/devenv/teams_update.py` installs either and verifies the app against it.
 - Never overwrite a completed recording. Requested transcript corrections update the transcript directly, without retaining an original copy or edit history. Audio retention uses the configured limit, preserving the newest recording and unfinished or failed work. Retention never removes transcripts or their records.
 - Run `make lint` before any commit.
 - For signed DMG preparation/publication, use `.agents/skills/release-meeting-notes/SKILL.md` and `docs/releasing.md` (`make release`, then `make publish`).
