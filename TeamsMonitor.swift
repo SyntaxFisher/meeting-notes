@@ -97,6 +97,7 @@ final class TeamsMonitor {
 final class TeamsBackgroundReader: @unchecked Sendable {
   private let queue = DispatchQueue(label: "com.jona.meeting-notes.teams", qos: .userInitiated)
   private let muteReader = TeamsMuteReader()
+  private let windowSource = TeamsWindowSource()
   private var timer: DispatchSourceTimer?
   private var mirrored: NativeRecorder?
   private var collection: Collection?
@@ -146,7 +147,7 @@ final class TeamsBackgroundReader: @unchecked Sendable {
   func readNow(_ done: @escaping @Sendable (TeamsReading) -> Void) {
     queue.async { [self] in
       lastStateRead = Date()
-      let reading = muteReader.read()
+      let reading = readMute()
       connecting = reading.connecting
       mirrorMicrophone(reading.state)
       deliver?(reading)
@@ -175,7 +176,7 @@ final class TeamsBackgroundReader: @unchecked Sendable {
     let frequent = mirrored != nil || collection != nil || connecting
     if now.timeIntervalSince(lastStateRead) >= (frequent ? 0.4 : 2) {
       lastStateRead = now
-      let reading = muteReader.read()
+      let reading = readMute()
       connecting = reading.connecting
       mirrorMicrophone(reading.state)
       deliver?(reading)
@@ -185,7 +186,7 @@ final class TeamsBackgroundReader: @unchecked Sendable {
     guard var current = collection, now.timeIntervalSince(lastMeetingRead) >= 0.8 else { return }
     lastMeetingRead = now
     let snapshotStarted = Date()
-    let snapshot = TeamsParticipantReader.snapshot()
+    let snapshot = TeamsParticipantReader.snapshot(windowSource.read())
     let snapshotSeconds = Date().timeIntervalSince(snapshotStarted)
     if snapshotSeconds >= 1 {
       AppLog.event("teams.slowRead", String(format: "participants=%.1fs", snapshotSeconds))
@@ -217,6 +218,13 @@ final class TeamsBackgroundReader: @unchecked Sendable {
       }
     }
     collection = current
+  }
+
+  /// Every reading refreshes the windows it reads, so a read just after another one is current.
+  private func readMute() -> TeamsReading {
+    let reading = muteReader.read(windowSource.read())
+    windowSource.meetingWindowMissing = muteReader.meetingWindowMissing
+    return reading
   }
 
   private func writeSpeaking(_ collection: Collection) {

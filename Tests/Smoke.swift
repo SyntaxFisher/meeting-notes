@@ -474,6 +474,26 @@ struct Smoke {
       var front = stale
       front.isCurrent = true
       precondition(TeamsMuteClassifier.classify([front]) == .unmuted)
+      // A refreshed window is current wherever it is; a failed refresh changes nothing.
+      let hiddenMeeting = TeamsWindowInput(
+        id: 1, title: "Weekly Sync | Microsoft Teams", minimized: true, refresh: 0,
+        buttons: [[leave], [unmute]])
+      let hiddenCompact = TeamsWindowInput(
+        id: 2, title: "Meeting compact view | Weekly Sync", minimized: true,
+        refresh: -25202, buttons: [[leave], [mute]])
+      precondition(
+        TeamsMuteClassifier.classify(
+          [hiddenMeeting, hiddenCompact].map { TeamsMuteClassifier.snapshot($0, frontmost: false) }
+        ) == .muted, "Muting while every meeting window is minimized")
+      precondition(
+        TeamsMuteClassifier.meetingWindowMissing([
+          TeamsMuteClassifier.snapshot(hiddenCompact, frontmost: false)
+        ])
+          && !TeamsMuteClassifier.meetingWindowMissing(
+            [hiddenMeeting, hiddenCompact].map {
+              TeamsMuteClassifier.snapshot($0, frontmost: false)
+            })
+      )
       let missingMicrophone = TeamsWindowSnapshot(buttons: [[leave]])
       let missingState = TeamsMuteClassifier.classify([missingMicrophone])
       precondition(missingState == .unavailable(.noControl))

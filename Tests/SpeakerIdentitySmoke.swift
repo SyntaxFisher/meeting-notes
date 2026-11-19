@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 
 enum SpeakerIdentitySmoke {
@@ -128,36 +129,39 @@ enum SpeakerIdentitySmoke {
     let gallery = Reading(isMeeting: true, sightings: [anna], framed: ["Anna Schmidt"])
     let compact = Reading(isMeeting: true, labels: [.speaking("Sam Carter")])
     precondition(
-      TeamsParticipantReader.combine([gallery], hidden: false)
+      TeamsParticipantReader.combine([gallery])
         == TeamsMeetingSnapshot(participants: [anna], speakers: ["Anna Schmidt"]))
     precondition(
-      TeamsParticipantReader.combine([gallery, compact], hidden: false).speakers
-        == ["Sam Carter"],
+      TeamsParticipantReader.combine([gallery, compact]).speakers
+        == ["Anna Schmidt", "Sam Carter"],
+      "Speakers are everyone a current window frames or labels")
+    let staleGallery = Reading(
+      isMeeting: true, sightings: [anna], isCurrent: false, framed: ["Anna Schmidt"])
+    precondition(
+      TeamsParticipantReader.combine([staleGallery, compact]).speakers == ["Sam Carter"],
       "The compact view follows the call while the gallery keeps its last frame")
     precondition(
-      TeamsParticipantReader.combine([gallery, compact], hidden: false).participants == [anna])
+      TeamsParticipantReader.combine([staleGallery]).speakers == nil,
+      "Without a current window Teams shows no current speaker")
     precondition(
-      TeamsParticipantReader.combine([Reading(isMeeting: true, sightings: [anna])], hidden: false)
+      TeamsParticipantReader.combine([gallery, compact]).participants == [anna])
+    precondition(
+      TeamsParticipantReader.combine([Reading(isMeeting: true, sightings: [anna])])
         .speakers == [])
     precondition(
-      TeamsParticipantReader.combine([gallery, compact], hidden: true).speakers == nil,
-      "A hidden Teams shows no current speaker")
-    precondition(
       TeamsParticipantReader.combine(
-        [Reading(isMeeting: true, framed: ["Anna Schmidt", "Sam Carter"])], hidden: false
+        [Reading(isMeeting: true, framed: ["Anna Schmidt", "Sam Carter"])]
       ).speakers == ["Anna Schmidt", "Sam Carter"],
       "Overlapping frames name everyone framed")
-    precondition(TeamsParticipantReader.combine([], hidden: false) == TeamsMeetingSnapshot())
+    precondition(TeamsParticipantReader.combine([]) == TeamsMeetingSnapshot())
     precondition(
       TeamsParticipantReader.combine(
-        [Reading(isMeeting: true, sightings: [anna]), Reading(isMeeting: true, sightings: [anna])],
-        hidden: false
+        [Reading(isMeeting: true, sightings: [anna]), Reading(isMeeting: true, sightings: [anna])]
       ).participants == nil)
     let callee = TeamsParticipantSighting(name: "Sam Carter", joined: true, source: .notice)
     precondition(
       TeamsParticipantReader.combine(
-        [gallery, Reading(isMeeting: true, isCompactView: true, sightings: [callee])],
-        hidden: false
+        [gallery, Reading(isMeeting: true, isCompactView: true, sightings: [callee])]
       ).participants == [anna, callee],
       "The compact view lists participants of the meeting window's own meeting")
     let stage = TeamsParticipantParser.stageTileRole
@@ -237,11 +241,11 @@ enum SpeakerIdentitySmoke {
     }
     func meeting(
       _ items: [TeamsAXItem], visibility: TeamsWindowVisibility? = .visible,
-      minimized: Bool = false, main: Bool = true
+      minimized: Bool = false, main: Bool = true, refresh: AXError? = nil
     ) -> TeamsParticipantWindowInput {
       .init(
         id: 1, title: "Lecture | Microsoft Teams", minimized: minimized, main: main,
-        visibility: visibility, items: [leave] + items)
+        visibility: visibility, refresh: refresh?.rawValue, items: [leave] + items)
     }
     let lecturer = tile("Robin Lehmann, video is on, Has control of production tools")
     let raised = tile("Kim Weber - A25, Has control of production tools, muted, hand raised")
@@ -302,6 +306,64 @@ enum SpeakerIdentitySmoke {
       speakers([meeting([lecturer, frame("Robin Lehmann")], visibility: nil)])
         == ["Robin Lehmann"],
       "A window read without its visibility counts as current")
+    for (visibility, minimized) in [(TeamsWindowVisibility.hidden, true), (.covered, false)] {
+      precondition(
+        speakers([meeting(asking, visibility: visibility, minimized: minimized, refresh: .success)])
+          == ["Kim Weber - A25"],
+        "A refreshed \(visibility) meeting window shows the current speaker")
+    }
+    precondition(
+      speakers([meeting(asking, visibility: .frozen, refresh: .success)]) == nil,
+      "A refreshed window whose clock stopped is not current")
+    precondition(
+      speakers([meeting(asking, visibility: .hidden, minimized: true, refresh: .invalidUIElement)])
+        == nil,
+      "A failed refresh leaves a hidden window stale")
+    var minimizedCompact = compact
+    minimizedCompact.minimized = true
+    minimizedCompact.visibility = .hidden
+    minimizedCompact.items = [
+      leave, .init(role: "AXGroup", text: "Robin Lehmann is speaking"),
+    ]
+    precondition(
+      speakers([minimizedCompact, meeting(asking, visibility: .covered)]) == nil,
+      "A minimized compact view's label is as stale as its frames")
+    minimizedCompact.refresh = AXError.success.rawValue
+    precondition(
+      speakers([minimizedCompact, meeting(asking, visibility: .covered)]) == ["Robin Lehmann"],
+      "A refreshed compact view's label is current")
+    // Teams keeps a presenter's tile framed while they share and for some seconds after.
+    let share = TeamsAXItem(
+      role: TeamsParticipantParser.stageTileRole, text: "Content shared by Robin Lehmann")
+    let student = tile("Anna Novak")
+    precondition(
+      TeamsParticipantParser.parse(role: share.role, description: share.text) == nil
+        && TeamsParticipantParser.presenter(share.text) == "Robin Lehmann",
+      "A shared screen is no participant")
+    precondition(
+      speakers([meeting([share, lecturer, frame("Robin Lehmann")])]) == ["Robin Lehmann"],
+      "A presenter framed alone counts as speaking")
+    precondition(
+      speakers([
+        meeting([share, lecturer, frame("Robin Lehmann"), student, frame("Anna Novak")])
+      ]) == ["Anna Novak"],
+      "A presenter's frame yields to anyone else framed")
+    precondition(
+      TeamsParticipantReader.snapshot(
+        .init(
+          windows: [meeting([lecturer, frame("Robin Lehmann"), student, frame("Anna Novak")])],
+          presenting: ["Robin Lehmann"]))?.speakers == ["Anna Novak"],
+      "A presenter who just stopped sharing still yields")
+    precondition(
+      TeamsParticipantReader.snapshot(
+        .init(windows: [meeting([share, lecturer, frame("Robin Lehmann"), student])]))?
+        .participants?.map(\.name) == ["Robin Lehmann", "Anna Novak"])
+    var presenterWatch = TeamsPresenterWatch()
+    precondition(
+      presenterWatch.observe(["Robin Lehmann"], at: 0) == ["Robin Lehmann"]
+        && presenterWatch.observe([], at: TeamsPresenterWatch.memory) == ["Robin Lehmann"]
+        && presenterWatch.observe([], at: TeamsPresenterWatch.memory + 1) == [])
+
     let traced = TeamsParticipantInput(windows: [meeting(asking, visibility: .covered)]).traced
     precondition(
       traced.windows?.first?.visibility == .covered

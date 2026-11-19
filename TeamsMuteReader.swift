@@ -50,9 +50,10 @@ struct TeamsWindowSnapshot {
   var sharingPicker = false
   var meetingEnded = false
   var clock: TeamsCallClock? = nil
-  /// Whether Teams keeps this window's controls current: the compact meeting view, or the
-  /// main window of Teams while it is in front. A meeting window behind other apps or
-  /// minimized keeps showing the mute state it last drew.
+  /// Whether this window's controls show the call as it is now: the reader refreshed its
+  /// Accessibility tree, or Teams draws it anyway, as it does the compact meeting view and its
+  /// main window while it is in front. Otherwise a meeting window behind other apps or
+  /// minimized reports the mute state it last drew.
   var isCurrent = false
 }
 
@@ -63,6 +64,9 @@ struct TeamsWindowInput: Codable, Equatable {
   var title: String?
   var minimized = false
   var main = false
+  var origin: TeamsWindowOrigin?
+  /// The result of refreshing the window's Accessibility tree, nil when not refreshed.
+  var refresh: Int32?
   var buttons: [[String]] = []
   var headings: [[String]] = []
   var clock: TeamsCallClock?
@@ -100,6 +104,8 @@ extension TeamsWindowInput {
       title: try values.decodeIfPresent(String.self, forKey: .title),
       minimized: try values.decode(Bool.self, forKey: .minimized),
       main: try values.decode(Bool.self, forKey: .main),
+      origin: try values.decodeIfPresent(TeamsWindowOrigin.self, forKey: .origin),
+      refresh: try values.decodeIfPresent(Int32.self, forKey: .refresh),
       buttons: try values.decode([[String]].self, forKey: .buttons),
       headings: try values.decode([[String]].self, forKey: .headings),
       clock: try values.decodeIfPresent(TeamsCallClock.self, forKey: .clock),
@@ -172,6 +178,14 @@ enum TeamsMuteClassifier {
     return state
   }
 
+  /// Whether Teams shows a compact meeting view but no meeting window, as when the meeting
+  /// window is on another desktop that no reading saw it on.
+  static func meetingWindowMissing(_ windows: [TeamsWindowSnapshot]) -> Bool {
+    let meetingWindows = windows.filter(isMeetingWindow)
+    return meetingWindows.contains { isCompactView($0.title) }
+      && meetingWindows.allSatisfy { isCompactView($0.title) }
+  }
+
   /// What one window shows the classifier.
   static func snapshot(_ window: TeamsWindowInput, frontmost: Bool) -> TeamsWindowSnapshot {
     TeamsWindowSnapshot(
@@ -179,7 +193,8 @@ enum TeamsMuteClassifier {
       sharingPicker: window.headings.contains { isSharingPicker(role: "AXHeading", labels: $0) },
       meetingEnded: window.blank == true || window.buttons.contains(where: isMeetingEndControl),
       clock: window.clock,
-      isCurrent: !window.minimized && (isCompactView(window.title) || (frontmost && window.main)))
+      isCurrent: window.refresh == AXError.success.rawValue
+        || (!window.minimized && (isCompactView(window.title) || (frontmost && window.main))))
   }
 
   /// The reading of `input`, with `tracker` remembering meeting windows across readings.
@@ -364,6 +379,8 @@ final class TeamsWindowRegistry: @unchecked Sendable {
 
 final class TeamsMuteReader {
   private var tracker = TeamsMeetingWindowTracker<Int>()
+  /// Whether the last reading found a compact meeting view but no meeting window.
+  private(set) var meetingWindowMissing = false
 
   static var hasAccessibilityAccess: Bool { AXIsProcessTrusted() }
 
@@ -372,10 +389,12 @@ final class TeamsMuteReader {
     _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
   }
 
-  func read() -> TeamsReading {
-    let input = self.input()
+  func read(_ windows: Result<TeamsWindowList, TeamsMuteState.Reason>) -> TeamsReading {
+    let input = self.input(windows)
     TeamsTrace.shared.record("mute-input", value: input.traced)
     let reading = TeamsMuteClassifier.reading(input, tracker: &tracker)
+    meetingWindowMissing = TeamsMuteClassifier.meetingWindowMissing(
+      input.windows.map { TeamsMuteClassifier.snapshot($0, frontmost: input.frontmost) })
     TeamsTrace.shared.record(
       "mute",
       [
@@ -386,30 +405,24 @@ final class TeamsMuteReader {
     return reading
   }
 
-  private func input() -> TeamsMuteInput {
-    guard Self.hasAccessibilityAccess else {
-      return TeamsMuteInput(failure: .accessibilityPermission)
+  private func input(_ windows: Result<TeamsWindowList, TeamsMuteState.Reason>) -> TeamsMuteInput {
+    let list: TeamsWindowList
+    switch windows {
+    case .failure(let reason): return TeamsMuteInput(failure: reason)
+    case .success(let windows): list = windows
     }
-    let apps = NSRunningApplication.runningApplications(
-      withBundleIdentifier: "com.microsoft.teams2")
-    guard apps.count == 1, let app = apps.first else {
-      return TeamsMuteInput(failure: apps.isEmpty ? .teamsClosed : .ambiguous)
-    }
-    TeamsTrace.shared.record("teams", ["version": TeamsTrace.version(of: app) ?? ""])
-    let application = AXUIElementCreateApplication(app.processIdentifier)
-    AXUIElementSetMessagingTimeout(application, 0.5)
-    // Teams' web view exposes its controls in the background when enhanced accessibility is on.
-    _ = AXUIElementSetAttributeValue(
-      application, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
-    guard let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) else {
-      return TeamsMuteInput(failure: .accessibilityError)
-    }
-    var input = TeamsMuteInput(frontmost: attribute(application, kAXFrontmostAttribute) ?? false)
-    for window in windows {
-      guard var scanned = scan(window) else { return TeamsMuteInput(failure: .accessibilityError) }
-      scanned.id = TeamsWindowRegistry.shared.id(of: window)
-      scanned.minimized = attribute(window, kAXMinimizedAttribute) ?? false
-      scanned.main = attribute(window, kAXMainAttribute) ?? false
+    TeamsTrace.shared.record("teams", ["version": TeamsTrace.version(of: list.app) ?? ""])
+    var input = TeamsMuteInput(
+      frontmost: attribute(list.application, kAXFrontmostAttribute) ?? false)
+    for window in list.windows {
+      guard var scanned = scan(window.element) else {
+        return TeamsMuteInput(failure: .accessibilityError)
+      }
+      scanned.id = window.id
+      scanned.minimized = attribute(window.element, kAXMinimizedAttribute) ?? false
+      scanned.main = attribute(window.element, kAXMainAttribute) ?? false
+      scanned.origin = window.origin
+      scanned.refresh = window.refresh
       input.windows.append(scanned)
     }
     return input
