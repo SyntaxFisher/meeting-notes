@@ -108,6 +108,34 @@ enum DiagnosticsExportSmoke {
     } catch {}
     try export.write(id, to: zip, replacing: true)
 
+    var split = export
+    split.splitsIntoParts = true
+    split.partSize = 1000
+    try split.write(id, to: zip, replacing: true)
+    let parts = DiagnosticsExport.parts(of: zip)
+    let joined = root.appendingPathComponent("joined.zip")
+    try parts.reduce(into: Data()) { $0.append(try Data(contentsOf: $1)) }.write(to: joined)
+    let check = Process()
+    check.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+    check.arguments = ["-tq", joined.path]
+    check.standardOutput = FileHandle.nullDevice
+    try check.run()
+    check.waitUntilExit()
+    precondition(
+      parts.count > 1 && parts[0].lastPathComponent == zip.lastPathComponent + ".001"
+        && parts.allSatisfy { (try? Data(contentsOf: $0).count) ?? .max <= 1000 }
+        && !manager.fileExists(atPath: zip.path) && check.terminationStatus == 0,
+      "A split export replaces the zip with parts that join into a valid zip")
+    do {
+      try split.write(id, to: zip)
+      preconditionFailure("Existing parts must not be overwritten")
+    } catch {}
+    split.partSize = 1 << 30
+    try split.write(id, to: zip, replacing: true)
+    precondition(
+      DiagnosticsExport.parts(of: zip).isEmpty && manager.fileExists(atPath: zip.path),
+      "A zip that fits in one part stays a single file and replaces earlier parts")
+
     let failed = "20261110T110000Z"
     try library.save(
       MeetingRecord(

@@ -281,7 +281,8 @@ final class LibraryModel {
     audio.state = .on
     audio.toolTip =
       "Replaying the transcription needs the audio. Without it, the zip is much smaller."
-    let accessory = NSStackView(views: [audio])
+    let split = NSButton(checkboxWithTitle: "Split into chunks", target: nil, action: nil)
+    let accessory = NSStackView(views: [audio, split])
     accessory.edgeInsets = NSEdgeInsets(top: 8, left: 20, bottom: 8, right: 20)
     panel.accessoryView = accessory
     panel.nameFieldStringValue = DiagnosticsExport.fileName(for: record.id)
@@ -292,6 +293,7 @@ final class LibraryModel {
     NSApp.activate()
     guard panel.runModal() == .OK, let destination = panel.url else { return }
     let includesAudio = audio.state == .on
+    let splitsIntoParts = split.state == .on
     showNotice("Exporting diagnostics…")
     let root = library.root
     let id = record.id
@@ -300,10 +302,12 @@ final class LibraryModel {
         _ = try await Task.detached(priority: .userInitiated) {
           var export = DiagnosticsExport(library: MeetingLibrary(root: root))
           export.includesAudio = includesAudio
+          export.splitsIntoParts = splitsIntoParts
           return try export.write(id, to: destination, replacing: true)
         }.value
         dismissNotice()
-        NSWorkspace.shared.activateFileViewerSelecting([destination])
+        let parts = DiagnosticsExport.parts(of: destination)
+        NSWorkspace.shared.activateFileViewerSelecting(parts.isEmpty ? [destination] : parts)
       } catch {
         dismissNotice()
         errorMessage = "Could not export diagnostics: \(error.localizedDescription)"

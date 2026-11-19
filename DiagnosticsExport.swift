@@ -16,6 +16,9 @@ import Foundation
 /// Without `includesAudio`, every audio file is left out, so the zip stays small enough to
 /// attach; replay then only replays the Teams trace.
 ///
+/// With `splitsIntoParts`, a zip larger than `partSize` is written as `<name>.zip.001`,
+/// `<name>.zip.002`, ... instead, which `cat <name>.zip.* > <name>.zip` joins again.
+///
 /// The library and the archive are only read.
 struct DiagnosticsExport {
   var library: MeetingLibrary
@@ -25,6 +28,9 @@ struct DiagnosticsExport {
   var config = AutomationPaths.standard.configFile
   var app = ReconstructionArchive.appVersion
   var includesAudio = true
+  var splitsIntoParts = false
+  /// Below the 50 MB upload limit of chat attachments, whether counted in MB or MiB.
+  var partSize = 49_000_000
   /// How much of the diagnostic log before and after the meeting is included.
   static let logMargin: TimeInterval = 600
 
@@ -51,12 +57,26 @@ struct DiagnosticsExport {
   /// `meeting-notes-<id>-diagnostics.zip`
   static func fileName(for id: String) -> String { "meeting-notes-\(id)-diagnostics.zip" }
 
-  /// Writes the zip to `destination`. An existing file is replaced only when `replacing`.
+  /// The parts of a split zip at `destination`, in order.
+  static func parts(of destination: URL) -> [URL] {
+    let directory = destination.deletingLastPathComponent()
+    let prefix = destination.lastPathComponent + "."
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+    return names.filter {
+      $0.hasPrefix(prefix) && $0.count == prefix.count + 3
+        && $0.dropFirst(prefix.count).allSatisfy { ("0"..."9").contains($0) }
+    }.sorted().map { directory.appendingPathComponent($0) }
+  }
+
+  /// Writes the zip, or its parts, to `destination`. Existing files, including the parts of an
+  /// earlier split export, are replaced only when `replacing`.
   @discardableResult
   func write(_ id: String, to destination: URL, replacing: Bool = false) throws -> Manifest {
     let manager = FileManager.default
-    if !replacing, manager.fileExists(atPath: destination.path) {
-      throw MeetingError("\(destination.path) already exists.")
+    var existing = Self.parts(of: destination)
+    if manager.fileExists(atPath: destination.path) { existing.append(destination) }
+    if !replacing, let first = existing.first {
+      throw MeetingError("\(first.path) already exists.")
     }
     let record = try library.load(id)
     let staging = manager.temporaryDirectory.appendingPathComponent(
@@ -132,10 +152,23 @@ struct DiagnosticsExport {
 
     let zip = staging.appendingPathComponent("export.zip")
     try Self.zip(folder, to: zip)
-    if replacing, manager.fileExists(atPath: destination.path) {
-      _ = try manager.replaceItemAt(destination, withItemAt: zip)
+    let size = try zip.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+    if splitsIntoParts, size > partSize {
+      let parts = staging.appendingPathComponent("parts", isDirectory: true)
+      try Self.split(zip, into: parts, named: destination.lastPathComponent, size: partSize)
+      for file in existing { try manager.removeItem(at: file) }
+      for part in try manager.contentsOfDirectory(atPath: parts.path).sorted() {
+        try manager.moveItem(
+          at: parts.appendingPathComponent(part),
+          to: destination.deletingLastPathComponent().appendingPathComponent(part))
+      }
     } else {
-      try manager.moveItem(at: zip, to: destination)
+      for file in existing where file != destination { try manager.removeItem(at: file) }
+      if manager.fileExists(atPath: destination.path) {
+        _ = try manager.replaceItemAt(destination, withItemAt: zip)
+      } else {
+        try manager.moveItem(at: zip, to: destination)
+      }
     }
     AppLog.event("diagnostics.exported", "\(id) \(destination.lastPathComponent)")
     return manifest
@@ -224,6 +257,18 @@ struct DiagnosticsExport {
         values?.fileSize ?? 0)
     }
     return sizes
+  }
+
+  /// Splits `file` into `<name>.001`, `<name>.002`, ... of at most `size` bytes in `folder`.
+  private static func split(_ file: URL, into folder: URL, named name: String, size: Int) throws {
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let input = try FileHandle(forReadingFrom: file)
+    defer { try? input.close() }
+    var index = 1
+    while let chunk = try input.read(upToCount: size), !chunk.isEmpty {
+      try chunk.write(to: folder.appendingPathComponent(String(format: "%@.%03d", name, index)))
+      index += 1
+    }
   }
 
   private static func zip(_ folder: URL, to zip: URL) throws {

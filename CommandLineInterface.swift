@@ -68,11 +68,12 @@ struct CommandLineInterface {
                                       Run the current Teams detection and transcription
                                       over a reconstruction archive; writes before and
                                       after results into the new directory.
-      export-diagnostics <id> <out.zip> [--no-audio]
+      export-diagnostics <id> <out.zip> [--no-audio] [--split]
                                       Pack the meeting's capture tracks, transcript, record,
                                       Teams trace, logs and settings into a new zip file for
                                       debugging; replay runs on its <id> folder. --no-audio
-                                      leaves out all audio.
+                                      leaves out all audio. --split writes a zip over 49 MB
+                                      as <out.zip>.001, .002, ...; join with cat.
       teams-participants              Print the current Teams meeting's participants.
       check-teams-mute                Print the detected Teams mute state.
 
@@ -413,12 +414,14 @@ struct CommandLineInterface {
         fileURLWithPath: (arguments.positional[1] as NSString).expandingTildeInPath)
       var export = DiagnosticsExport(library: library)
       export.includesAudio = !arguments.flags.contains("no-audio")
+      export.splitsIntoParts = arguments.flags.contains("split")
       let manifest = try export.write(
         try library.resolve(arguments.positional[0]), to: destination)
       if json {
         emitJSON(manifest)
       } else {
-        print("Wrote \(destination.path)")
+        let parts = DiagnosticsExport.parts(of: destination)
+        for file in parts.isEmpty ? [destination] : parts { print("Wrote \(file.path)") }
         for item in manifest.missing { print("Missing: \(item)") }
         for item in manifest.omitted { print("Left out: \(item)") }
       }

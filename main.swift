@@ -14,7 +14,10 @@ if arguments.count > 1, arguments[1] == "replay" {
   dispatchMain()
 }
 
-// Any first argument that is not a flag is a command; the app itself only receives flags.
+if arguments.count > 1, ["--help", "-h"].contains(arguments[1]) {
+  exit(CommandLineInterface.run(["help"]))
+}
+// Any other first argument that is not a flag is a command; the app itself only receives flags.
 if arguments.count > 1, !arguments[1].hasPrefix("-") {
   exit(CommandLineInterface.run(Array(arguments.dropFirst())))
 }
