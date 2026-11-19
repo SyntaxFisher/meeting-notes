@@ -9,13 +9,12 @@
 //   teams-control windows         Print each window's mic button labels and whether Teams is in front.
 //   teams-control speaking        Print each window's framed tiles (hand and speaking frames)
 //                                 and speaking labels.
-//   teams-control raise <regex>|--meeting
-//                                 Bring Teams to the front with the first window whose title
-//                                 matches, e.g. the main window over the meeting, as when
-//                                 someone works in Teams chat during a call, or with the
-//                                 meeting window (not its compact view).
-//   teams-control minimize <regex> [off]
-//                                 Minimize (or restore) the first Teams window whose title matches.
+//   teams-control raise <window>  Bring Teams to the front with a window, e.g. the main window
+//                                 over the meeting, as when someone works in Teams chat during
+//                                 a call. <window> is --meeting (the meeting window, not its
+//                                 compact view), --compact, --main or a title regex.
+//   teams-control minimize <window> [off]
+//                                 Minimize (or restore) the first matching Teams window.
 //   teams-control cover <seconds> Show an opaque window of this tool over the whole screen, as a
 //                                 maximized app covering Teams; Teams stops updating covered
 //                                 windows and opens its compact view.
@@ -73,7 +72,7 @@ func buttons(in window: AXUIElement) -> [(AXUIElement, [String])] {
 }
 
 let usage =
-  "Usage: teams-control buttons | windows | speaking | raise <regex>|--meeting | minimize <regex> [off] | cover <seconds> | find|press <regex> [--meeting] | slider <regex> [value] | status-menu <bundle-id> [regex] [--stale]\n"
+  "Usage: teams-control buttons | windows | speaking | raise <window> | minimize <window> [off] | cover <seconds> | find|press <regex> [--meeting] | slider <regex> [value] | status-menu <bundle-id> [regex] [--stale]\n"
 if CommandLine.arguments.contains("--help") {
   print(usage, terminator: "")
   exit(0)
@@ -95,6 +94,8 @@ if arguments.first == "cover", arguments.count == 2, let seconds = Double(argume
   window.isOpaque = true
   window.backgroundColor = .white
   window.makeKeyAndOrderFront(nil)
+  // macOS may refuse to activate this tool while Teams is active; the window still goes on top.
+  window.orderFrontRegardless()
   app.activate()
   DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { exit(0) }
   app.run()
@@ -168,6 +169,32 @@ func refresh(_ window: AXUIElement) {
 }
 if refreshes { windows.forEach(refresh) }
 
+func title(_ window: AXUIElement, matches pattern: String) -> Bool {
+  let title: String = attribute(window, kAXTitleAttribute) ?? ""
+  return title.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+}
+
+/// `--meeting` is the meeting window (with a Leave button, not its compact view), `--compact`
+/// the compact view, `--main` Teams' main window (chat, activity, settings); anything else is a
+/// regular expression for the title. These work in every Teams language.
+func matches(_ window: AXUIElement, _ selector: String) throws -> Bool {
+  let compact = title(window, matches: "^(Meeting compact view|Kompakte Besprechungsansicht) \\|")
+  let meeting = {
+    buttons(in: window).contains { _, labels in
+      labels.contains { $0 == "Leave" || $0 == "Verlassen" }
+    }
+  }
+  switch selector {
+  case "--meeting": return !compact && meeting()
+  case "--compact": return compact
+  case "--main":
+    return !compact && !title(window, matches: "^(Pinned window|Fixiertes Fenster)$") && !meeting()
+  default:
+    _ = try NSRegularExpression(pattern: selector)
+    return title(window, matches: selector)
+  }
+}
+
 switch arguments.first {
 case "buttons":
   for window in windows {
@@ -226,39 +253,28 @@ case "speaking":
     for (tile, count) in frames { print("  \(count) frame\(count == 1 ? "" : "s"): \(tile)") }
   }
 case "raise" where arguments.count == 2:
-  let meeting = arguments.last == "--meeting"
-  let pattern = try NSRegularExpression(
-    pattern: meeting ? "^(?!Meeting compact view)" : arguments.last!, options: .caseInsensitive)
-  for window in windows {
+  let selector = arguments.last!
+  for window in windows where try matches(window, selector) {
     let title: String = attribute(window, kAXTitleAttribute) ?? ""
-    guard pattern.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)) != nil,
-      !meeting
-        || buttons(in: window).contains(where: { _, labels in
-          labels.contains { $0 == "Leave" || $0 == "Verlassen" }
-        })
-    else { continue }
     app.activate()
     AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
     AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     print("Raised: \(title)")
     exit(0)
   }
-  FileHandle.standardError.write(Data("No Teams window matches \(arguments.last!).\n".utf8))
+  FileHandle.standardError.write(Data("No Teams window matches \(selector).\n".utf8))
   exit(1)
 case "minimize" where (2...3).contains(arguments.count):
-  let pattern = try NSRegularExpression(
-    pattern: arguments[arguments.startIndex + 1], options: .caseInsensitive)
+  let selector = arguments[arguments.startIndex + 1]
   let minimize = arguments.last != "off"
-  for window in windows {
+  for window in windows where try matches(window, selector) {
     let title: String = attribute(window, kAXTitleAttribute) ?? ""
-    guard pattern.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)) != nil
-    else { continue }
     AXUIElementSetAttributeValue(
       window, kAXMinimizedAttribute as CFString, (minimize ? kCFBooleanTrue : kCFBooleanFalse)!)
     print("\(minimize ? "Minimized" : "Restored"): \(title)")
     exit(0)
   }
-  FileHandle.standardError.write(Data("No Teams window matches.\n".utf8))
+  FileHandle.standardError.write(Data("No Teams window matches \(selector).\n".utf8))
   exit(1)
 case "slider" where arguments.count >= 2:
   let pattern = try NSRegularExpression(

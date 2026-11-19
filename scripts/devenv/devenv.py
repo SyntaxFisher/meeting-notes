@@ -579,9 +579,10 @@ def desktop_join(url):
         if teams_control("find", r"^(Join now|Jetzt teilnehmen)$").returncode:
             continue
         # Teams remembers its own speaker choice; anything but the sink plays the meeting aloud.
-        if teams_control("find", rf"^Selected speaker: {SINK_DEVICE}\b").returncode:
-            print(f"Warning: Teams is not using {SINK_DEVICE} as its speaker; pick it on the "
-                  "pre-join screen to keep meetings silent.")
+        speaker = teams_control("find", r"^(Selected speaker|Ausgewählter Lautsprecher): ")
+        if speaker.returncode == 0 and SINK_DEVICE not in speaker.stdout:
+            print(f"Warning: Teams is not using {SINK_DEVICE} as its speaker ({speaker.stdout.strip()}); "
+                  "pick it on the pre-join screen to keep meetings silent.")
         if teams_control("press", r"^(Join now|Jetzt teilnehmen)$").returncode == 0:
             print("Teams desktop joined the meeting.")
             time.sleep(4)
@@ -608,7 +609,8 @@ def desktop_set_muted(muted):
     fail("Teams microphone button did not confirm the requested state.")
 
 
-ADMIT = r"^(Admit all|Admit participant in lobby|Admit$|Alle zulassen|Zulassen)"
+ADMIT = (r"^(Admit all|Admit participant in lobby|Admit$|Alle zulassen|Zulassen|Alle einlassen"
+         r"|Teilnehmer in den Wartebereich einlassen|Einlassen$)")
 
 
 def desktop_admit():
@@ -687,27 +689,25 @@ COVERS = []
 def desktop_view(view, seconds=None):
     """Changes what covers the meeting window; see ACTIONS."""
     if view == "chat":
-        teams_control("raise", r"^(Chat|Activity|Teams|Calendar|Aktivität|Kalender)\b", check=True)
+        teams_control("raise", "--main", check=True)
     elif view == "covered":
         teams_control("speaking")  # builds the helper before it runs in the background
         COVERS.append(subprocess.Popen([str(CONTROL), "cover", str(float(seconds or 20))]))
     elif view == "compact-minimized":
         # Teams opens the compact view a few seconds after the meeting window disappears.
         deadline = time.monotonic() + 15
-        while teams_control("minimize", r"^Meeting compact view").returncode != 0:
+        while teams_control("minimize", "--compact").returncode != 0:
             if time.monotonic() > deadline:
                 fail("Teams opened no compact view to minimize.")
             time.sleep(0.5)
     elif view == "minimized":
-        teams_control("minimize", r"^(?!(Meeting compact view|Chat|Activity|Teams|Calendar)\b).",
-                      check=True)
+        teams_control("minimize", "--meeting", check=True)
     else:
         while COVERS:
             cover = COVERS.pop()
             cover.terminate()
             cover.wait()
-        teams_control("minimize", r"^(?!(Meeting compact view|Chat|Activity|Teams|Calendar)\b).",
-                      "off")
+        teams_control("minimize", "--meeting", "off")
         teams_control("raise", "--meeting", check=True)
 
 

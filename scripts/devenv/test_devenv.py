@@ -84,8 +84,8 @@ class LivePlaybackTests(unittest.TestCase):
             devenv.run_action({"action": "mute"}, {})
         self.assertEqual(page.button.clicks, 2, "Raising a raised hand changes nothing")
         self.assertEqual(page.button.pressed, "false")
-        self.assertEqual(calls[0][0], "raise")
-        self.assertEqual(calls[1][0], "minimize")
+        self.assertEqual(calls[0], ("raise", "--main"))
+        self.assertEqual(calls[1], ("minimize", "--meeting", "off"))
         self.assertEqual(calls[2], ("raise", "--meeting"))
         self.assertEqual(calls[3], ("muted", True))
         truth = {"events": [{"at": 1, "clip": "a.wav", "speaker": "kim"},
