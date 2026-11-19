@@ -97,12 +97,21 @@ enum MeetingDetailsSmoke {
   }
 
   @MainActor
+  /// Opens the Library on a copy of a meetings folder, such as the `meeting/` files of a
+  /// diagnostics export placed in `transcripts/` (and the audio in `audios/`), or on a new
+  /// synthetic meeting when the folder holds none.
   static func showFixture(root: URL) throws {
     let application = NSApplication.shared
-    let (library, record) = try TranscriptEditsSmoke.fixture(root)
+    let existing = MeetingLibrary(root: root).meetings()
+    let (library, record) =
+      try existing.first.map { (MeetingLibrary(root: root), $0) }
+      ?? TranscriptEditsSmoke.fixture(root)
     let app = AppModel()
     app.meetingsRoot = root
-    app.meetings = [record]
+    app.meetings = existing.isEmpty ? [record] : existing
+    for meeting in app.meetings {
+      app.audioFiles[meeting.id] = library.audioURL(of: meeting)
+    }
     app.folderAccess = .granted
     let model = LibraryModel(app: app)
     app.send = { command in
