@@ -640,6 +640,41 @@ enum SpeakerFusionSmoke {
       crosstalkNames[0].name == "Bob" && !crosstalkNames[0].anchor,
       "A turn read as someone else is no anchor: \(crosstalkNames)")
 
+    // A student's short answer lands in the lecturer's voice; Teams frames only the student
+    // for part of it, so the lecturer's name stays off it.
+    let answer = [
+      Turn(start: 0, end: 30, voice: "S1", person: "Robin"),
+      Turn(start: 40, end: 70, voice: "S1", person: "Robin"),
+      Turn(start: 80, end: 84, voice: "S1", person: "Kim"),
+    ]
+    precondition(
+      SpeakerNaming.readingNames(
+        for: segments(answer),
+        timeline: .init(intervals: [
+          shown("Robin", 0, 30), shown("Robin", 40, 70), shown("Kim", 82.5, 83.5),
+        ])) == ["Robin", "Robin", nil],
+      "A voice's name does not go to a turn only someone else's reading covers")
+
+    // Teams' frame flickers off and on during one turn.
+    let flicker: [SpeakingTimeline.Interval] = [
+      .init(name: "Bob", start: 1.1, end: 2), .init(name: "Bob", start: 3, end: 4),
+      .init(name: "Bob", start: 5, end: 6),
+    ]
+    let flickerTurn = segments([Turn(start: 0, end: 6, voice: "S3", person: "Bob")])
+    precondition(
+      SpeakerNaming.readingNames(for: flickerTurn, timeline: .init(intervals: flicker))
+        == ["Bob"],
+      "A frame that drops for a moment counts as one stretch")
+    precondition(
+      SpeakerNaming.readingNames(
+        for: flickerTurn,
+        timeline: .init(
+          intervals: flicker + [
+            .init(name: "Anna", start: 2.1, end: 2.9), .init(name: "Anna", start: 4.1, end: 4.9),
+          ]))
+        == [nil],
+      "Someone else framed in the gap keeps the stretches apart")
+
     // A short, noisy embedding at the end of a long turn in Anna's voice.
     let tail = annaAndSamTurns + [Turn(start: 60, end: 160, voice: "S1", person: "Anna")]
     let tailName = SpeakerNaming.decisions(

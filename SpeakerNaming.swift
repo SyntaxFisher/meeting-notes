@@ -9,7 +9,8 @@ import Foundation
 /// and none outweighs the others, a name whose indicator switched on for the turn wins over
 /// indicators still on, or back on after a moment, from earlier speech. A turn without such
 /// evidence takes the name that dominates its voice, the diarizer's cluster, across the
-/// meeting.
+/// meeting, unless only someone else's reading covers part of it. A frame that drops for a
+/// moment while nobody else is framed counts as one stretch.
 ///
 /// Voice evidence then names turns these readings leave anonymous when Teams and the voice
 /// agree without contradiction, and replaces a reading only when the voice clearly contradicts
@@ -29,6 +30,12 @@ enum SpeakerNaming {
   /// An indicator back this soon after the same name's last one resumed it: Teams keeps a
   /// frame about two seconds after speech, and readings briefly lose sight of the meeting.
   static let resumeGap = 5.0
+  /// The longest gap between one name's readings, with nobody else framed, that still counts as
+  /// one stretch.
+  static let bridgeGap = 3.0
+  /// The share of a turn another name's reading must cover, while the voice's name covers less,
+  /// to keep the voice's name off it.
+  static let contradiction = 0.2
 
   /// The name for each segment, or nil. `timeline` is on the segments' timeline; names in
   /// `excluded` (the local participant, whose voice is not in the Teams audio) are ignored.
@@ -63,7 +70,7 @@ enum SpeakerNaming {
     excluded: [String] = []
   ) -> [String?] {
     let excludedKeys = Set(excluded.map(key))
-    let raw = timeline.intervals.filter { !excludedKeys.contains(key($0.name)) }
+    let raw = bridged(timeline.intervals.filter { !excludedKeys.contains(key($0.name)) })
     let intervals = raw.map { interval -> SpeakingTimeline.Interval in
       let start = interval.start - onsetDelay
       return .init(
@@ -118,8 +125,35 @@ enum SpeakerNaming {
         }
       }
       if fresh.count == 1, covering.count > 1 { return fresh[0].key }
-      return voiceNames[segment.speaker]
+      guard let voiceName = voiceNames[segment.speaker] else { return nil }
+      let threshold = contradiction * duration(segment)
+      if let first = ranked.first, first.key != voiceName, first.value >= threshold,
+        coverage[index][voiceName, default: 0] < threshold
+      {
+        return nil
+      }
+      return voiceName
     }
+  }
+
+  /// `intervals` by start, with each name's intervals joined across gaps up to `bridgeGap`
+  /// in which no one else's interval falls.
+  static func bridged(_ intervals: [SpeakingTimeline.Interval]) -> [SpeakingTimeline.Interval] {
+    let sorted = intervals.sorted { $0.start < $1.start }
+    var joined: [SpeakingTimeline.Interval] = []
+    for interval in sorted {
+      if let previous = joined.lastIndex(where: { $0.name == interval.name }),
+        case let gap = interval.start - joined[previous].end, gap >= 0, gap <= bridgeGap,
+        !sorted.contains(where: {
+          $0.name != interval.name && $0.start < interval.start && $0.end > joined[previous].end
+        })
+      {
+        joined[previous].end = max(joined[previous].end, interval.end)
+      } else {
+        joined.append(interval)
+      }
+    }
+    return joined
   }
 
   static func duration(_ segment: TranscriptSegments.Segment) -> Double {

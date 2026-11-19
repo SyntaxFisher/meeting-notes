@@ -168,6 +168,9 @@ struct Transcriber {
     reporter.report("Preparing speaker models")
     var config = OfflineDiarizerConfig.default
     config.exposeChunkEmbeddings = true
+    // The default precision folds a voice heard only in a few short turns, such as students
+    // answering in a lecture, into the dominant speaker.
+    config.clustering.warmStartFa = 0.15
     let diarizer = OfflineDiarizerManager(config: config)
     try await diarizer.prepareModels()
     let tracks = try capture.flatMap { try separateTracks(in: $0, workspace: workspace) }
