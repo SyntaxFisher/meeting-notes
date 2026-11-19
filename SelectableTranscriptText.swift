@@ -7,7 +7,9 @@ struct SelectableTranscriptText: NSViewRepresentable {
   let edit: (() -> Void)?
 
   func makeNSView(context: Context) -> TextView {
-    let view = TextView()
+    // TextKit 1 from the start: measuring through `layoutManager` would otherwise make every
+    // passage switch over from TextKit 2 first.
+    let view = TextView(usingTextLayoutManager: false)
     view.isEditable = false
     view.isSelectable = true
     view.drawsBackground = false
@@ -24,24 +26,14 @@ struct SelectableTranscriptText: NSViewRepresentable {
     view.jump = jump
     view.edit = edit
     guard view.string != text else { return }
-    let paragraph = NSMutableParagraphStyle()
-    paragraph.lineSpacing = 3
     view.textStorage?.setAttributedString(
-      NSAttributedString(
-        string: text,
-        attributes: [
-          .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
-          .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph,
-        ]))
+      NSAttributedString(string: text, attributes: TranscriptText.attributes))
   }
 
+  /// The same measurement as the transcript's row heights, so a shown passage fills its row.
   func sizeThatFits(_ proposal: ProposedViewSize, nsView: TextView, context: Context) -> CGSize? {
-    guard let width = proposal.width, let container = nsView.textContainer,
-      let layout = nsView.layoutManager
-    else { return nil }
-    container.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
-    layout.ensureLayout(for: container)
-    return CGSize(width: width, height: ceil(layout.usedRect(for: container).height))
+    guard let width = proposal.width else { return nil }
+    return CGSize(width: width, height: TranscriptText.height(of: text, width: width))
   }
 
   final class TextView: NSTextView {

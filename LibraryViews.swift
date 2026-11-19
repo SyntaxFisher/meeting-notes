@@ -237,65 +237,61 @@ struct MeetingDetail: View {
   let model: LibraryModel
   let record: MeetingRecord
   @State private var followsPlayback = true
-  @State private var visibleRows: Set<Int> = []
   @State private var compactHeader = false
   @State private var currentSegment: Int?
-  @State private var jumpTarget: Int?
-  @State private var scrollPosition = ScrollPosition(idType: String.self)
   @State private var scrollingToTarget = false
+  @State private var queuedScroll: Int?
+  @State private var scrollGeneration = 0
   @State private var scrollIntent = TranscriptScrollIntent()
+  @State private var viewport = TranscriptViewport()
+  @State private var position = ScrollPosition()
+  @State private var headerSettled = true
+  @State private var reservedHeaderHeight: CGFloat = 0
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-  private var pendingJumpTarget: Int? {
-    guard let currentSegment, !scrollingToTarget, !visibleRows.contains(currentSegment)
-    else { return nil }
-    return currentSegment
-  }
 
   var body: some View {
     let turns = model.turns(of: record)
     let focus = model.focus?.meetingID == record.id ? model.focus : nil
-    VStack(spacing: 0) {
-      VStack(alignment: .leading, spacing: 12) {
-        MeetingHeader(model: model, record: record, compact: compactHeader)
-        if model.playableAudio(of: record) != nil {
-          PlayerBar(playback: model.playback)
-        }
-      }
-      .padding(.horizontal, 24)
-      .padding(.vertical, compactHeader ? 10 : 20)
-      .frame(maxWidth: 860, alignment: .leading)
-      .frame(maxWidth: .infinity)
-      .background(.bar)
-      Divider()
+    // The header floats above the transcript, which reserves the expanded header's height at its
+    // top. Collapsing or expanding the header while scrolling then never moves the text.
+    ZStack(alignment: .top) {
       ScrollView {
-        TranscriptView(
-          record: record, turns: turns, playback: model.playback,
-          currentSegment: currentSegment,
-          canPlay: model.playableAudio(of: record) != nil, focusedSegment: focus?.segment,
-          edit: { model.editText($0, in: record) }
-        ) {
-          switch record.status {
-          case .recording: LiveCard(model: model, record: record)
-          case .saving, .queued, .transcribing: ProgressCard(model: model, record: record)
-          case .failed, .interrupted, .untranscribed:
-            AttentionCard(model: model, record: record)
-          case .complete: EmptyView()
+        VStack(spacing: 0) {
+          Color.clear.frame(height: reservedHeaderHeight)
+          TranscriptView(
+            record: record, turns: turns, viewport: viewport, playback: model.playback,
+            currentSegment: currentSegment,
+            canPlay: model.playableAudio(of: record) != nil, focusedSegment: focus?.segment,
+            edit: { [id = record.id] segment in
+              guard let current = model.records.first(where: { $0.id == id }) else { return }
+              model.editText(segment, in: current)
+            }
+          ) {
+            switch record.status {
+            case .recording: LiveCard(model: model, record: record)
+            case .saving, .queued, .transcribing: ProgressCard(model: model, record: record)
+            case .failed, .interrupted, .untranscribed:
+              AttentionCard(model: model, record: record)
+            case .complete: EmptyView()
+            }
           }
+          .padding(24)
+          .frame(maxWidth: 860, alignment: .leading)
+          .frame(maxWidth: .infinity)
         }
-        .padding(24)
-        .frame(maxWidth: 860, alignment: .leading)
-        .frame(maxWidth: .infinity)
+        .coordinateSpace(.named(TranscriptViewport.contentSpace))
       }
-      .scrollPosition($scrollPosition, anchor: .top)
-      .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { ids in
-        visibleRows = Set(
-          ids.compactMap { Int($0.replacingOccurrences(of: "segment-", with: "")) })
-      }
+      .contentMargins(.top, reservedHeaderHeight, for: .scrollIndicators)
+      .scrollPosition($position)
       .background {
         TranscriptScrollWheel { delta, began in
           followsPlayback = false
-          scrollingToTarget = false
+          if scrollingToTarget {
+            scrollingToTarget = false
+            queuedScroll = nil
+            scrollGeneration += 1
+            viewport.endScroll()
+          }
           if let compact = scrollIntent.scrollWheel(
             delta: delta, began: began, compact: compactHeader)
           {
@@ -310,13 +306,23 @@ struct MeetingDetail: View {
         }
       }
       .onScrollGeometryChange(for: ScrollMeasurements.self) { geometry in
-        ScrollMeasurements(
-          offset: geometry.contentOffset.y, height: geometry.containerSize.height,
+        // Offsets below the toolbar's inset, the coordinates `scrollTo(y:)` takes.
+        let insets = geometry.contentInsets
+        return ScrollMeasurements(
+          offset: geometry.contentOffset.y + insets.top,
+          height: geometry.containerSize.height - insets.top - insets.bottom,
           contentHeight: geometry.contentSize.height)
       } action: { _, measurement in
+        viewport.scrolled(
+          offset: measurement.offset, height: measurement.height,
+          contentHeight: measurement.contentHeight)
         scrollIntent.observe(
           offset: measurement.offset, height: measurement.height,
           contentHeight: measurement.contentHeight)
+        if viewport.reachedScrollTarget { finishScroll() }
+      }
+      .onChange(of: viewport.anchoredOffset) { _, anchored in
+        if let anchored { position.scrollTo(y: anchored.offset) }
       }
       .onChange(of: currentSegment) { _, segment in
         if followsPlayback { scroll(to: segment) }
@@ -325,39 +331,47 @@ struct MeetingDetail: View {
         if followsPlayback && playing { scroll(to: currentSegment) }
       }
       .task(id: focus?.id) {
-        guard let segment = focus?.segment else { return }
-        try? await Task.sleep(for: .milliseconds(150))
-        guard !Task.isCancelled else { return }
-        let target = turns.last { $0.id <= segment }?.id
+        guard let segment = focus?.segment,
+          let target = turns.last(where: { $0.id <= segment })?.id
+        else { return }
+        // Row positions are known once the transcript has been laid out for the first time.
+        while viewport.offset(of: target) == nil {
+          try? await Task.sleep(for: .milliseconds(50))
+          if Task.isCancelled { return }
+        }
         scroll(to: target, force: true, animated: false)
-        try? await Task.sleep(for: .milliseconds(150))
-        guard !Task.isCancelled else { return }
-        scroll(to: target, force: true)
-      }
-      .task(id: pendingJumpTarget) {
-        let target = pendingJumpTarget
-        if target != nil { try? await Task.sleep(for: .milliseconds(180)) }
-        guard !Task.isCancelled else { return }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { jumpTarget = target }
       }
       .overlay(alignment: .bottom) {
-        if let segment = jumpTarget {
-          Button {
-            followsPlayback = true
-            jumpTarget = nil
-            scroll(to: currentSegment ?? segment, force: true)
-          } label: {
-            Label("Jump to Now", systemImage: jumpSymbol(segment))
-              .padding(.horizontal, 12).padding(.vertical, 8)
-          }
-          .buttonStyle(.plain)
-          .background(.regularMaterial, in: Capsule())
-          .shadow(radius: 4, y: 2)
-          .padding(.bottom, 16)
-          .accessibilityIdentifier("jump-to-playing")
-          .transition(.opacity)
+        JumpToNowButton(
+          viewport: viewport, currentSegment: scrollingToTarget ? nil : currentSegment
+        ) {
+          followsPlayback = true
+          scroll(to: currentSegment, force: true)
         }
       }
+      VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 12) {
+          MeetingHeader(model: model, record: record, compact: compactHeader)
+          if model.playableAudio(of: record) != nil {
+            PlayerBar(playback: model.playback)
+          }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, compactHeader ? 10 : 20)
+        .frame(maxWidth: 860, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        Divider()
+      }
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.height
+      } action: { height in
+        viewport.topInset = height
+        if !compactHeader, headerSettled, height != reservedHeaderHeight {
+          reservedHeaderHeight = height
+        }
+      }
+      .accessibilitySortPriority(1)
     }
     .background {
       PlaybackSegmentObserver(turns: turns, playback: model.playback) { currentSegment = $0 }
@@ -365,26 +379,104 @@ struct MeetingDetail: View {
   }
 
   private func setHeader(_ compact: Bool) {
+    headerSettled = false
     withAnimation(reduceMotion ? nil : .smooth(duration: 0.35)) {
       compactHeader = compact
     } completion: {
+      headerSettled = true
       scrollIntent.headerSettled()
     }
   }
 
+  /// Scrolls to a passage's exact position, which is known also while its row is not built.
+  /// A running scroll animation does not take a new target, so a newer target waits for it.
   private func scroll(to segment: Int?, force: Bool = false, animated: Bool = true) {
-    guard let segment, scrollIntent.shouldScroll(to: segment, force: force) else { return }
+    guard let segment, viewport.offset(of: segment) != nil,
+      scrollIntent.shouldScroll(to: segment, force: force)
+    else { return }
+    if scrollingToTarget {
+      queuedScroll = segment
+      return
+    }
     scrollingToTarget = true
-    withAnimation(reduceMotion || !animated ? nil : .smooth(duration: 0.7)) {
-      scrollPosition.scrollTo(id: TranscriptTurn.rowID(segment), anchor: .top)
-    } completion: {
+    performScroll(to: segment, animated: animated)
+  }
+
+  /// The scroll counts as finished once the scroll view has arrived: it can keep moving after
+  /// SwiftUI ends the animation, and a new target set meanwhile would be lost.
+  private func performScroll(to segment: Int, animated: Bool) {
+    guard scrollingToTarget, let offset = viewport.offset(of: segment) else {
       scrollingToTarget = false
+      return
+    }
+    scrollGeneration += 1
+    let generation = scrollGeneration
+    guard !viewport.beginScroll(to: offset) else {
+      finishScroll()
+      return
+    }
+    withAnimation(reduceMotion || !animated ? nil : .smooth(duration: 0.7)) {
+      position.scrollTo(y: offset)
+    }
+    Task {
+      try? await Task.sleep(for: .seconds(2))
+      if generation == scrollGeneration, scrollingToTarget { finishScroll() }
     }
   }
 
-  private func jumpSymbol(_ segment: Int) -> String {
-    let first = visibleRows.min()
-    return (first.map { segment < $0 } ?? true) ? "chevron.up" : "chevron.down"
+  private func finishScroll() {
+    viewport.endScroll()
+    if let next = queuedScroll {
+      queuedScroll = nil
+      performScroll(to: next, animated: true)
+    } else {
+      scrollingToTarget = false
+    }
+  }
+}
+
+private struct JumpToNowButton: View {
+  let viewport: TranscriptViewport
+  let currentSegment: Int?
+  let jump: () -> Void
+  @State private var shown: Int?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  private var offscreenSegment: Int? {
+    guard let currentSegment, !viewport.visibleRows.isEmpty,
+      !viewport.visibleRows.contains(currentSegment)
+    else { return nil }
+    return currentSegment
+  }
+
+  var body: some View {
+    ZStack {
+      if let segment = shown {
+        Button {
+          shown = nil
+          jump()
+        } label: {
+          Label("Jump to Now", systemImage: symbol(segment))
+            .padding(.horizontal, 12).padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(radius: 4, y: 2)
+        .padding(.bottom, 16)
+        .accessibilityIdentifier("jump-to-playing")
+        .transition(.opacity)
+      }
+    }
+    .task(id: offscreenSegment) {
+      let target = offscreenSegment
+      if target != nil { try? await Task.sleep(for: .milliseconds(180)) }
+      guard !Task.isCancelled else { return }
+      withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { shown = target }
+    }
+  }
+
+  private func symbol(_ segment: Int) -> String {
+    segment < viewport.visibleRows.lowerBound ? "chevron.up" : "chevron.down"
   }
 }
 
@@ -694,6 +786,7 @@ struct PlayerBar: View {
 struct TranscriptView<Header: View>: View {
   let record: MeetingRecord
   let turns: [TranscriptTurn]
+  let viewport: TranscriptViewport
   let playback: AudioPlayback
   let currentSegment: Int?
   let canPlay: Bool
@@ -703,30 +796,94 @@ struct TranscriptView<Header: View>: View {
 
   var body: some View {
     let labels = record.speakers.map(\.label)
-    LazyVStack(alignment: .leading, spacing: 14) {
+    let metrics = viewport.metrics(for: turns)
+    let realized = viewport.realized
+    // Every row has its exact height from the start, so the document height stays fixed while
+    // scrolling; a lazy stack's estimates would resize the scroller and move the content.
+    VStack(alignment: .leading, spacing: TranscriptRowMetrics.spacing) {
       header()
-      ForEach(Array(turns.enumerated()), id: \.element.id) { index, turn in
-        TurnRow(
-          turn: turn, name: record.displayName(for: turn.speaker),
-          color: SpeakerPalette.color(labels.firstIndex(of: turn.speaker) ?? 0),
-          isPlaying: canPlay && currentSegment == turn.id,
-          isFocused: focusedSegment.map { segment in
-            segment >= turn.id && (index + 1 == turns.count || segment < turns[index + 1].id)
-          } ?? false,
-          jump: canPlay ? { playback.seek(to: turn.start) } : nil,
-          edit: record.status == .complete ? edit.map { action in { action(turn.id) } } : nil
-        )
-        .id(TranscriptTurn.rowID(turn.id))
+      VStack(alignment: .leading, spacing: 0) {
+        if let metrics, !turns.isEmpty {
+          let shown = realized.clamped(to: turns.indices)
+          Color.clear.frame(height: metrics.space(before: shown))
+          VStack(alignment: .leading, spacing: TranscriptRowMetrics.spacing) {
+            ForEach(turns[shown]) { turn in
+              row(turn, at: turn.id, labels: labels, metrics: metrics)
+            }
+          }
+          Color.clear.frame(height: metrics.space(after: shown))
+        }
+      }
+      .onGeometryChange(for: CGFloat.self) {
+        $0.frame(in: .named(TranscriptViewport.contentSpace)).minY
+      } action: {
+        viewport.setRowsOrigin($0)
+      }
+      .background(alignment: .top) {
+        if let metrics, canPlay {
+          TranscriptHoverHighlight(viewport: viewport, metrics: metrics) { row in
+            guard row != currentSegment, turns.indices.contains(row) else { return nil }
+            return SpeakerPalette.color(labels.firstIndex(of: turns[row].speaker) ?? 0)
+          }
+        }
+      }
+      .onContinuousHover { phase in
+        switch phase {
+        case .active(let location): viewport.hover(at: location.y)
+        case .ended: viewport.hover(at: nil)
+        }
       }
     }
-    .scrollTargetLayout()
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .onGeometryChange(for: CGFloat.self) {
+      $0.size.width
+    } action: { width in
+      if viewport.width != width { viewport.width = width }
+    }
     .accessibilityElement(children: .contain)
     .accessibilityLabel("Transcript")
   }
 
+  private func row(
+    _ turn: TranscriptTurn, at index: Int, labels: [String], metrics: TranscriptRowMetrics
+  ) -> some View {
+    TurnRow(
+      turn: turn, name: record.displayName(for: turn.speaker),
+      color: SpeakerPalette.color(labels.firstIndex(of: turn.speaker) ?? 0),
+      isPlaying: canPlay && currentSegment == turn.id,
+      isFocused: focusedSegment.map { segment in
+        segment >= turn.id && (index + 1 == turns.count || segment < turns[index + 1].id)
+      } ?? false,
+      jump: canPlay ? { playback.seek(to: turn.start) } : nil,
+      edit: record.status == .complete ? edit.map { action in { action(turn.id) } } : nil,
+      timestampWidth: metrics.timestampWidth, nameHeight: metrics.nameHeight
+    )
+    .equatable()
+    .frame(height: metrics.heights[index], alignment: .top)
+  }
 }
 
-struct TurnRow: View {
+/// The hover background of the passage under the pointer, drawn behind the rows so that moving
+/// over passages, also while scrolling, re-renders only this shape.
+private struct TranscriptHoverHighlight: View {
+  let viewport: TranscriptViewport
+  let metrics: TranscriptRowMetrics
+  let color: (Int) -> Color?
+
+  var body: some View {
+    if let row = viewport.hoveredRow, metrics.heights.indices.contains(row),
+      let color = color(row)
+    {
+      RoundedRectangle(cornerRadius: 8)
+        .fill(color.opacity(0.055))
+        .frame(height: metrics.heights[row])
+        .offset(y: metrics.tops[row])
+        .allowsHitTesting(false)
+    }
+  }
+}
+
+struct TurnRow: View, @MainActor Equatable {
   let turn: TranscriptTurn
   let name: String
   let color: Color
@@ -734,41 +891,50 @@ struct TurnRow: View {
   var isFocused = false
   let jump: (() -> Void)?
   var edit: (() -> Void)?
-  @State private var hovering = false
+  let timestampWidth: CGFloat
+  let nameHeight: CGFloat
+
+  /// The actions only differ by the passage they act on, so rows are equal when their content
+  /// and available actions are; playback progress then re-renders only the rows it changes.
+  static func == (lhs: TurnRow, rhs: TurnRow) -> Bool {
+    lhs.turn == rhs.turn && lhs.name == rhs.name && lhs.color == rhs.color
+      && lhs.isPlaying == rhs.isPlaying && lhs.isFocused == rhs.isFocused
+      && (lhs.jump == nil) == (rhs.jump == nil) && (lhs.edit == nil) == (rhs.edit == nil)
+      && lhs.timestampWidth == rhs.timestampWidth && lhs.nameHeight == rhs.nameHeight
+  }
 
   var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 14) {
-      if let jump {
-        Button(action: jump) {
+    HStack(alignment: .firstTextBaseline, spacing: TranscriptRowMetrics.columnSpacing) {
+      Group {
+        if let jump {
+          Button(action: jump) {
+            Text(turn.timestamp)
+              .font(.callout.monospacedDigit())
+          }
+          .buttonStyle(.link)
+          .accessibilityLabel("Jump to \(Format.spokenDuration(turn.start))")
+          .help("Jump to \(turn.timestamp)")
+        } else {
           Text(turn.timestamp)
             .font(.callout.monospacedDigit())
+            .foregroundStyle(.secondary)
         }
-        .buttonStyle(.link)
-        .accessibilityLabel("Jump to \(Format.spokenDuration(turn.start))")
-        .help("Jump to \(turn.timestamp)")
-      } else {
-        Text(turn.timestamp)
-          .font(.callout.monospacedDigit())
-          .foregroundStyle(.secondary)
       }
-      VStack(alignment: .leading, spacing: 3) {
-        HStack(spacing: 8) {
-          Text(name)
-            .font(.callout.weight(.semibold))
-            .foregroundStyle(color)
-          Spacer(minLength: 8)
-
-        }
+      .frame(width: timestampWidth, alignment: .leading)
+      VStack(alignment: .leading, spacing: TranscriptRowMetrics.nameSpacing) {
+        Text(name)
+          .font(.callout.weight(.semibold))
+          .foregroundStyle(color)
+          .lineLimit(1)
+          .frame(
+            maxWidth: .infinity, minHeight: nameHeight, maxHeight: nameHeight, alignment: .leading)
         SelectableTranscriptText(text: turn.text, jump: jump, edit: edit)
           .frame(maxWidth: .infinity, alignment: .leading)
       }
     }
-    .padding(.vertical, 6)
-    .padding(.horizontal, 10)
-    .background(
-      color.opacity(isPlaying ? 0.12 : hovering && jump != nil ? 0.055 : 0),
-      in: RoundedRectangle(cornerRadius: 8)
-    )
+    .padding(.vertical, TranscriptRowMetrics.verticalPadding)
+    .padding(.horizontal, TranscriptRowMetrics.horizontalPadding)
+    .background(color.opacity(isPlaying ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 8))
     .overlay {
       if isFocused && (jump == nil || isPlaying) {
         RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2)
@@ -776,7 +942,6 @@ struct TurnRow: View {
     }
     .contentShape(Rectangle())
     .onTapGesture { jump?() }
-    .onHover { hovering = $0 }
     .accessibilityElement(children: .contain)
     .accessibilityLabel(
       "\(isFocused ? "Linked passage. " : "")\(name) at \(Format.spokenDuration(turn.start)): \(turn.text)"

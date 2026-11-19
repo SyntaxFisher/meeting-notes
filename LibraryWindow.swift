@@ -4,8 +4,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct TranscriptTurn: Identifiable, Equatable {
-  static func rowID(_ segment: Int) -> String { "segment-\(segment)" }
-
   let id: Int
   let start: TimeInterval
   let timestamp: String
