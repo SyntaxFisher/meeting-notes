@@ -1,5 +1,7 @@
 // Development helper for scripts/devenv: presses Microsoft Teams buttons by label and reports
-// meeting state through Accessibility, the same way TeamsMuteReader reads it.
+// meeting state through Accessibility, the same way TeamsMuteReader reads it. Like the app, it
+// first refreshes every window's Accessibility tree, which Teams leaves stale while a window is
+// minimized, covered or on another desktop; add --stale to read the trees as they are.
 //   teams-control press <regex>   Press the first button whose label matches.
 //   teams-control find <regex>    Exit 0 if such a button exists, without pressing it.
 //   Add --meeting to press/find to search only meeting windows (those with a Leave button).
@@ -70,11 +72,18 @@ func buttons(in window: AXUIElement) -> [(AXUIElement, [String])] {
   return found
 }
 
+let usage =
+  "Usage: teams-control buttons | windows | speaking | raise <regex>|--meeting | minimize <regex> [off] | cover <seconds> | find|press <regex> [--meeting] | slider <regex> [value] | status-menu <bundle-id> [regex] [--stale]\n"
+if CommandLine.arguments.contains("--help") {
+  print(usage, terminator: "")
+  exit(0)
+}
 guard AXIsProcessTrusted() else {
   FileHandle.standardError.write(Data("Accessibility access is required.\n".utf8))
   exit(3)
 }
-let arguments = CommandLine.arguments.dropFirst()
+let refreshes = !CommandLine.arguments.contains("--stale")
+let arguments = CommandLine.arguments.dropFirst().filter { $0 != "--stale" }[...]
 
 if arguments.first == "cover", arguments.count == 2, let seconds = Double(arguments.last!) {
   let app = NSApplication.shared
@@ -141,6 +150,23 @@ AXUIElementSetMessagingTimeout(application, 1)
 _ = AXUIElementSetAttributeValue(
   application, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
 let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) ?? []
+
+/// Scrolling a window's outermost web area into view, which it already is, makes Teams publish
+/// its current Accessibility tree.
+func refresh(_ window: AXUIElement) {
+  var queue = [window]
+  var visited = 0
+  while !queue.isEmpty, visited < 400 {
+    let element = queue.removeFirst()
+    visited += 1
+    if attribute(element, kAXRoleAttribute) == "AXWebArea" {
+      AXUIElementPerformAction(element, "AXScrollToVisible" as CFString)
+      return
+    }
+    queue.append(contentsOf: attribute(element, kAXChildrenAttribute) ?? [])
+  }
+}
+if refreshes { windows.forEach(refresh) }
 
 switch arguments.first {
 case "buttons":
@@ -294,8 +320,6 @@ case "press" where (2...3).contains(arguments.count),
   FileHandle.standardError.write(Data("No Teams button matches \(source).\n".utf8))
   exit(1)
 default:
-  let usage =
-    "Usage: teams-control buttons | windows | speaking | raise <regex>|--meeting | minimize <regex> [off] | cover <seconds> | find|press <regex> [--meeting] | slider <regex> [value]\n"
   FileHandle.standardError.write(Data(usage.utf8))
   exit(2)
 }

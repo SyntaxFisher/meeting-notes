@@ -1,0 +1,124 @@
+{
+  "description": "A stand-up the desktop follows with every Teams window minimized: right after the first turns the meeting window and then the compact view Teams opens are minimized, and for over a minute two guests alternate, with one-word replies, while the desktop asks a question, mutes, speaks while muted and unmutes again. Teams stops drawing every window, so names and the mute state come only from Accessibility trees the app refreshes: muted speech must stay out and every guest turn must keep its name.",
+  "speakers": {
+    "me": {
+      "via": "mic",
+      "voice": "Flo (German (Germany))",
+      "lang": "de"
+    },
+    "anna": {
+      "via": "guest",
+      "display": "Anna Berger",
+      "voice": "Anna",
+      "lang": "de"
+    },
+    "sam": {
+      "via": "guest",
+      "display": "Sam Keller",
+      "voice": "Rocko (German (Germany))",
+      "lang": "de"
+    }
+  },
+  "steps": [
+    {
+      "speaker": "anna",
+      "text": "Hallo zusammen, schön dass ihr da seid. Ich fange mit dem Stand beim Kundenportal an."
+    },
+    {
+      "speaker": "sam",
+      "text": "Danke Anna. Bei mir ist die Schnittstelle zur Buchhaltung fast fertig, es fehlen nur noch die Tests.",
+      "gap": 1.0
+    },
+    {
+      "action": "teams-view",
+      "view": "minimized",
+      "gap": 0.5
+    },
+    {
+      "action": "teams-view",
+      "view": "compact-minimized",
+      "gap": 1.0
+    },
+    {
+      "speaker": "anna",
+      "text": "Sehr gut. Beim Portal haben wir gestern das neue Anmeldeformular ausgeliefert, die ersten Rückmeldungen sind positiv.",
+      "gap": 1.5
+    },
+    {
+      "speaker": "sam",
+      "text": "Gab es Probleme mit der Zwei Faktor Anmeldung? Das hatte der Support letzte Woche erwähnt.",
+      "gap": 1.0
+    },
+    {
+      "speaker": "anna",
+      "text": "Nur bei sehr alten Browsern. Dafür zeigen wir jetzt einen Hinweis mit einer Anleitung an.",
+      "gap": 1.0
+    },
+    {
+      "speaker": "sam",
+      "text": "Okay.",
+      "gap": 1.0
+    },
+    {
+      "speaker": "anna",
+      "text": "Dann noch zur Planung: Nächste Woche ziehen wir die Datenbank auf den neuen Server um.",
+      "gap": 1.0
+    },
+    {
+      "speaker": "me",
+      "text": "Brauchen wir dafür ein Wartungsfenster am Wochenende?",
+      "gap": 0.8
+    },
+    {
+      "speaker": "sam",
+      "text": "Ja, ich würde Samstag früh vorschlagen, dann ist am wenigsten los.",
+      "gap": 1.0
+    },
+    {
+      "action": "mute"
+    },
+    {
+      "speaker": "me",
+      "text": "Das hier ist stummgeschaltet und darf nicht im Protokoll landen, Kaffeemaschine Zebrastreifen.",
+      "gap": 0.8
+    },
+    {
+      "action": "unmute"
+    },
+    {
+      "speaker": "anna",
+      "text": "Samstag passt mir. Ich schreibe die Ankündigung für die Kunden heute noch.",
+      "gap": 1.0
+    },
+    {
+      "speaker": "sam",
+      "text": "Genau.",
+      "gap": 0.6
+    },
+    {
+      "speaker": "anna",
+      "text": "Und Sam, kannst du bis dahin die Tests für die Buchhaltung abschließen?",
+      "gap": 1.0
+    },
+    {
+      "speaker": "sam",
+      "text": "Das schaffe ich bis Donnerstag, dann bleibt noch ein Tag für die Abnahme.",
+      "gap": 1.0
+    },
+    {
+      "action": "teams-view",
+      "view": "meeting",
+      "gap": 0.5
+    },
+    {
+      "speaker": "anna",
+      "text": "Perfekt, dann sind wir für heute durch. Danke euch beiden.",
+      "gap": 1.0
+    },
+    {
+      "speaker": "sam",
+      "text": "Danke, bis morgen.",
+      "gap": 1.0
+    }
+  ]
+}

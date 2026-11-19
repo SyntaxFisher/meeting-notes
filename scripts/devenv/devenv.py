@@ -692,7 +692,12 @@ def desktop_view(view, seconds=None):
         teams_control("speaking")  # builds the helper before it runs in the background
         COVERS.append(subprocess.Popen([str(CONTROL), "cover", str(float(seconds or 20))]))
     elif view == "compact-minimized":
-        teams_control("minimize", r"^Meeting compact view", check=True)
+        # Teams opens the compact view a few seconds after the meeting window disappears.
+        deadline = time.monotonic() + 15
+        while teams_control("minimize", r"^Meeting compact view").returncode != 0:
+            if time.monotonic() > deadline:
+                fail("Teams opened no compact view to minimize.")
+            time.sleep(0.5)
     elif view == "minimized":
         teams_control("minimize", r"^(?!(Meeting compact view|Chat|Activity|Teams|Calendar)\b).",
                       check=True)

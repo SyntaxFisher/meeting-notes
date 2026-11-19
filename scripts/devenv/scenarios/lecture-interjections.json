@@ -1,0 +1,155 @@
+{
+  "description": "A lecture: the lecturer talks most of the time while students give short answers right after being called on, a one-word answer, a long answer without pauses, a question that overlaps the lecturer, and two answers in quick succession. Teams frames a short answer late or not at all, so these turns test that a student's words never take the lecturer's name and that the lecturer keeps his.",
+  "speakers": {
+    "me": {
+      "via": "mic",
+      "voice": "Flo (German (Germany))",
+      "lang": "de"
+    },
+    "lecturer": {
+      "via": "guest",
+      "display": "Bernd Lehrer",
+      "voice": "Reed (German (Germany))",
+      "lang": "de"
+    },
+    "kim": {
+      "via": "guest",
+      "display": "Kim Weber",
+      "voice": "Sandy (German (Germany))",
+      "lang": "de"
+    },
+    "luca": {
+      "via": "guest",
+      "display": "Luca Hansen",
+      "voice": "Rocko (German (Germany))",
+      "lang": "de"
+    },
+    "till": {
+      "via": "guest",
+      "display": "Till Moeller",
+      "voice": "Eddy (German (Germany))",
+      "lang": "de"
+    },
+    "jannik": {
+      "via": "guest",
+      "display": "Jannik Bauer",
+      "voice": "Grandpa (German (Germany))",
+      "lang": "de"
+    }
+  },
+  "steps": [
+    {
+      "speaker": "lecturer",
+      "text": "Guten Morgen zusammen. Heute beschäftigen wir uns mit dem bestimmten Integral und der Frage, wie man die Fläche unter einer Kurve berechnet."
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Die Grundidee ist einfach. Wir zerlegen das Intervall von a bis b in viele schmale Teilintervalle und legen in jedes ein Rechteck."
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Die Höhe des Rechtecks ist der kleinste Funktionswert im Teilintervall. Die Summe aller Rechteckflächen nennen wir Untersumme.",
+      "gap": 0.5
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Was passiert eigentlich, wenn die Funktion negativ wird? Ja, Kim?",
+      "gap": 0.6
+    },
+    {
+      "speaker": "kim",
+      "text": "Dann zählt die Fläche negativ.",
+      "gap": 0.5
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Ganz genau, die Fläche unterhalb der x-Achse geht mit negativem Vorzeichen ein.",
+      "gap": 0.3
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Nimmt man stattdessen den größten Funktionswert, erhält man die Obersumme. Die Obersumme liegt immer über dem gesuchten Flächeninhalt.",
+      "gap": 0.6
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Wenn wir die Zerlegung immer feiner machen, nähern sich Untersumme und Obersumme einander an. Haben beide denselben Grenzwert, nennen wir die Funktion integrierbar.",
+      "gap": 0.5
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Was kommt bei einem Integral von a bis a heraus? Ja, Luca?",
+      "gap": 0.6
+    },
+    {
+      "speaker": "luca",
+      "text": "Null.",
+      "gap": 0.4
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Null, genau. Die Fläche ist dann unendlich schmal und hat keinen Inhalt.",
+      "gap": 0.2
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Für stetige Funktionen ist das immer der Fall. Das ist ein wichtiger Satz, den wir hier nicht beweisen, aber häufig benutzen werden.",
+      "gap": 0.6
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Wie berechnet man das Integral, wenn man eine Stammfunktion kennt? Ja, Luca, bitte.",
+      "gap": 0.6
+    },
+    {
+      "speaker": "luca",
+      "text": "Man bildet die Stammfunktion und setzt die obere Grenze ein, dann zieht man den Wert an der unteren Grenze ab.",
+      "gap": 0.3
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Ganz genau, das ist der Hauptsatz der Differential- und Integralrechnung.",
+      "gap": 0.3
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Schauen wir uns ein Beispiel an. Wir nehmen die Funktion x Quadrat auf dem Intervall von null bis eins.",
+      "gap": 0.6
+    },
+    {
+      "speaker": "till",
+      "text": "Entschuldigung, ist das Intervall offen oder geschlossen?",
+      "gap": -1.2
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Geschlossen, von null bis eins einschließlich.",
+      "gap": 0.4
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Mit vier Rechtecken ergibt sich eine Untersumme von ungefähr null Komma zwei. Mit hundert Rechtecken kommen wir schon sehr nah an ein Drittel heran.",
+      "gap": 0.6
+    },
+    {
+      "speaker": "jannik",
+      "text": "Willkommen zu uns, ich bin gerade in der Küche.",
+      "gap": 0.8
+    },
+    {
+      "speaker": "till",
+      "text": "Jannik, dein Mikro ist an.",
+      "gap": 0.2
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Danke, Till. Dann machen wir weiter mit den Rechenregeln für Integrale.",
+      "gap": 0.5
+    },
+    {
+      "speaker": "lecturer",
+      "text": "Zur Wiederholung. Wir zerlegen das Intervall von a bis b in viele schmale Teilintervalle und legen in jedes ein Rechteck.",
+      "gap": 0.6
+    }
+  ]
+}

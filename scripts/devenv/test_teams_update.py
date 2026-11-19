@@ -3,9 +3,10 @@ import unittest
 import teams_update
 
 
-def report(score=None, **extra):
-    return {"teams": "2.0", "meeting_exit": 0, "score": score, "previous": None,
-            "app_log": {"counts": {}}, **extra}
+def report(score=None, meeting_exit=0, scenario="standup", **extra):
+    return {"teams": "2.0",
+            "runs": [{"scenario": scenario, "meeting_exit": meeting_exit, "score": score}],
+            "previous": None, "app_log": {"counts": {}}, **extra}
 
 
 GOOD = {"wer": 0.05, "speakersExpected": 3, "speakersDetected": 3, "speakerAttribution": 0.99,
@@ -45,7 +46,7 @@ class TeamsUpdateTests(unittest.TestCase):
                          "red")
 
     def test_regressions_against_the_previous_build_warn(self):
-        previous = {"teams": "1.0", "score": GOOD}
+        previous = {"teams": "1.0", "runs": [{"scenario": "standup", "score": GOOD}]}
         level, reasons = teams_update.verdict_for(
             report({**GOOD, "speakerAttribution": 0.8}, previous=previous))
         self.assertEqual(level, "yellow")
@@ -53,7 +54,20 @@ class TeamsUpdateTests(unittest.TestCase):
         self.assertEqual(teams_update.verdict_for(
             report({**GOOD, "wer": 0.07}, previous=previous))[0], "green")
         self.assertEqual(teams_update.verdict_for(
+            report({**GOOD, "speakerAttribution": 0.8}, scenario="other", previous=previous))[0],
+            "green", "Runs compare only with the same scenario")
+        self.assertEqual(teams_update.verdict_for(
             report(GOOD, app_log={"counts": {"teams.slowRead": 2}}))[0], "yellow")
+
+    def test_every_scenario_counts(self):
+        two = report(GOOD)
+        two["runs"].append({"scenario": "hidden", "meeting_exit": 0,
+                            "score": {**GOOD, "mutedSpeechLeaked": 0.5}})
+        level, reasons = teams_update.verdict_for(two)
+        self.assertEqual(level, "red")
+        self.assertTrue(reasons[0].startswith("red: hidden:"))
+        self.assertIn("## hidden", teams_update.summary_markdown(
+            {**two, "verdict": level, "reasons": reasons, "meeting_notes": "dev"}))
 
 
 if __name__ == "__main__":

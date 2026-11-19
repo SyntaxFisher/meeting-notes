@@ -7,10 +7,13 @@ downloads and reports.
 
     check [--trigger]      compare the newest production Teams release with the installed one;
                            with --trigger, start the agent task in a new T3 thread
-    install [--build V]    download, verify and install the newest release, or reinstall an
-                           archived build V to check that Meeting Notes still works with it
-    verify [--scenario S]  build Meeting Notes from this checkout and record a scored live
-                           meeting through the local Teams test environment
+    install [--build V]    download, verify and install the newest release, or install build V,
+                           archived or downloaded, to check that Meeting Notes still works
+                           with it
+    verify [--scenario S]  build Meeting Notes from this checkout and record scored live
+                           meetings through the local Teams test environment, one per
+                           scenario (repeat --scenario; default: standup-de-en and
+                           hidden-meeting)
     status                 print the state as JSON
     install-agent          run `check --trigger` every hour from launchd
 
@@ -55,6 +58,9 @@ TEAMS_SIGNER = "Developer ID Installer: Microsoft Corporation (UBF8T346G9)"
 # reads the same field.
 TEAMS_CONFIG_URL = ("https://config.teams.microsoft.com/config/v1/MicrosoftTeams/1.0.0.0"
                     "?environment=prod&audienceGroup=general&teamsRing=general&agent=TeamsBuilds")
+# Every production build stays downloadable here, so an older build can be installed even when
+# it was never archived on this machine.
+TEAMS_BUILD_URL = "https://teamsinstaller.public.onecdn.static.microsoft/production-osx/{}/MicrosoftTeams.pkg"
 # The Teams installer also bundles Microsoft AutoUpdate; the test machine updates Teams itself.
 SKIPPED_PACKAGES = ["com.microsoft.autoupdate"]
 
@@ -69,7 +75,9 @@ LAUNCH_AGENTS = Path.home() / "Library/LaunchAgents"
 CHECK_LABEL = "dev.meeting-notes.teams-update-check"
 KEEP_BUILDS = 3
 RETRIGGER_AFTER_SECONDS = 12 * 3600
-DEFAULT_SCENARIO = "standup-de-en"
+# A multilingual stand-up with the meeting window in view, and a stand-up followed with every
+# Teams window minimized, which Teams stops drawing.
+DEFAULT_SCENARIOS = ["standup-de-en", "hidden-meeting"]
 
 # A live meeting fails outright when recording does not start or stop with the call; these
 # floors catch the Teams readings that degrade without failing it: participant names (named
@@ -300,15 +308,42 @@ def install_latest() -> int:
     return 0
 
 
+def archive_download(version: str) -> Path:
+    """Downloads build `version` and archives the app it installs.
+
+    The installer refuses to replace a newer Teams, so the app comes out of the package instead.
+    """
+    package = DOWNLOADS_DIR / f"MicrosoftTeams-{version}.pkg"
+    try:
+        download(TEAMS_BUILD_URL.format(version), package)
+    except OSError as error:
+        raise RuntimeError(f"Teams {version} could not be downloaded: {error}") from error
+    check_package_signature(package)
+    expanded = Path(tempfile.mkdtemp(prefix="teams-pkg-", dir=DOWNLOADS_DIR))
+    try:
+        subprocess.run(["/usr/sbin/pkgutil", "--expand-full", str(package), str(expanded / "pkg")],
+                       check=True, capture_output=True)
+        apps = [path for path in (expanded / "pkg").glob(f"*/Payload/{TEAMS.name}")
+                if app_version(path) == version]
+        if not apps:
+            raise RuntimeError(f"the Teams {version} package holds no {TEAMS.name} {version}")
+        target = BUILDS_DIR / version / TEAMS.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["/usr/bin/ditto", str(apps[0]), str(target)], check=True)
+    finally:
+        shutil.rmtree(expanded, ignore_errors=True)
+    package.unlink(missing_ok=True)
+    log(f"archived downloaded Teams {version}")
+    return target
+
+
 def install_archived(version: str) -> int:
-    source = dict(archived_builds()).get(version)
-    if source is None:
-        known = ", ".join(v for v, _ in archived_builds()) or "none"
-        raise RuntimeError(f"no archived Teams {version} (archived: {known})")
     if app_version(TEAMS) == version:
         log(f"Teams {version} is already installed")
         return 0
+    # Archiving first keeps its cleanup from removing the build about to be installed.
     archive_installed_build()
+    source = dict(archived_builds()).get(version) or archive_download(version)
     subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(source)], check=True)
     quit_teams()
     staged = TEAMS.with_name(f".{TEAMS.name}.staged")
@@ -422,7 +457,7 @@ def newest_report(scenario: str, since: float) -> dict | None:
 
 
 # Events the app logs when Teams reads or capture go wrong without failing the meeting.
-TROUBLE_EVENTS = {"error", "teams.slowRead", "capture.failed"}
+TROUBLE_EVENTS = {"error", "teams.slowRead", "teams.refreshFailed", "capture.failed"}
 
 
 def app_log_since(since: float) -> dict:
@@ -456,7 +491,7 @@ def previous_report(version: str) -> dict | None:
         key=lambda path: version_key(path.parent.name))
     for path in reversed(candidates):
         report = json.loads(path.read_text())
-        if report.get("score"):
+        if any(run.get("score") for run in report.get("runs", [])):
             return report
     return None
 
@@ -474,28 +509,33 @@ def verdict_for(report: dict) -> tuple[str, list[str]]:
 
     if report.get("error"):
         raise_to("red", report["error"])
-    if report["meeting_exit"] not in (None, 0):
-        raise_to("red", f"the live meeting failed (exit {report['meeting_exit']}); see meeting.log")
-    score = report.get("score")
-    if report["meeting_exit"] == 0 and not score:
-        raise_to("red", "the live meeting produced no scored transcript")
-    if score:
+    previous = report.get("previous") or {}
+    earlier = {run["scenario"]: run.get("score") or {} for run in previous.get("runs", [])}
+    for run in report["runs"]:
+        name, score = run["scenario"], run.get("score")
+        if run["meeting_exit"] not in (None, 0):
+            raise_to("red", f"{name}: the live meeting failed (exit {run['meeting_exit']}); "
+                            f"see {name}.log")
+        if run["meeting_exit"] == 0 and not score:
+            raise_to("red", f"{name}: the live meeting produced no scored transcript")
+        if not score:
+            continue
         for key, floor in REQUIRED.items():
             if (score.get(key) or 0) < floor:
-                raise_to("red", f"{key} is {score.get(key)}, below {floor}")
+                raise_to("red", f"{name}: {key} is {score.get(key)}, below {floor}")
         if (score.get("mutedSpeechLeaked") or 0) > MAX_MUTED_LEAK:
-            raise_to("red", f"speech said while muted leaked ({score['mutedSpeechLeaked']})")
+            raise_to("red", f"{name}: speech said while muted leaked ({score['mutedSpeechLeaked']})")
         if score.get("speakersDetected") != score.get("speakersExpected"):
-            raise_to("yellow", f"{score.get('speakersDetected')} speakers detected, "
+            raise_to("yellow", f"{name}: {score.get('speakersDetected')} speakers detected, "
                                f"{score.get('speakersExpected')} expected")
-        before = (report.get("previous") or {}).get("score") or {}
+        before = earlier.get(name, {})
         for key, limit in REGRESSION.items():
             if score.get(key) is None or before.get(key) is None:
                 continue
             change = score[key] - before[key]
             if (limit > 0 and change > limit) or (limit < 0 and change < limit):
-                raise_to("yellow", f"{key} changed from {before[key]} to {score[key]} since "
-                                   f"Teams {report['previous']['teams']}")
+                raise_to("yellow", f"{name}: {key} changed from {before[key]} to {score[key]} "
+                                   f"since Teams {previous['teams']}")
     for event, count in report.get("app_log", {}).get("counts", {}).items():
         raise_to("yellow", f"the app logged {count} x {event}")
     return level, reasons
@@ -503,31 +543,36 @@ def verdict_for(report: dict) -> tuple[str, list[str]]:
 
 def summary_markdown(report: dict) -> str:
     previous = report.get("previous") or {}
+    earlier = {run["scenario"]: run.get("score") or {} for run in previous.get("runs", [])}
     lines = [
         f"# Teams {report['teams']}: {report['verdict'].upper()}",
         "",
         f"- Meeting Notes: {report['meeting_notes']}",
-        f"- Scenario: {report['scenario']}",
+        f"- Scenarios: {', '.join(run['scenario'] for run in report['runs'])}",
         f"- Compared with: Teams {previous.get('teams')} ({previous.get('meeting_notes')})"
         if previous else "- Compared with: nothing (first run)",
-        f"- Meeting: {(report.get('score') or {}).get('meeting')}",
         "",
         "## Reasons" if report["reasons"] else "## Reasons\n\nNone; every check passed.",
     ]
     lines += [f"- {reason}" for reason in report["reasons"]]
-    if report.get("score"):
-        lines += ["", "## Score", "", "| | now | before |", "|---|---|---|"]
-        before = previous.get("score") or {}
-        for key, value in report["score"].items():
+    for run in report["runs"]:
+        if not run.get("score"):
+            continue
+        before = earlier.get(run["scenario"], {})
+        lines += ["", f"## {run['scenario']}", "", f"- Meeting: {run['score'].get('meeting')}"]
+        if run.get("reconstruction"):
+            lines.append(f"- Teams trace and capture: {run['reconstruction']}")
+        lines += ["", "| | now | before |", "|---|---|---|"]
+        for key, value in run["score"].items():
             if key not in ("transcript", "meeting", "werByLanguage"):
                 lines.append(f"| {key} | {value} | {before.get(key, '')} |")
-    lines += ["", "## Files", "", "- build.log, meeting.log, report.json"]
-    if report.get("reconstruction"):
-        lines.append(f"- Teams trace and capture: {report['reconstruction']}")
+    lines += ["", "## Files", "",
+              "- build.log, " + ", ".join(f"{run['scenario']}.log" for run in report["runs"])
+              + ", report.json"]
     return "\n".join(lines) + "\n"
 
 
-def command_verify(scenario: str) -> int:
+def command_verify(scenarios: list[str]) -> int:
     version = app_version(TEAMS)
     if version is None:
         raise RuntimeError(f"{TEAMS} is not installed")
@@ -537,7 +582,7 @@ def command_verify(scenario: str) -> int:
     out = REPORTS_DIR / version
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
-    report = {"teams": version, "scenario": scenario, "meeting_exit": None, "score": None,
+    report = {"teams": version, "runs": [],
               "meeting_notes": git("describe", "--tags", "--always", "--dirty") or None,
               "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
     started = time.time()
@@ -546,24 +591,28 @@ def command_verify(scenario: str) -> int:
         build_app(out)
         log("starting Meeting Notes and Teams")
         restart_app()
-        ensure_teams_signed_in()
-        log(f"live meeting: {scenario}")
-        report["meeting_exit"] = run_logged(
-            [sys.executable, str(DEVENV), "meeting", scenario, "--leave", "--score"],
-            out / "meeting.log")
-        report["score"] = newest_report(scenario, started)
+        for scenario in scenarios:
+            ensure_teams_signed_in()
+            log(f"live meeting: {scenario}")
+            run_started = time.time()
+            run = {"scenario": scenario, "meeting_exit": None, "score": None}
+            report["runs"].append(run)
+            run["meeting_exit"] = run_logged(
+                [sys.executable, str(DEVENV), "meeting", scenario, "--leave", "--score"],
+                out / f"{scenario}.log")
+            run["score"] = newest_report(scenario, run_started)
+            meeting = (run["score"] or {}).get("meeting")
+            if meeting and (RECONSTRUCTION / meeting).is_dir():
+                run["reconstruction"] = str(RECONSTRUCTION / meeting)
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         report["error"] = str(error)
     finally:
         subprocess.run([sys.executable, str(DEVENV), "audio", "off"], cwd=REPO_ROOT,
                        capture_output=True)
     report["app_log"] = app_log_since(started)
-    meeting = (report.get("score") or {}).get("meeting")
-    if meeting and (RECONSTRUCTION / meeting).is_dir():
-        report["reconstruction"] = str(RECONSTRUCTION / meeting)
     previous = previous_report(version)
     if previous:
-        report["previous"] = {key: previous.get(key) for key in ("teams", "meeting_notes", "score")}
+        report["previous"] = {key: previous.get(key) for key in ("teams", "meeting_notes", "runs")}
     report["verdict"], report["reasons"] = verdict_for(report)
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (out / "summary.md").write_text(summary_markdown(report))
@@ -617,9 +666,10 @@ def main() -> int:
     install = sub.add_parser("install", help="install the newest Teams release")
     install.add_argument("--build", metavar="VERSION",
                          help="reinstall this archived Teams build instead")
-    verify = sub.add_parser("verify", help="record and score a live meeting with this checkout")
-    verify.add_argument("--scenario", default=DEFAULT_SCENARIO,
-                        help=f"devenv scenario to play (default {DEFAULT_SCENARIO})")
+    verify = sub.add_parser("verify", help="record and score live meetings with this checkout")
+    verify.add_argument("--scenario", action="append", dest="scenarios",
+                        help="devenv scenario to play; repeat for several "
+                             f"(default {', '.join(DEFAULT_SCENARIOS)})")
     sub.add_parser("status", help="print the state as JSON")
     sub.add_parser("install-agent", help="run `check --trigger` every hour from launchd")
     args = parser.parse_args()
@@ -629,7 +679,7 @@ def main() -> int:
         if args.command == "install":
             return command_install(args.build)
         if args.command == "verify":
-            return command_verify(args.scenario)
+            return command_verify(args.scenarios or DEFAULT_SCENARIOS)
         if args.command == "status":
             state = load_state()
             state["archived"] = [version for version, _ in archived_builds()]
