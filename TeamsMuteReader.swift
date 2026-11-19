@@ -273,7 +273,7 @@ enum TeamsMuteClassifier {
     labels.contains { label in
       label.range(
         of:
-          #"^(?:Rejoin(?: the call)?|Erneut beitreten|Anruf erneut beitreten|Erneut teilnehmen)(?:\b|$)"#,
+          #"^(?:Rejoin(?: the call)?|Erneut beitreten|Anruf erneut beitreten|Erneut dem Anruf beitreten|Erneut teilnehmen)(?:\b|$)"#,
         options: [.regularExpression, .caseInsensitive]) != nil
     }
   }

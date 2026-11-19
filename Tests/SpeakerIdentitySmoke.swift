@@ -340,6 +340,24 @@ enum SpeakerIdentitySmoke {
       TeamsParticipantParser.parse(role: share.role, description: share.text) == nil
         && TeamsParticipantParser.presenter(share.text) == "Robin Lehmann",
       "A shared screen is no participant")
+    // German Teams, as it describes a guest who shares, raises a hand and is listed.
+    let germanShare = "Von Anna Novak (Gast) freigegebener Inhalt "
+    precondition(
+      TeamsParticipantParser.presenter(germanShare) == "Anna Novak"
+        && TeamsParticipantParser.parse(role: "tile", description: germanShare) == nil)
+    precondition(
+      TeamsParticipantParser.parse(
+        role: "AXMenuItem",
+        description: "Anna Novak (Gast), Erhobene Hände, Kontextmenü ist verfügbar")?.handRaised
+        == true)
+    let germanRow = TeamsParticipantParser.parse(
+      role: "AXRow",
+      description:
+        "Anna Novak (Unverified), Gast der Besprechung, Hand erhoben, Stummschaltung aufgehoben")
+    precondition(
+      germanRow?.name == "Anna Novak" && germanRow?.role == "Meeting guest"
+        && germanRow?.muted == false,
+      "A roster row with a raised hand: \(String(describing: germanRow))")
     precondition(
       speakers([meeting([share, lecturer, frame("Robin Lehmann")])]) == ["Robin Lehmann"],
       "A presenter framed alone counts as speaking")

@@ -32,7 +32,10 @@ enum TeamsScreenSharingSmoke {
     precondition(tracker.observe([(3, meeting)]).state == .muted)
     precondition(tracker.observe([(4, toolbar)]).state.meetingPresence == .inMeeting)
     precondition(tracker.observe([]).state == .unavailable(.noMeeting))
-    for label in ["Rejoin the call", "Rejoin", "Erneut beitreten", "Erneut teilnehmen"] {
+    for label in [
+      "Rejoin the call", "Rejoin", "Erneut beitreten", "Erneut teilnehmen",
+      "Erneut dem Anruf beitreten",
+    ] {
       precondition(TeamsMuteClassifier.isMeetingEndControl([label]))
     }
     precondition(!TeamsMuteClassifier.isMeetingEndControl(["Join now"]))

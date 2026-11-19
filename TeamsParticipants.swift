@@ -28,7 +28,8 @@ enum TeamsParticipantParser {
     "organizer": "Organizer", "co-organizer": "Co-organizer", "presenter": "Presenter",
     "attendee": "Attendee", "meeting guest": "Meeting guest", "guest": "Guest",
     "organisator": "Organizer", "mitorganisator": "Co-organizer", "referent": "Presenter",
-    "teilnehmer": "Attendee", "besprechungsgast": "Meeting guest", "gast": "Guest",
+    "teilnehmer": "Attendee", "besprechungsgast": "Meeting guest",
+    "gast der besprechung": "Meeting guest", "gast": "Guest",
   ]
   private static let tags: Set<String> = [
     "unverified", "guest", "external", "nicht überprüft", "gast", "extern",
@@ -57,12 +58,17 @@ enum TeamsParticipantParser {
     "warteschleife", "schlechte verbindung", "schlechte netzwerkqualität", "verbindungsproblem",
     "die verbindung ist schwach", "verbindung ist instabil",
   ]
-  private static let handRaisedStates: Set<String> = ["hand raised", "hand erhoben"]
+  private static let handRaisedStates: Set<String> = [
+    "hand raised", "hand erhoben", "erhobene hände",
+  ]
   private static let localPrefixes = [
     "Myself video, ", "Video von mir selbst, ", "Eigenes Video, ",
   ]
   private static let joinSuffixes = [" joined the call", " ist dem Anruf beigetreten"]
-  private static let sharedContentPrefixes = ["Content shared by "]
+  /// "Content shared by Sam Carter" and "Von Sam Carter (Gast) freigegebener Inhalt".
+  private static let sharedContent = [
+    #/^Content shared by (.+)$/#, #/^Von (.+) freigegebener Inhalt$/#,
+  ]
   private static let leaveSuffixes = [" left the call", " hat den Anruf verlassen"]
 
   /// A People pane section header such as "In this meeting, 4 total". Returns whether the
@@ -80,10 +86,10 @@ enum TeamsParticipantParser {
   /// The presenter a shared screen on the call stage names ("Content shared by Sam Carter").
   static func presenter(_ description: String) -> String? {
     let text = description.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let prefix = sharedContentPrefixes.first(where: { text.hasPrefix($0) }) else {
+    guard let match = sharedContent.lazy.compactMap({ text.wholeMatch(of: $0) }).first else {
       return nil
     }
-    let (name, _) = splitTag(String(text.dropFirst(prefix.count)))
+    let (name, _) = splitTag(String(match.1))
     return isName(name) ? name : nil
   }
 
@@ -99,6 +105,7 @@ enum TeamsParticipantParser {
     }
   }
 
+  /// A roster row lists states such as "Hand raised" between the role and the mute state.
   private static func rosterEntry(_ text: String) -> TeamsParticipantSighting? {
     var parts = components(text)
     var muted: Bool?
@@ -106,6 +113,7 @@ enum TeamsParticipantParser {
       muted = value
       parts.removeLast()
     }
+    while parts.count > 2, let last = parts.last, isTileState(last) { parts.removeLast() }
     guard parts.count >= 2, let role = roles[parts.last!.lowercased()] else { return nil }
     parts.removeLast()
     let (name, tag) = splitTag(parts.joined(separator: ", "))
