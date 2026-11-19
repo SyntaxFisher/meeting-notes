@@ -1,0 +1,114 @@
+{
+  "description": "A lecture: one guest talks most of the time while a student keeps a hand raised before, during and long after asking a question. Right after the question another app covers the meeting window and the compact view is minimized, so Teams keeps showing the student framed in the frozen meeting window while the lecturer answers; later the desktop works in Teams chat. Teams frames a tile with a raised hand all along and adds a second frame only while that student speaks; the lecturer's turns must keep the lecturer's name.",
+  "speakers": {
+    "me": {
+      "via": "mic",
+      "voice": "Reed (German (Germany))",
+      "lang": "de"
+    },
+    "robin": {
+      "via": "guest",
+      "display": "Robin Lehmann",
+      "voice": "Anna",
+      "lang": "de"
+    },
+    "kim": {
+      "via": "guest",
+      "display": "Kim Weber",
+      "voice": "Eddy (German (Germany))",
+      "lang": "de"
+    }
+  },
+  "steps": [
+    {
+      "speaker": "robin",
+      "text": "Guten Tag zusammen. Heute geht es um das bestimmte Integral und darum, wie man Flächen unter einer Kurve mit Rechtecken annähert."
+    },
+    {
+      "speaker": "robin",
+      "gap": 0.6,
+      "text": "Wir teilen das Intervall von a bis b in gleich breite Teilintervalle und nehmen in jedem den kleinsten Funktionswert als Höhe eines Rechtecks."
+    },
+    {
+      "action": "raise-hand",
+      "speaker": "kim"
+    },
+    {
+      "speaker": "robin",
+      "gap": 1.0,
+      "text": "Die Summe dieser Rechtecke nennen wir Untersumme. Sie ist immer kleiner oder gleich dem gesuchten Flächeninhalt, solange die Funktion nicht negativ ist."
+    },
+    {
+      "speaker": "robin",
+      "gap": 0.6,
+      "text": "Nimmt man stattdessen den größten Funktionswert, erhält man die Obersumme, und die liegt immer darüber. Ich sehe eine Meldung, bitte."
+    },
+    {
+      "speaker": "kim",
+      "gap": 1.2,
+      "text": "Was passiert denn, wenn die Funktion zwischendurch negativ wird? Zählt die Fläche dann negativ?"
+    },
+    {
+      "action": "teams-view",
+      "view": "covered",
+      "seconds": 40,
+      "gap": 0.2
+    },
+    {
+      "action": "teams-view",
+      "view": "compact-minimized",
+      "gap": 1.0
+    },
+    {
+      "speaker": "robin",
+      "gap": 1.2,
+      "text": "Gute Frage. Ja, das Integral zählt Flächen unterhalb der x-Achse negativ. Wenn Sie den Flächeninhalt wollen, müssen Sie an den Nullstellen aufteilen und Beträge nehmen."
+    },
+    {
+      "speaker": "robin",
+      "gap": 0.6,
+      "text": "Das schauen wir uns gleich an einem Beispiel an. Zuerst aber noch zur Definition: Werden die Teilintervalle immer schmaler, nähern sich Ober- und Untersumme an."
+    },
+    {
+      "action": "teams-view",
+      "view": "meeting"
+    },
+    {
+      "action": "teams-view",
+      "view": "chat"
+    },
+    {
+      "speaker": "robin",
+      "gap": 1.0,
+      "text": "Wenn beide denselben Grenzwert haben, heißt die Funktion integrierbar, und dieser Grenzwert ist das bestimmte Integral von a bis b."
+    },
+    {
+      "speaker": "robin",
+      "gap": 0.6,
+      "text": "Für stetige Funktionen ist das immer der Fall. Das ist der wichtigste Satz für heute, den sollten Sie sich merken."
+    },
+    {
+      "action": "teams-view",
+      "view": "meeting"
+    },
+    {
+      "speaker": "robin",
+      "gap": 1.0,
+      "text": "Jetzt rechnen wir das Beispiel mit der Funktion x Quadrat auf dem Intervall von null bis zwei, zuerst mit vier Rechtecken."
+    },
+    {
+      "action": "lower-hand",
+      "speaker": "kim"
+    },
+    {
+      "speaker": "robin",
+      "gap": 1.0,
+      "text": "Mit vier Rechtecken ist die Untersumme eins Komma fünf und die Obersumme drei Komma fünf. Der wahre Wert liegt bei acht Drittel."
+    },
+    {
+      "speaker": "me",
+      "gap": 0.8,
+      "text": "Vielen Dank, das war sehr verständlich."
+    }
+  ]
+}

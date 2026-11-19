@@ -5,7 +5,18 @@
 //   Add --meeting to press/find to search only meeting windows (those with a Leave button).
 //   teams-control buttons         Print every button label in every Teams window.
 //   teams-control windows         Print each window's mic button labels and whether Teams is in front.
-//   teams-control speaking        Print each window's tiles framed as speaking and speaking labels.
+//   teams-control speaking        Print each window's framed tiles (hand and speaking frames)
+//                                 and speaking labels.
+//   teams-control raise <regex>|--meeting
+//                                 Bring Teams to the front with the first window whose title
+//                                 matches, e.g. the main window over the meeting, as when
+//                                 someone works in Teams chat during a call, or with the
+//                                 meeting window (not its compact view).
+//   teams-control minimize <regex> [off]
+//                                 Minimize (or restore) the first Teams window whose title matches.
+//   teams-control cover <seconds> Show an opaque window of this tool over the whole screen, as a
+//                                 maximized app covering Teams; Teams stops updating covered
+//                                 windows and opens its compact view.
 //   teams-control slider <regex> [value]
 //                                 Print or set the value of a matching slider (e.g. speaker volume).
 //   teams-control status-menu <bundle-id> [regex]
@@ -64,6 +75,21 @@ guard AXIsProcessTrusted() else {
   exit(3)
 }
 let arguments = CommandLine.arguments.dropFirst()
+
+if arguments.first == "cover", arguments.count == 2, let seconds = Double(arguments.last!) {
+  let app = NSApplication.shared
+  app.setActivationPolicy(.regular)
+  let window = NSWindow(
+    contentRect: NSScreen.main!.visibleFrame, styleMask: [.titled], backing: .buffered,
+    defer: false)
+  window.title = "Cover"
+  window.isOpaque = true
+  window.backgroundColor = .white
+  window.makeKeyAndOrderFront(nil)
+  app.activate()
+  DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { exit(0) }
+  app.run()
+}
 
 if arguments.first == "status-menu", arguments.count >= 2 {
   let bundle = arguments[arguments.startIndex + 1]
@@ -138,31 +164,76 @@ case "windows":
     print("main=\(main) minimized=\(minimized) mic=\(labels) title=\(title)")
   }
 case "speaking":
-  // Tiles Teams frames as the active speaker, and "… is speaking" labels, per window.
+  // Per window: each tile's frames ("hand raised" tiles keep one frame for the hand, so they
+  // speak with two) and "… is speaking" labels.
   for window in windows {
-    var framed: [String] = []
+    var frames: [(tile: String, count: Int)] = []
     var labels: [String] = []
-    var pending = [window]
+    var pending: [(AXUIElement, String?)] = [(window, nil)]
     var visited = 0
-    while let element = pending.popLast(), visited < 6_000 {
+    while let (element, enclosing) = pending.popLast(), visited < 6_000 {
       visited += 1
       let role: String = attribute(element, kAXRoleAttribute) ?? ""
       let text: String = attribute(element, kAXDescriptionAttribute) ?? ""
+      var tile = enclosing
+      if role == "AXMenuItem" || role == "AXImage", !text.isEmpty { tile = text }
       if role == "AXGroup", let classes: [String] = attribute(element, "AXDOMClassList"),
         classes.contains("vdi-frame-occlusion")
       {
-        framed.append(text.isEmpty ? childText(element) ?? "?" : text)
+        let name = String((tile ?? "?").prefix(70))
+        if let index = frames.lastIndex(where: { $0.tile == name }) {
+          frames[index].count += 1
+        } else {
+          frames.append((name, 1))
+        }
       }
       if role == "AXGroup", text.hasSuffix("is speaking") || text.hasSuffix("spricht") {
         labels.append(text)
       }
       if let children: [AXUIElement] = attribute(element, kAXChildrenAttribute) {
-        pending.append(contentsOf: children)
+        pending.append(contentsOf: children.reversed().map { ($0, tile) })
       }
     }
     let title: String = attribute(window, kAXTitleAttribute) ?? ""
-    print("\(title.prefix(40)) framed=\(framed.map { String($0.prefix(40)) }) labels=\(labels)")
+    let main: Bool = attribute(window, kAXMainAttribute) ?? false
+    print("\(title.prefix(40)) main=\(main) labels=\(labels)")
+    for (tile, count) in frames { print("  \(count) frame\(count == 1 ? "" : "s"): \(tile)") }
   }
+case "raise" where arguments.count == 2:
+  let meeting = arguments.last == "--meeting"
+  let pattern = try NSRegularExpression(
+    pattern: meeting ? "^(?!Meeting compact view)" : arguments.last!, options: .caseInsensitive)
+  for window in windows {
+    let title: String = attribute(window, kAXTitleAttribute) ?? ""
+    guard pattern.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)) != nil,
+      !meeting
+        || buttons(in: window).contains(where: { _, labels in
+          labels.contains { $0 == "Leave" || $0 == "Verlassen" }
+        })
+    else { continue }
+    app.activate()
+    AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+    AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    print("Raised: \(title)")
+    exit(0)
+  }
+  FileHandle.standardError.write(Data("No Teams window matches \(arguments.last!).\n".utf8))
+  exit(1)
+case "minimize" where (2...3).contains(arguments.count):
+  let pattern = try NSRegularExpression(
+    pattern: arguments[arguments.startIndex + 1], options: .caseInsensitive)
+  let minimize = arguments.last != "off"
+  for window in windows {
+    let title: String = attribute(window, kAXTitleAttribute) ?? ""
+    guard pattern.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)) != nil
+    else { continue }
+    AXUIElementSetAttributeValue(
+      window, kAXMinimizedAttribute as CFString, (minimize ? kCFBooleanTrue : kCFBooleanFalse)!)
+    print("\(minimize ? "Minimized" : "Restored"): \(title)")
+    exit(0)
+  }
+  FileHandle.standardError.write(Data("No Teams window matches.\n".utf8))
+  exit(1)
 case "slider" where arguments.count >= 2:
   let pattern = try NSRegularExpression(
     pattern: arguments[arguments.startIndex + 1], options: .caseInsensitive)
@@ -224,7 +295,7 @@ case "press" where (2...3).contains(arguments.count),
   exit(1)
 default:
   let usage =
-    "Usage: teams-control buttons | windows | speaking | find|press <regex> [--meeting] | slider <regex> [value]\n"
+    "Usage: teams-control buttons | windows | speaking | raise <regex>|--meeting | minimize <regex> [off] | cover <seconds> | find|press <regex> [--meeting] | slider <regex> [value]\n"
   FileHandle.standardError.write(Data(usage.utf8))
   exit(2)
 }

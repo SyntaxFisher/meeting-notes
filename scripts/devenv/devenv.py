@@ -160,11 +160,15 @@ def render(scenario):
         if "pause" in step:
             clock += float(step["pause"])
             continue
-        if step.get("action") in ("mute", "unmute"):
-            muted = step["action"] == "mute"
+        if "action" in step:
+            if step["action"] not in ACTIONS:
+                fail(f"Unknown action {step['action']}; known: {', '.join(ACTIONS)}.")
+            if step["action"] in ("mute", "unmute"):
+                muted = step["action"] == "mute"
             at = clock + float(step.get("gap", 0.5))
-            events.append({"at": round(at, 3), "action": step["action"]})
-            # Leave time for Teams and the app's mute mirroring to observe the change.
+            events.append({"at": round(at, 3), **{key: step[key] for key in (
+                "action", "speaker", "view", "seconds") if key in step}})
+            # Leave time for Teams and the app to observe the change.
             clock = at + 1.0
             continue
         speaker = speakers[step["speaker"]]
@@ -190,6 +194,14 @@ def render(scenario):
     (directory / "truth.json").write_text(json.dumps(truth, indent=2, ensure_ascii=False) + "\n")
     mix(truth, directory / "mix.wav")
     return directory, truth
+
+
+# Scenario actions: the desktop's mute; a guest's raised hand (`speaker` names the guest); and
+# what happens to the meeting window (`view`): "chat" brings Teams' main window over it, as when
+# someone works in Teams chat during a call, "covered" puts another app's window over the whole
+# screen for `seconds`, "minimized" minimizes it, "compact-minimized" minimizes the compact view
+# Teams opens meanwhile, and "meeting" restores the meeting window and brings it back.
+ACTIONS = ("mute", "unmute", "raise-hand", "lower-hand", "teams-view")
 
 
 def synthesize(step, voice, rate, output, scenario_path):
@@ -662,6 +674,54 @@ def start_guest(page, url, name):
     page.get_by_role("button", name=re.compile(r"^(Join now|Jetzt teilnehmen)", re.I)).click()
 
 
+def guest_set_hand(page, raised):
+    """Presses the guest's Raise button unless the hand already is in the wanted state."""
+    button = page.get_by_role("button", name=re.compile(r"^(Raise|Heben|Hand heben)", re.I)).first
+    if (button.get_attribute("aria-pressed") == "true") != raised:
+        button.click(timeout=5000)
+
+
+COVERS = []
+
+
+def desktop_view(view, seconds=None):
+    """Changes what covers the meeting window; see ACTIONS."""
+    if view == "chat":
+        teams_control("raise", r"^(Chat|Activity|Teams|Calendar|Aktivität|Kalender)\b", check=True)
+    elif view == "covered":
+        teams_control("speaking")  # builds the helper before it runs in the background
+        COVERS.append(subprocess.Popen([str(CONTROL), "cover", str(float(seconds or 20))]))
+    elif view == "compact-minimized":
+        teams_control("minimize", r"^Meeting compact view", check=True)
+    elif view == "minimized":
+        teams_control("minimize", r"^(?!(Meeting compact view|Chat|Activity|Teams|Calendar)\b).",
+                      check=True)
+    else:
+        while COVERS:
+            cover = COVERS.pop()
+            cover.terminate()
+            cover.wait()
+        teams_control("minimize", r"^(?!(Meeting compact view|Chat|Activity|Teams|Calendar)\b).",
+                      "off")
+        teams_control("raise", "--meeting", check=True)
+
+
+def guest_plan(truth, key):
+    """The clips one guest plays and when; actions that name the guest are not clips."""
+    return [{"id": event["clip"], "at": event["at"]}
+            for event in truth["events"] if "clip" in event and event["speaker"] == key]
+
+
+def run_action(event, pages):
+    action = event["action"]
+    if action in ("mute", "unmute"):
+        desktop_set_muted(action == "mute")
+    elif action in ("raise-hand", "lower-hand"):
+        guest_set_hand(pages[event["speaker"]], action == "raise-hand")
+    elif action == "teams-view":
+        desktop_view(event["view"], event.get("seconds"))
+
+
 def guest_in_call(page):
     return page.get_by_role("button", name=re.compile(r"^(Leave|Verlassen)")).count() > 0
 
@@ -817,8 +877,7 @@ def meeting(args):
                     starts.append((joined, time.time() + origin - time.monotonic()
                                    + truth["duration"]))
                     for key, guest in frames.items():
-                        plan = [{"id": event["clip"], "at": event["at"]}
-                                for event in truth["events"] if event.get("speaker") == key]
+                        plan = guest_plan(truth, key)
                         for frame in guest:
                             frame.evaluate("(plan) => __meetingNotesGuest.schedule(plan)",
                                            {"delay": origin - time.monotonic(), "events": plan})
@@ -832,10 +891,12 @@ def meeting(args):
                         timing.append({"at": event["at"], "late": round(late, 3)})
                         if late > 0.5:
                             fail(f"Playback control is {late:.1f}s late; this run cannot score overlaps.")
-                        label = event.get("action") or f"{event['speaker']}: {event['text'][:60]}"
+                        label = (" ".join(str(event[key]) for key in ("action", "speaker", "view")
+                                          if key in event) if event.get("action")
+                                 else f"{event['speaker']}: {event['text'][:60]}")
                         print(f"  [{event['at']:6.1f}s] {label}", flush=True)
                         if event.get("action"):
-                            desktop_set_muted(event["action"] == "mute")
+                            run_action(event, pages)
                     timeout = max(10, origin + truth["duration"] - time.monotonic() + 10)
                     if player.wait(timeout=timeout):
                         fail("Microphone playback failed.")

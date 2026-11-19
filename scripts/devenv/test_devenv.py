@@ -45,6 +45,53 @@ class LivePlaybackTests(unittest.TestCase):
             devenv.desktop_set_muted(False)
         self.assertEqual(live, "Mute mic")
 
+    def test_actions_reach_the_desktop_and_guests(self):
+        class Button:
+            def __init__(self):
+                self.pressed = "false"
+                self.clicks = 0
+
+            @property
+            def first(self):
+                return self
+
+            def get_attribute(self, name):
+                return self.pressed if name == "aria-pressed" else None
+
+            def click(self, timeout=None):
+                self.clicks += 1
+                self.pressed = "true" if self.pressed == "false" else "false"
+
+        class Page:
+            def __init__(self):
+                self.button = Button()
+
+            def get_by_role(self, role, name):
+                assert role == "button" and name.match("Raise")
+                return self.button
+
+        page = Page()
+        calls = []
+        with patch.object(devenv, "teams_control",
+                               side_effect=lambda *args, **_: calls.append(args)), \
+                patch.object(devenv, "desktop_set_muted",
+                                  side_effect=lambda muted: calls.append(("muted", muted))):
+            devenv.run_action({"action": "raise-hand", "speaker": "kim"}, {"kim": page})
+            devenv.run_action({"action": "raise-hand", "speaker": "kim"}, {"kim": page})
+            devenv.run_action({"action": "teams-view", "view": "chat"}, {})
+            devenv.run_action({"action": "teams-view", "view": "meeting"}, {})
+            devenv.run_action({"action": "lower-hand", "speaker": "kim"}, {"kim": page})
+            devenv.run_action({"action": "mute"}, {})
+        self.assertEqual(page.button.clicks, 2, "Raising a raised hand changes nothing")
+        self.assertEqual(page.button.pressed, "false")
+        self.assertEqual(calls[0][0], "raise")
+        self.assertEqual(calls[1][0], "minimize")
+        self.assertEqual(calls[2], ("raise", "--meeting"))
+        self.assertEqual(calls[3], ("muted", True))
+        truth = {"events": [{"at": 1, "clip": "a.wav", "speaker": "kim"},
+                            {"at": 2, "action": "raise-hand", "speaker": "kim"}]}
+        self.assertEqual(devenv.guest_plan(truth, "kim"), [{"id": "a.wav", "at": 1}])
+
     def test_muted_speech_plays_but_is_absent_from_the_expected_recording(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
