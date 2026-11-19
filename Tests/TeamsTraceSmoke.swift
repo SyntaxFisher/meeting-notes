@@ -19,6 +19,7 @@ enum TeamsTraceSmoke {
     testReplayTiming()
     testOutgoingCall()
     testEverydayReplay()
+    testFrozenMeetingWindowReplay()
     try testEmptySpeakerReplay(root.appendingPathComponent("empty-speakers"))
     testWindowNumbers()
     print("Teams trace: deduplicated, exported with prior state, bounded, replayed: OK")
@@ -106,6 +107,62 @@ enum TeamsTraceSmoke {
       TeamsMuteClassifier.reading(mute, tracker: &full)
         == TeamsMuteClassifier.reading(tracedMute, tracker: &replayed),
       "The traced mute input reads like the full one")
+  }
+
+  /// A student asks a question with a raised hand, then another app covers the meeting window.
+  /// The meeting window keeps showing the student framed for minutes while the lecturer talks;
+  /// the compact view, whenever Teams lists it, frames the lecturer.
+  private static func testFrozenMeetingWindowReplay() {
+    func tile(_ text: String) -> TeamsAXItem {
+      .init(role: "AXMenuItem", text: text + ", Context menu is available")
+    }
+    let student = "Kim Weber - A25"
+    let asking = [
+      TeamsAXItem(role: "AXButton", text: "Leave"),
+      tile("Robin Lehmann, video is on"),
+      tile("\(student), hand raised"),
+      .init(role: "frame", text: student), .init(role: "frame", text: student),
+    ]
+    func input(covered: Bool, compact: Bool) -> [String: Any] {
+      var windows = [
+        TeamsParticipantWindowInput(
+          id: 2, title: "Lecture | Microsoft Teams", main: true,
+          visibility: covered ? .covered : .visible, items: asking)
+      ]
+      if compact {
+        windows.append(
+          TeamsParticipantWindowInput(
+            id: 3, title: "Meeting compact view | Lecture", main: false, visibility: .visible,
+            items: [
+              .init(role: "AXButton", text: "Leave"),
+              .init(role: TeamsParticipantParser.stageTileRole, text: "Robin Lehmann"),
+              .init(role: "frame", text: "Robin Lehmann"),
+            ]))
+      }
+      return encoded(TeamsParticipantInput(windows: windows))
+    }
+    var lines: [String] = []
+    func at(_ t: Double, _ kind: String, _ fields: [String: Any] = [:]) {
+      lines.append(line(["k": kind, "t": t, "w": t + 1000].merging(fields) { $1 }))
+    }
+    at(100, "participants-input", input(covered: false, compact: false))
+    at(100, "participants-read")
+    at(101, "participants-input", input(covered: true, compact: false))
+    var time = 101.0
+    while time < 140 {
+      if time >= 110 && time < 112 {
+        at(time, "participants-input", input(covered: true, compact: true))
+      } else if time >= 112 && time < 113 {
+        at(time, "participants-input", input(covered: true, compact: false))
+      }
+      at(time, "participants-read")
+      time += 0.8
+    }
+    let result = TeamsReplay.replay(Data(lines.joined(separator: "\n").utf8))
+    let shown = result.speaking.intervals.map { "\($0.name) \(Int($0.start))-\(Int($0.end))" }
+    precondition(
+      shown == ["\(student) 100-100", "Robin Lehmann 110-111"],
+      "A frozen meeting window names nobody; only current windows do: \(shown)")
   }
 
   /// Ordinary sessions in the order the app writes them: each reading, then the evaluation it

@@ -191,10 +191,10 @@ final class TeamsBackgroundReader: @unchecked Sendable {
       AppLog.event("teams.slowRead", String(format: "participants=%.1fs", snapshotSeconds))
     }
     guard let snapshot else { return }
-    if let speaker = snapshot.speaker {
+    if let speakers = snapshot.speakers {
       // The host clock times the capture tracks, so the helper can align these readings.
-      current.speaking.observe(speaker, at: ProcessInfo.processInfo.systemUptime)
-      current.speakingUnwritten = current.speakingUnwritten || speaker != nil
+      current.speaking.observe(speakers, at: ProcessInfo.processInfo.systemUptime)
+      current.speakingUnwritten = current.speakingUnwritten || !speakers.isEmpty
       if current.speakingUnwritten, now.timeIntervalSince(current.speakingWritten) >= 5 {
         writeSpeaking(current)
         current.speakingWritten = now

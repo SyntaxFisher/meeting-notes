@@ -5,8 +5,11 @@ import Foundation
 /// Teams marks the active speaker about a second after speech starts and keeps the mark about
 /// two seconds after it ends, and the app reads the mark every 0.8 s, so each reading interval
 /// is moved earlier before it is compared with the transcript. A remote turn takes the name that
-/// covers much of it and clearly outweighs any other. A turn without such evidence takes the
-/// name that dominates its voice, the diarizer's cluster, across the meeting.
+/// covers much of it and clearly outweighs any other. When Teams framed several participants
+/// and none outweighs the others, a name whose indicator switched on for the turn wins over
+/// indicators still on, or back on after a moment, from earlier speech. A turn without such
+/// evidence takes the name that dominates its voice, the diarizer's cluster, across the
+/// meeting.
 ///
 /// Voice evidence then names turns these readings leave anonymous when Teams and the voice
 /// agree without contradiction, and replaces a reading only when the voice clearly contradicts
@@ -23,6 +26,9 @@ enum SpeakerNaming {
   /// speech that must be named at all.
   static let voiceShare = 0.7
   static let voiceCoverage = 0.25
+  /// An indicator back this soon after the same name's last one resumed it: Teams keeps a
+  /// frame about two seconds after speech, and readings briefly lose sight of the meeting.
+  static let resumeGap = 5.0
 
   /// The name for each segment, or nil. `timeline` is on the segments' timeline; names in
   /// `excluded` (the local participant, whose voice is not in the Teams audio) are ignored.
@@ -57,12 +63,19 @@ enum SpeakerNaming {
     excluded: [String] = []
   ) -> [String?] {
     let excludedKeys = Set(excluded.map(key))
-    let intervals = timeline.intervals.filter { !excludedKeys.contains(key($0.name)) }.map {
-      interval -> SpeakingTimeline.Interval in
+    let raw = timeline.intervals.filter { !excludedKeys.contains(key($0.name)) }
+    let intervals = raw.map { interval -> SpeakingTimeline.Interval in
       let start = interval.start - onsetDelay
       return .init(
         name: interval.name, start: start,
         end: max(start + minimumInterval, interval.end - releaseDelay))
+    }
+    // Indicators that switched on rather than resumed shortly after the same name's last one.
+    let switchedOn = raw.indices.map { index in
+      !raw.indices.contains { other in
+        other != index && raw[other].name == raw[index].name && raw[other].start < raw[index].start
+          && raw[index].start - raw[other].end <= resumeGap
+      }
     }
     let remote = segments.map { $0.source == .teams }
     guard !intervals.isEmpty, remote.contains(true) else { return segments.map { _ in nil } }
@@ -92,11 +105,19 @@ enum SpeakerNaming {
     return segments.enumerated().map { index, segment in
       guard remote[index] else { return nil }
       let ranked = coverage[index].sorted { $0.value > $1.value }
-      if let first = ranked.first, first.value >= turnCoverage * duration(segment),
-        ranked.count == 1 || first.value >= dominance * ranked[1].value
+      let covering = ranked.filter { $0.value >= turnCoverage * duration(segment) }
+      if let first = covering.first, ranked.count == 1 || first.value >= dominance * ranked[1].value
       {
         return first.key
       }
+      let fresh = covering.filter { name, _ in
+        intervals.indices.contains { interval in
+          intervals[interval].name == name && switchedOn[interval]
+            && intervals[interval].start >= segment.start - SpeakerFusion.onsetLead
+            && intervals[interval].start < segment.end
+        }
+      }
+      if fresh.count == 1, covering.count > 1 { return fresh[0].key }
       return voiceNames[segment.speaker]
     }
   }

@@ -4,6 +4,7 @@ enum SpeakerIdentitySmoke {
   static func run() throws {
     testParticipantParser()
     testSpeakingParser()
+    testSpeakingFrames()
     testRoster()
     testGuestBadgeChange()
     testComposer()
@@ -63,7 +64,8 @@ enum SpeakerIdentitySmoke {
         "AXMenuItem",
         "Demo, Jan (Engineering), Videoverbindung wird wiederhergestellt, Angeheftet, "
           + "Hand erhoben, Kontextmenü ist verfügbar")
-        == TeamsParticipantSighting(name: "Demo, Jan (Engineering)", source: .tile))
+        == TeamsParticipantSighting(
+          name: "Demo, Jan (Engineering)", handRaised: true, source: .tile))
     precondition(
       parse(TeamsParticipantParser.stageTileRole, "Sam Carter, Poor network quality, Pinned")?
         .name == "Sam Carter")
@@ -127,23 +129,24 @@ enum SpeakerIdentitySmoke {
     let compact = Reading(isMeeting: true, labels: [.speaking("Sam Carter")])
     precondition(
       TeamsParticipantReader.combine([gallery], hidden: false)
-        == TeamsMeetingSnapshot(participants: [anna], speaker: .some("Anna Schmidt")))
+        == TeamsMeetingSnapshot(participants: [anna], speakers: ["Anna Schmidt"]))
     precondition(
-      TeamsParticipantReader.combine([gallery, compact], hidden: false).speaker
-        == .some("Sam Carter"),
+      TeamsParticipantReader.combine([gallery, compact], hidden: false).speakers
+        == ["Sam Carter"],
       "The compact view follows the call while the gallery keeps its last frame")
     precondition(
       TeamsParticipantReader.combine([gallery, compact], hidden: false).participants == [anna])
     precondition(
       TeamsParticipantReader.combine([Reading(isMeeting: true, sightings: [anna])], hidden: false)
-        .speaker == .some(nil))
+        .speakers == [])
     precondition(
-      TeamsParticipantReader.combine([gallery, compact], hidden: true).speaker == nil,
+      TeamsParticipantReader.combine([gallery, compact], hidden: true).speakers == nil,
       "A hidden Teams shows no current speaker")
     precondition(
       TeamsParticipantReader.combine(
         [Reading(isMeeting: true, framed: ["Anna Schmidt", "Sam Carter"])], hidden: false
-      ).speaker == nil)
+      ).speakers == ["Anna Schmidt", "Sam Carter"],
+      "Overlapping frames name everyone framed")
     precondition(TeamsParticipantReader.combine([], hidden: false) == TeamsMeetingSnapshot())
     precondition(
       TeamsParticipantReader.combine(
@@ -199,19 +202,146 @@ enum SpeakerIdentitySmoke {
       "The compact view of a 1:1 call names the other person: \(callRoster)")
 
     var timeline = SpeakingTimeline()
-    precondition(timeline.observe("Anna", at: 10))
-    precondition(!timeline.observe("Anna", at: 10.8))
-    precondition(!timeline.observe("Anna", at: 11.6))
-    precondition(!timeline.observe(nil, at: 12.4))
-    precondition(timeline.observe("Anna", at: 13.2), "Nobody speaking ends an interval")
-    precondition(timeline.observe("Sam", at: 14))
-    precondition(timeline.observe("Sam", at: 20), "A gap in the readings ends an interval")
+    precondition(timeline.observe(["Anna"], at: 10))
+    precondition(!timeline.observe(["Anna"], at: 10.8))
+    precondition(!timeline.observe(["Anna"], at: 11.6))
+    precondition(!timeline.observe([], at: 12.4))
+    precondition(timeline.observe(["Anna"], at: 13.2), "Nobody speaking ends an interval")
+    precondition(timeline.observe(["Sam"], at: 14))
+    precondition(timeline.observe(["Sam"], at: 20), "A gap in the readings ends an interval")
+    precondition(
+      timeline.observe(["Sam", "Anna"], at: 20.8), "A second frame opens its own interval")
+    precondition(!timeline.observe(["Anna", "Sam", "Anna"], at: 21.6))
+    precondition(!timeline.observe(["Sam"], at: 22.4))
     precondition(
       timeline.intervals.map { "\($0.name) \($0.start)-\($0.end)" }
-        == ["Anna 10.0-11.6", "Anna 13.2-13.2", "Sam 14.0-14.0", "Sam 20.0-20.0"])
+        == [
+          "Anna 10.0-11.6", "Anna 13.2-13.2", "Sam 14.0-14.0", "Sam 20.0-22.4", "Anna 20.8-21.6",
+        ], "\(timeline.intervals)")
     let decoded = try! JSONDecoder().decode(
       SpeakingTimeline.self, from: JSONEncoder().encode(timeline))
     precondition(decoded == timeline)
+  }
+
+  /// Frames Teams draws for raised hands and frames frozen in a meeting window Teams stopped
+  /// updating, as a lecture recording showed them: a student who kept a hand raised read as
+  /// speaking for minutes while the lecturer spoke.
+  private static func testSpeakingFrames() {
+    func tile(_ text: String) -> TeamsAXItem {
+      .init(role: "AXMenuItem", text: text + ", Context menu is available")
+    }
+    func frame(_ name: String) -> TeamsAXItem { .init(role: "frame", text: name) }
+    let leave = TeamsAXItem(role: "AXButton", text: "Leave")
+    func speakers(_ windows: [TeamsParticipantWindowInput]) -> [String]? {
+      TeamsParticipantReader.snapshot(.init(windows: windows))?.speakers
+    }
+    func meeting(
+      _ items: [TeamsAXItem], visibility: TeamsWindowVisibility? = .visible,
+      minimized: Bool = false, main: Bool = true
+    ) -> TeamsParticipantWindowInput {
+      .init(
+        id: 1, title: "Lecture | Microsoft Teams", minimized: minimized, main: main,
+        visibility: visibility, items: [leave] + items)
+    }
+    let lecturer = tile("Robin Lehmann, video is on, Has control of production tools")
+    let raised = tile("Kim Weber - A25, Has control of production tools, muted, hand raised")
+    let raisedUnmuted = tile("Kim Weber - A25, Has control of production tools, hand raised")
+    precondition(
+      TeamsParticipantParser.parse(role: "AXMenuItem", description: raised.text)?.handRaised
+        == true
+        && TeamsParticipantParser.parse(
+          role: "AXMenuItem", description: "Muster, Léa, Hand erhoben, Kontextmenü ist verfügbar"
+        )?.handRaised == true
+        && TeamsParticipantParser.parse(role: "AXMenuItem", description: lecturer.text)?
+          .handRaised == false
+    )
+    precondition(
+      speakers([meeting([lecturer, frame("Robin Lehmann"), raised, frame("Kim Weber - A25")])])
+        == ["Robin Lehmann"],
+      "A raised hand's frame is not speech")
+    precondition(
+      speakers([meeting([lecturer, raisedUnmuted, frame("Kim Weber - A25")])]) == [],
+      "Unmuted with a raised hand and one frame is still only the hand")
+    precondition(
+      speakers([
+        meeting([lecturer, raisedUnmuted, frame("Kim Weber - A25"), frame("Kim Weber - A25")])
+      ]) == ["Kim Weber - A25"],
+      "A second frame on a tile with a raised hand is speech")
+    precondition(
+      speakers([
+        meeting([
+          tile("Kim Weber - A25"), frame("Kim Weber - A25"), raised, frame("Kim Weber - A25"),
+        ])
+      ]) == ["Kim Weber - A25"],
+      "Frames count per tile, so the same person's second tile does not borrow the hand")
+
+    let asking = [lecturer, raisedUnmuted, frame("Kim Weber - A25"), frame("Kim Weber - A25")]
+    let chat = TeamsParticipantWindowInput(
+      id: 2, title: "Chat | Microsoft Teams", main: true, visibility: .visible)
+    for visibility in [TeamsWindowVisibility.covered, .hidden, .frozen] {
+      precondition(
+        speakers([meeting(asking, visibility: visibility), chat]) == nil,
+        "A \(visibility) meeting window shows no current speaker")
+    }
+    precondition(
+      speakers([meeting(asking, main: false), chat]) == ["Kim Weber - A25"],
+      "A visible meeting window behind Teams chat stays current")
+    let compact = TeamsParticipantWindowInput(
+      id: 3, title: "Meeting compact view | Lecture", visibility: .visible,
+      items: [
+        leave, .init(role: TeamsParticipantParser.stageTileRole, text: "Robin Lehmann"),
+        frame("Robin Lehmann"),
+      ])
+    precondition(
+      speakers([compact, meeting(asking, visibility: .covered), chat]) == ["Robin Lehmann"],
+      "The compact view follows the call while the meeting window is covered")
+    precondition(
+      speakers([meeting([lecturer, frame("Robin Lehmann")], minimized: true)]) == nil,
+      "A minimized meeting window shows no current speaker")
+    precondition(
+      speakers([meeting([lecturer, frame("Robin Lehmann")], visibility: nil)])
+        == ["Robin Lehmann"],
+      "A window read without its visibility counts as current")
+    let traced = TeamsParticipantInput(windows: [meeting(asking, visibility: .covered)]).traced
+    precondition(
+      traced.windows?.first?.visibility == .covered
+        && traced.windows?.first?.items.filter({ $0.role == "frame" }).count == 2,
+      "The trace keeps the visibility and every frame, also of a window that is not current")
+
+    // Windows front to back in Accessibility coordinates; Teams is pid 7.
+    typealias Window = TeamsWindowOcclusion.Window
+    let meetingFrame = CGRect(x: 345, y: 50, width: 1228, height: 768)
+    let teamsMeeting = Window(owner: 7, layer: 0, frame: meetingFrame)
+    let dock = Window(owner: 2, layer: 20, frame: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+    let teamsChat = Window(
+      owner: 7, layer: 0, frame: CGRect(x: 0, y: 25, width: 1920, height: 1055))
+    let browser = Window(owner: 9, layer: 0, frame: CGRect(x: 0, y: 25, width: 1920, height: 1055))
+    func visibility(_ windows: [Window]) -> TeamsWindowVisibility {
+      TeamsWindowOcclusion.visibility(of: meetingFrame, owner: 7, in: windows)
+    }
+    precondition(visibility([dock, teamsMeeting]) == .visible, "The Dock's overlay covers nothing")
+    precondition(
+      visibility([teamsChat, teamsMeeting]) == .visible, "Teams' own windows do not count")
+    precondition(visibility([browser, teamsMeeting]) == .covered)
+    precondition(visibility([teamsMeeting, browser]) == .visible)
+    precondition(visibility([browser]) == .hidden, "A window not on screen is hidden")
+    let left = Window(owner: 9, layer: 0, frame: CGRect(x: 300, y: 0, width: 700, height: 900))
+    let right = Window(owner: 10, layer: 0, frame: CGRect(x: 1000, y: 0, width: 553, height: 900))
+    precondition(visibility([left, right, teamsMeeting]) == .visible, "A 20 point strip shows")
+    let rest = Window(owner: 10, layer: 0, frame: CGRect(x: 1550, y: 40, width: 40, height: 800))
+    precondition(
+      visibility([left, right, rest, teamsMeeting]) == .covered, "Two apps together cover")
+
+    var watch = TeamsClockWatch()
+    precondition(TeamsClockWatch.isClock("1:02:03") && !TeamsClockWatch.isClock("Leave"))
+    precondition(!watch.isStalled(window: 1, clock: "10:42", at: 0))
+    precondition(
+      !watch.isStalled(window: 1, clock: "10:42", at: 10), "A time that never ran is no clock")
+    precondition(!watch.isStalled(window: 1, clock: "10:43", at: 11))
+    precondition(!watch.isStalled(window: 1, clock: "10:43", at: 13.5))
+    precondition(watch.isStalled(window: 1, clock: "10:43", at: 14.5), "A running clock stopped")
+    precondition(!watch.isStalled(window: 1, clock: "10:57", at: 30), "It runs again")
+    precondition(!watch.isStalled(window: 2, clock: "10:57", at: 40), "Clocks are per window")
   }
 
   private static func testRoster() {
@@ -254,7 +384,7 @@ enum SpeakerIdentitySmoke {
         id: 1, items: [TeamsAXItem(role: "AXButton", text: "Leave")] + items)
       let snapshot = TeamsParticipantReader.snapshot(.init(windows: [window]))!
       roster.observe(snapshot.participants!, at: time)
-      if let speaker = snapshot.speaker { timeline.observe(speaker, at: time) }
+      if let speakers = snapshot.speakers { timeline.observe(speakers, at: time) }
     }
     func tile(_ label: String) -> TeamsAXItem {
       .init(role: "AXMenuItem", text: label + ", video is on, Context menu is available")
@@ -498,6 +628,19 @@ enum SpeakerIdentitySmoke {
       for: [segment(0, 6, "S1")],
       timeline: SpeakingTimeline(intervals: [shown("Anna", 0, 3), shown("Sam", 3, 6)]))
     precondition(contested == [nil], "Two names with similar evidence name nobody")
+    // One student's frame lingers, Teams is out of sight for a few seconds, and the frame comes
+    // back together with the next student's, who starts speaking; the lecturer's voice cluster
+    // covers both.
+    let handover = SpeakingTimeline(intervals: [
+      .init(name: "Kim", start: 100, end: 107.5), .init(name: "Kim", start: 111.9, end: 113.8),
+      .init(name: "Tom", start: 111.9, end: 113.8), .init(name: "Robin", start: 0, end: 90),
+    ])
+    let handoverNames = SpeakerNaming.names(
+      for: [segment(0, 80, "S1"), segment(104, 105, "S1"), segment(110.9, 112, "S1")],
+      timeline: handover)
+    precondition(
+      handoverNames == ["Robin", "Kim", "Tom"],
+      "An indicator that switched on wins over one that resumed: \(handoverNames)")
     precondition(
       SpeakerNaming.names(for: segments, timeline: SpeakingTimeline()).allSatisfy { $0 == nil })
 

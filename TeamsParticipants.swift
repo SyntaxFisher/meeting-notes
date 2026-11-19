@@ -9,6 +9,7 @@ struct TeamsParticipantSighting: Equatable {
   var tag: String? = nil
   var role: String? = nil
   var muted: Bool? = nil
+  var handRaised = false
   var isLocal = false
   var joined = false
   var left = false
@@ -56,6 +57,7 @@ enum TeamsParticipantParser {
     "warteschleife", "schlechte verbindung", "schlechte netzwerkqualität", "verbindungsproblem",
     "die verbindung ist schwach", "verbindung ist instabil",
   ]
+  private static let handRaisedStates: Set<String> = ["hand raised", "hand erhoben"]
   private static let localPrefixes = [
     "Myself video, ", "Video von mir selbst, ", "Eigenes Video, ",
   ]
@@ -118,10 +120,11 @@ enum TeamsParticipantParser {
     let nameParts = states.prefix { muteWords[$0.lowercased()] == nil && !isTileState($0) }
     let muted = states.dropFirst(nameParts.count).lazy.compactMap { muteWords[$0.lowercased()] }
       .first
+    let handRaised = states.contains { handRaisedStates.contains($0.lowercased()) }
     let (name, tag) = splitTag(nameParts.joined(separator: ", "))
     guard isName(name) else { return nil }
     return TeamsParticipantSighting(
-      name: name, tag: tag, muted: muted, isLocal: isLocal, source: .tile)
+      name: name, tag: tag, muted: muted, handRaised: handRaised, isLocal: isLocal, source: .tile)
   }
 
   private static func notice(_ text: String) -> TeamsParticipantSighting? {
@@ -163,12 +166,19 @@ enum TeamsParticipantParser {
   }
 }
 
-/// Who Teams shows as speaking. Teams draws a frame around the active speaker's video tile
-/// (`vdi-frame-occlusion`, also while other apps cover the meeting window) and labels the
+/// Who Teams shows as speaking. Teams draws a frame (`vdi-frame-occlusion`) around the active
+/// speaker's video tile, and another one of the same kind around a tile with a raised hand,
+/// so a tile with a raised hand speaks only while it has a second frame. Teams labels the
 /// compact meeting view it opens when the meeting window is minimized or replaced by another
-/// Teams view ("Anna Schmidt (Guest) is speaking", "Niemand spricht."). Both stay readable
-/// through Accessibility while Teams is in the background. Teams highlights the voice it hears,
-/// so the label trails speech by a second or two and briefly misses rapid exchanges.
+/// Teams view ("Anna Schmidt (Guest) is speaking", "Niemand spricht."). Teams highlights the
+/// voice it hears, so the label trails speech by a second or two and briefly misses rapid
+/// exchanges.
+///
+/// Teams stops updating a window macOS reports as not visible: minimized, on another desktop,
+/// or completely covered by other apps' windows; Teams' own windows do not count. Such a
+/// window keeps showing its last state, frames included, for as long as it stays hidden, and
+/// Teams opens the compact view, which follows the call, while the meeting window is hidden
+/// (`TeamsWindowVisibility`).
 enum TeamsSpeakingParser {
   static let speakingFrameClass = "vdi-frame-occlusion"
   private static let speakingSuffixes = [" is speaking", " spricht.", " spricht"]
@@ -217,6 +227,95 @@ enum TeamsSpeakingParser {
   }
 }
 
+/// Whether macOS shows a Teams window, from the on-screen window list (front to back, in the
+/// global top-left coordinates Accessibility uses). Only other apps' ordinary windows cover a
+/// window; system overlays such as the Dock's span the screen without hiding anything.
+enum TeamsWindowOcclusion {
+  struct Window: Equatable {
+    var owner: pid_t
+    var layer: Int
+    var frame: CGRect
+  }
+
+  static func onScreenWindows() -> [Window] {
+    let list =
+      CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+      as? [[String: Any]] ?? []
+    return list.compactMap { info in
+      guard let owner = info[kCGWindowOwnerPID as String] as? pid_t,
+        let layer = info[kCGWindowLayer as String] as? Int,
+        (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+        let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+        let frame = CGRect(dictionaryRepresentation: bounds)
+      else { return nil }
+      return Window(owner: owner, layer: layer, frame: frame)
+    }
+  }
+
+  /// `frame` is the window's Accessibility frame; a window macOS does not list on screen at
+  /// that frame is hidden.
+  static func visibility(of frame: CGRect, owner: pid_t, in windows: [Window])
+    -> TeamsWindowVisibility
+  {
+    guard
+      let index = windows.firstIndex(where: {
+        $0.owner == owner && abs($0.frame.minX - frame.minX) <= 2
+          && abs($0.frame.minY - frame.minY) <= 2 && abs($0.frame.width - frame.width) <= 2
+          && abs($0.frame.height - frame.height) <= 2
+      })
+    else { return .hidden }
+    var visible = [windows[index].frame]
+    for window in windows[..<index] where window.owner != owner && window.layer == 0 {
+      visible = visible.flatMap { subtract(window.frame, from: $0) }
+      if visible.isEmpty { return .covered }
+    }
+    return .visible
+  }
+
+  /// The parts of `rect` outside `cut`, as up to four rectangles.
+  static func subtract(_ cut: CGRect, from rect: CGRect) -> [CGRect] {
+    let overlap = rect.intersection(cut)
+    guard !overlap.isNull, overlap.width > 0, overlap.height > 0 else { return [rect] }
+    return [
+      CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: overlap.minY - rect.minY),
+      CGRect(x: rect.minX, y: overlap.maxY, width: rect.width, height: rect.maxY - overlap.maxY),
+      CGRect(
+        x: rect.minX, y: overlap.minY, width: overlap.minX - rect.minX, height: overlap.height),
+      CGRect(
+        x: overlap.maxX, y: overlap.minY, width: rect.maxX - overlap.maxX, height: overlap.height),
+    ].filter { $0.width >= 1 && $0.height >= 1 }
+  }
+}
+
+/// Notices a Teams window whose call clock stopped. A live meeting window advances its clock
+/// every second; a window Teams stopped updating keeps the last time. Only a clock seen
+/// advancing counts, so another time on screen, such as a chat timestamp, never does.
+struct TeamsClockWatch {
+  /// Longer than a clock tick plus a slow reading.
+  static let stall = 3.0
+  private var clocks: [Int: (text: String, since: Double, advanced: Bool)] = [:]
+
+  static func isClock(_ text: String) -> Bool {
+    text.range(of: #"^\d{1,2}:\d{2}(?::\d{2})?$"#, options: .regularExpression) != nil
+  }
+
+  mutating func isStalled(window: Int, clock: String?, at time: Double) -> Bool {
+    guard let clock else {
+      clocks[window] = nil
+      return false
+    }
+    guard let last = clocks[window] else {
+      clocks[window] = (clock, time, false)
+      return false
+    }
+    if last.text != clock {
+      clocks[window] = (clock, time, true)
+      return false
+    }
+    return last.advanced && time - last.since > Self.stall
+  }
+}
+
 /// When Teams showed each remote participant as the active speaker during one recording, in
 /// seconds on the host clock that also times the capture tracks (`capture.json`). The
 /// transcription helper reads it as `speaking.json` to name remote voices.
@@ -228,8 +327,10 @@ struct SpeakingTimeline: Codable, Equatable {
     var end: Double
   }
 
+  /// One interval per participant and stretch of readings; intervals of different
+  /// participants overlap where Teams framed several tiles at once.
   var intervals: [Interval] = []
-  private var lastReading: (name: String?, time: Double)?
+  private var lastReading: (names: Set<String>, time: Double)?
 
   /// Readings further apart than this do not join: Teams could not be read in between.
   static let maximumGap = 3.0
@@ -242,20 +343,25 @@ struct SpeakingTimeline: Codable, Equatable {
     left.intervals == right.intervals
   }
 
-  /// Merges one reading at `time`; `speaker` nil means Teams showed nobody speaking. Returns
-  /// whether a new interval started.
+  /// Merges one reading at `time` of everyone Teams showed speaking; none means nobody.
+  /// Returns whether a new interval started.
   @discardableResult
-  mutating func observe(_ speaker: String?, at time: Double) -> Bool {
-    defer { lastReading = (speaker, time) }
-    if let speaker, let last = lastReading, last.name == speaker, time >= last.time,
-      time - last.time <= Self.maximumGap, intervals.last?.name == speaker
-    {
-      intervals[intervals.count - 1].end = time
-      return false
+  mutating func observe(_ speakers: [String], at time: Double) -> Bool {
+    var names = Set<String>()
+    defer { lastReading = (names, time) }
+    var started = false
+    for name in speakers where names.insert(name).inserted {
+      if let last = lastReading, last.names.contains(name), time >= last.time,
+        time - last.time <= Self.maximumGap,
+        let index = intervals.lastIndex(where: { $0.name == name })
+      {
+        intervals[index].end = time
+      } else {
+        intervals.append(Interval(name: name, start: time, end: time))
+        started = true
+      }
     }
-    guard let speaker else { return false }
-    intervals.append(Interval(name: speaker, start: time, end: time))
-    return true
+    return started
   }
 }
 
@@ -348,9 +454,9 @@ struct ParticipantRoster: Codable, Equatable {
 struct TeamsMeetingSnapshot: Equatable {
   /// Participants in the meeting window; nil when there is no single meeting.
   var participants: [TeamsParticipantSighting]?
-  /// Who Teams shows as speaking: a name, `.some(nil)` for nobody, nil when Teams shows no
-  /// current speaker indication.
-  var speaker: String??
+  /// Everyone Teams shows as speaking, empty for nobody, nil when Teams shows no current
+  /// speaker indication.
+  var speakers: [String]?
 }
 
 /// One element the participant reader uses, in document order: a button title, a speaking
@@ -361,11 +467,22 @@ struct TeamsAXItem: Codable, Equatable {
   var text: String
 }
 
-/// One Teams window as the participant reader read it.
+/// Whether a Teams window shows the call as it is now. Teams stops updating a `hidden` window
+/// (not on screen: minimized, on another desktop, or Teams hidden) and a `covered` one, which
+/// other apps' windows cover completely. A `frozen` window's call clock stopped although it
+/// ran before, whatever the reason.
+enum TeamsWindowVisibility: String, Codable {
+  case visible, covered, hidden, frozen
+}
+
+/// One Teams window as the participant reader read it: whether it is Teams' main window and
+/// how visible it was, nil where not read.
 struct TeamsParticipantWindowInput: Codable, Equatable {
   var id: Int
   var title: String?
   var minimized = false
+  var main: Bool? = nil
+  var visibility: TeamsWindowVisibility? = nil
   var items: [TeamsAXItem] = []
 }
 
@@ -408,8 +525,10 @@ enum TeamsParticipantReader {
     var isMeeting = false
     var isCompactView = false
     var sightings: [TeamsParticipantSighting] = []
-    /// Tiles framed as the active speaker; only collected from a window Teams keeps current.
-    var framed: Set<String> = []
+    /// Whether the window shows the call as it is now, so its frames tell who speaks.
+    var framesAreCurrent = true
+    /// Tiles framed as speaking, in document order.
+    var framed: [String] = []
     var labels: [TeamsSpeakingParser.Label] = []
   }
 
@@ -422,7 +541,7 @@ enum TeamsParticipantReader {
       "participants",
       [
         "count": snapshot?.participants?.count ?? -1,
-        "speaker": snapshot?.speaker.map { $0 ?? "" } ?? NSNull(),
+        "speakers": snapshot?.speakers ?? NSNull(),
       ])
     TeamsTrace.shared.record("participants-read", always: true, [:])
     return snapshot
@@ -433,7 +552,8 @@ enum TeamsParticipantReader {
     guard let windows = input.windows else { return nil }
     return combine(
       windows.map {
-        var reading = reading($0.items, framesAreCurrent: !$0.minimized)
+        var reading = reading(
+          $0.items, framesAreCurrent: !$0.minimized && ($0.visibility ?? .visible) == .visible)
         reading.isCompactView = TeamsMuteClassifier.isCompactView($0.title)
         return reading
       }, hidden: input.hidden)
@@ -451,17 +571,42 @@ enum TeamsParticipantReader {
     guard let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) else {
       return TeamsParticipantInput()
     }
-    // Teams keeps the speaking frame current in a meeting window behind other apps, but not in
-    // a minimized window or while Teams is hidden.
+    let onScreen = TeamsWindowOcclusion.onScreenWindows()
+    let now = ProcessInfo.processInfo.systemUptime
     return TeamsParticipantInput(
       hidden: attribute(application, kAXHiddenAttribute) ?? false,
       windows: windows.map { window in
+        let id = TeamsWindowRegistry.shared.id(of: window)
         let minimized: Bool = attribute(window, kAXMinimizedAttribute) ?? false
+        let items = items(of: window)
+        var visibility =
+          minimized
+          ? .hidden
+          : frame(of: window).map {
+            TeamsWindowOcclusion.visibility(of: $0, owner: app.processIdentifier, in: onScreen)
+          }
+        let clock = items.first { $0.role == "AXStaticText" && TeamsClockWatch.isClock($0.text) }
+        if clockWatch.isStalled(window: id, clock: clock?.text, at: now), visibility == .visible {
+          visibility = .frozen
+        }
         return TeamsParticipantWindowInput(
-          id: TeamsWindowRegistry.shared.id(of: window),
-          title: attribute(window, kAXTitleAttribute), minimized: minimized,
-          items: items(of: window, frames: !minimized))
+          id: id, title: attribute(window, kAXTitleAttribute), minimized: minimized,
+          main: attribute(window, kAXMainAttribute) ?? false, visibility: visibility,
+          items: items)
       })
+  }
+
+  /// Read only from the reader's queue.
+  nonisolated(unsafe) private static var clockWatch = TeamsClockWatch()
+
+  private static func frame(of window: AXUIElement) -> CGRect? {
+    var origin = CGPoint.zero
+    var size = CGSize.zero
+    guard let position: AXValue = attribute(window, kAXPositionAttribute),
+      let extent: AXValue = attribute(window, kAXSizeAttribute),
+      AXValueGetValue(position, .cgPoint, &origin), AXValueGetValue(extent, .cgSize, &size)
+    else { return nil }
+    return CGRect(origin: origin, size: size)
   }
 
   /// Teams can show one meeting in two windows: the meeting window with participant tiles and,
@@ -481,13 +626,15 @@ enum TeamsParticipantReader {
     if let label = meetings.lazy.compactMap(\.labels.last).first {
       switch label {
       case .speaking(let name):
-        return TeamsMeetingSnapshot(participants: participants, speaker: .some(name))
-      case .nobody: return TeamsMeetingSnapshot(participants: participants, speaker: .some(nil))
+        return TeamsMeetingSnapshot(participants: participants, speakers: [name])
+      case .nobody: return TeamsMeetingSnapshot(participants: participants, speakers: [])
       }
     }
-    let framed = meetings.reduce(into: Set<String>()) { $0.formUnion($1.framed) }
-    guard framed.count <= 1 else { return TeamsMeetingSnapshot(participants: participants) }
-    return TeamsMeetingSnapshot(participants: participants, speaker: .some(framed.first))
+    let current = meetings.filter(\.framesAreCurrent)
+    guard !current.isEmpty else { return TeamsMeetingSnapshot(participants: participants) }
+    var framed: [String] = []
+    for name in current.flatMap(\.framed) where !framed.contains(name) { framed.append(name) }
+    return TeamsMeetingSnapshot(participants: participants, speakers: framed)
   }
 
   static let textRoles: Set<String> = ["AXRow", "AXGroup", "AXMenuItem", "AXImage", "AXStaticText"]
@@ -495,14 +642,26 @@ enum TeamsParticipantReader {
   /// What one window's items show. Children follow their parent in document order, so section
   /// headers precede their rows.
   static func reading(_ items: [TeamsAXItem], framesAreCurrent: Bool) -> WindowReading {
-    var reading = WindowReading()
+    var reading = WindowReading(framesAreCurrent: framesAreCurrent)
     var inMeetingSection = true
+    // The tile whose frames follow, and how many frames it has.
+    var tile: (name: String, handRaised: Bool, frames: Int)?
+    func closeTile() {
+      if let tile, tile.frames > (tile.handRaised ? 1 : 0), !reading.framed.contains(tile.name) {
+        reading.framed.append(tile.name)
+      }
+      tile = nil
+    }
     for item in items {
       switch item.role {
       case "AXButton":
         if TeamsMuteClassifier.isMeetingControl([item.text]) { reading.isMeeting = true }
       case "frame":
-        if framesAreCurrent { reading.framed.insert(item.text) }
+        if tile?.name != item.text {
+          closeTile()
+          tile = (item.text, false, 0)
+        }
+        tile?.frames += 1
       default:
         if let present = TeamsParticipantParser.section(item.text) {
           inMeetingSection = present
@@ -510,18 +669,23 @@ enum TeamsParticipantReader {
           role: item.role, description: item.text)
         {
           if sighting.source != .roster || inMeetingSection { reading.sightings.append(sighting) }
+          if sighting.source == .tile, !sighting.isLocal {
+            closeTile()
+            tile = (sighting.name, sighting.handRaised, 0)
+          }
         } else if item.role == "AXGroup", let label = TeamsSpeakingParser.label(item.text) {
           reading.labels.append(label)
         }
       }
     }
+    closeTile()
+    if !framesAreCurrent { reading.framed = [] }
     return reading
   }
 
-  /// The window's items in document order, with speaking `frames` only where Teams keeps them
-  /// current. A frame belongs to the remote participant whose tile encloses it; your own tile
-  /// never names a voice in the Teams audio.
-  private static func items(of window: AXUIElement, frames: Bool) -> [TeamsAXItem] {
+  /// The window's items in document order, with every frame inside a remote participant's
+  /// tile; your own tile never names a voice in the Teams audio.
+  private static func items(of window: AXUIElement) -> [TeamsAXItem] {
     var items: [TeamsAXItem] = []
     var pending: [(element: AXUIElement, tile: String?, onStage: Bool)] = [(window, nil, false)]
     var visited = 0
@@ -540,7 +704,7 @@ enum TeamsParticipantReader {
       {
         items.append(TeamsAXItem(role: role, text: title))
       }
-      if frames, let tile, role == "AXGroup",
+      if let tile, role == "AXGroup",
         let classes: [String] = attribute(element, "AXDOMClassList"),
         classes.contains(TeamsSpeakingParser.speakingFrameClass)
       {

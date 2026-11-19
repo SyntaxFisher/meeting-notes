@@ -56,7 +56,7 @@ enum TeamsReplay {
     }.sorted { ($0["w"] as? Double ?? 0) < ($1["w"] as? Double ?? 0) }
     let tracesCommands = lines.contains { $0["k"] as? String == "command" }
     var process: Int?
-    var currentSpeaker: String??
+    var currentSpeakers: [String]?
     var result = Result()
     var tracker = TeamsMeetingWindowTracker<Int>()
     var policy = TeamsAutoRecordPolicy()
@@ -65,7 +65,7 @@ enum TeamsReplay {
     var canStart: Bool?
     var replayedState: String?
     var recordedState: String?
-    var replayedSpeaker: String??
+    var replayedSpeakers: [String]?
     var recordedSpeaker: String?
     var open: Int?
     var recordedOpen: Int?
@@ -98,10 +98,10 @@ enum TeamsReplay {
       policy.recordingEnded()
     }
 
-    func noteSpeaker(_ speaker: String?, at time: Double) {
-      guard speaker != replayedSpeaker else { return }
-      result.replayed.speakers.append(Step(t: time, value: speaker ?? ""))
-      replayedSpeaker = speaker
+    func noteSpeakers(_ speakers: [String], at time: Double) {
+      guard speakers != replayedSpeakers else { return }
+      result.replayed.speakers.append(Step(t: time, value: speakers.joined(separator: " + ")))
+      replayedSpeakers = speakers
     }
 
     for line in lines {
@@ -197,16 +197,19 @@ enum TeamsReplay {
         }
       case "participants-input":
         guard let input = decode(TeamsParticipantInput.self, line) else { continue }
-        currentSpeaker = TeamsParticipantReader.snapshot(input)?.speaker
+        currentSpeakers = TeamsParticipantReader.snapshot(input)?.speakers
       case "participants-read":
         result.participantReadings += 1
-        guard let speaker = currentSpeaker else { continue }
-        result.speaking.observe(speaker, at: time)
-        noteSpeaker(speaker, at: time)
+        guard let speakers = currentSpeakers else { continue }
+        result.speaking.observe(speakers, at: time)
+        noteSpeakers(speakers, at: time)
       case "participants":
-        if let speaker = line["speaker"] as? String, speaker != recordedSpeaker {
-          result.recorded.speakers.append(Step(t: time, value: speaker))
-          recordedSpeaker = speaker
+        if let speakers = line["speakers"] as? [String] {
+          let value = speakers.joined(separator: " + ")
+          if value != recordedSpeaker {
+            result.recorded.speakers.append(Step(t: time, value: value))
+            recordedSpeaker = value
+          }
         }
       default: break
       }
