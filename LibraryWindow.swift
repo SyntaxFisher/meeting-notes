@@ -396,10 +396,17 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
   let model: LibraryModel
   private var window: NSWindow?
   private var refreshTimer: Timer?
+  private var spaceMonitor: Any?
 
   init(model: LibraryModel) {
     self.model = model
     super.init()
+    // A plain key never reaches menu key equivalents; the focused view would receive it instead.
+    spaceMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      guard let self, self.isPlaybackSpace(event) else { return event }
+      if !event.isARepeat { self.model.playback.togglePlayback() }
+      return nil
+    }
   }
 
   var isVisible: Bool { window?.isVisible ?? false }
@@ -572,7 +579,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
     submenu(
       "Meeting",
       [
-        item("Play/Pause Audio", #selector(togglePlayback), "p", target: self),
+        item("Play/Pause Audio", #selector(togglePlayback), " ", [], target: self),
         item("Back 15 Seconds", #selector(skipBack), "[", target: self),
         item("Forward 15 Seconds", #selector(skipForward), "]", target: self),
         .separator(),
@@ -617,7 +624,9 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
       return activeUndoManager.canRedo
     case #selector(startRecording): return model.app.canStart
     case #selector(stopRecording): return model.app.isRecording
-    case #selector(togglePlayback), #selector(skipBack), #selector(skipForward):
+    case #selector(togglePlayback):
+      return model.playback.url != nil && model.playback.error == nil && spaceReachesPlayback
+    case #selector(skipBack), #selector(skipForward):
       return model.playback.url != nil && model.playback.error == nil
     case #selector(copyTranscript), #selector(renameSpeakers):
       return selected?.status == .complete
@@ -629,6 +638,23 @@ final class LibraryWindowController: NSObject, NSWindowDelegate, NSMenuItemValid
         || selected.status == .queued
     default: return true
     }
+  }
+
+  /// Space plays and pauses only while the Library itself has keyboard focus outside text input,
+  /// so it still types in text fields, in edited transcript text, in sheets and in other windows.
+  private var spaceReachesPlayback: Bool {
+    guard let event = NSApp.currentEvent, event.type == .keyDown else { return true }
+    return isPlaybackSpace(event)
+  }
+
+  private func isPlaybackSpace(_ event: NSEvent) -> Bool {
+    let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+    guard event.charactersIgnoringModifiers == " ", modifiers.isEmpty, let window,
+      event.window === window, window.attachedSheet == nil,
+      model.playback.url != nil, model.playback.error == nil
+    else { return false }
+    if let text = window.firstResponder as? NSTextView, text.isEditable { return false }
+    return true
   }
 
   @objc private func startRecording() {

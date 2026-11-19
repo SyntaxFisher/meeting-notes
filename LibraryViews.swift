@@ -742,7 +742,7 @@ struct PlayerBar: View {
           .frame(width: 18)
       }
       .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
-      .help("Play or pause (⌘P)")
+      .help("Play or pause (Space)")
       Button {
         playback.skip(by: -15)
       } label: {

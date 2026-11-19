@@ -60,7 +60,7 @@ Quitting while recording or transcribing asks first. The recording is then stopp
 
 ## The Library
 
-**Open App** in the panel opens the meeting library: meetings grouped into In Progress, Needs Attention and days, with search over titles, speaker names, Teams participants and transcript text. A meeting shows its date, length, speakers and the transcript as turns; clicking a passage seeks there while preserving play/pause state. Drag across transcript text to select and copy it. The header and player stay visible, shrinking when you scroll down and expanding when you scroll up. Speaker chips wrap onto additional lines. The player has play/pause (⌘P) and ±15 s (⌘[ / ⌘]).
+**Open App** in the panel opens the meeting library: meetings grouped into In Progress, Needs Attention and days, with search over titles, speaker names, Teams participants and transcript text. A meeting shows its date, length, speakers and the transcript as turns; clicking a passage seeks there while preserving play/pause state. Drag across transcript text to select and copy it. The header and player stay visible, shrinking when you scroll down and expanding when you scroll up. Speaker chips wrap onto additional lines. The player has play/pause (Space, except while typing) and ±15 s (⌘[ / ⌘]).
 
 Playback smoothly follows the current passage at the top until you scroll manually. When the current passage is off-screen, including while paused, **Jump to Now** points up or down toward it; clicking scrolls back and resumes following when playback runs. The current passage stays highlighted while paused, except at 0:00. Moving upward at the top edge always expands the header. Reduce Motion disables these animations. Right-click a passage to copy its text.
 
