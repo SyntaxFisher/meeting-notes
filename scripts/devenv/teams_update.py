@@ -538,16 +538,23 @@ def newest_report(scenario: str, since: float) -> dict | None:
 
 # Events the app logs when Teams reads or capture go wrong without failing the meeting.
 TROUBLE_EVENTS = {"error", "teams.slowRead", "teams.refreshFailed", "capture.failed"}
+# Teams answers slowly for some seconds while it lays out a window again: entering and leaving
+# full screen in other-desktop alone stalls about 20 reads by around a second. Slow reads only
+# warn when one takes this long or they come this often during the run.
+SLOW_READ_SECONDS = 2.0
+SLOW_READS_PER_MINUTE = 2.0
 
 
 def app_log_since(since: float) -> dict:
-    """Trouble the app logged during the run."""
+    """Trouble the app logged during the run, with the slowest Teams read and the run's length."""
     counts: dict[str, int] = {}
     errors = []
+    slowest = 0.0
+    minutes = round((time.time() - since) / 60, 1)
     try:
         lines = APP_LOG.read_text(errors="replace").splitlines()
     except OSError:
-        return {"counts": counts, "errors": errors}
+        return {"counts": counts, "errors": errors, "slowestRead": slowest, "minutes": minutes}
     for line in lines:
         try:
             entry = json.loads(line)
@@ -561,7 +568,27 @@ def app_log_since(since: float) -> dict:
             counts[event] = counts.get(event, 0) + 1
         if event == "error":
             errors.append(entry.get("detail"))
-    return {"counts": counts, "errors": errors[-10:]}
+        if event == "teams.slowRead":
+            seconds = re.search(r"=([0-9.]+)s", entry.get("detail", ""))
+            slowest = max(slowest, float(seconds[1]) if seconds else SLOW_READ_SECONDS)
+    return {"counts": counts, "errors": errors[-10:], "slowestRead": slowest, "minutes": minutes}
+
+
+def app_log_reasons(app_log: dict) -> list[str]:
+    """Yellow reasons from the app log: every trouble event, except slow Teams reads that stay
+    short and rare."""
+    reasons = []
+    for event, count in app_log.get("counts", {}).items():
+        if event == "teams.slowRead":
+            slowest = app_log.get("slowestRead", SLOW_READ_SECONDS)
+            minutes = app_log.get("minutes", 0)
+            if slowest < SLOW_READ_SECONDS and count <= SLOW_READS_PER_MINUTE * minutes:
+                continue
+            reasons.append(f"the app logged {count} x {event} in {minutes} min, "
+                           f"the slowest {slowest} s")
+        else:
+            reasons.append(f"the app logged {count} x {event}")
+    return reasons
 
 
 def previous_report(version: str) -> dict | None:
@@ -616,8 +643,8 @@ def verdict_for(report: dict) -> tuple[str, list[str]]:
             if (limit > 0 and change > limit) or (limit < 0 and change < limit):
                 raise_to("yellow", f"{name}: {key} changed from {before[key]} to {score[key]} "
                                    f"since Teams {previous['teams']}")
-    for event, count in report.get("app_log", {}).get("counts", {}).items():
-        raise_to("yellow", f"the app logged {count} x {event}")
+    for reason in app_log_reasons(report.get("app_log", {})):
+        raise_to("yellow", reason)
     return level, reasons
 
 
@@ -635,6 +662,13 @@ def summary_markdown(report: dict) -> str:
         "## Reasons" if report["reasons"] else "## Reasons\n\nNone; every check passed.",
     ]
     lines += [f"- {reason}" for reason in report["reasons"]]
+    app_log = report.get("app_log", {})
+    if app_log.get("counts"):
+        lines += ["", "## App log", ""]
+        lines += [f"- {count} x {event}" for event, count in app_log["counts"].items()]
+        if app_log.get("slowestRead"):
+            lines.append(f"- slowest Teams read: {app_log['slowestRead']} s "
+                         f"in {app_log.get('minutes')} min")
     for run in report["runs"]:
         if not run.get("score"):
             continue

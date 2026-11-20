@@ -61,7 +61,17 @@ class TeamsUpdateTests(unittest.TestCase):
             report({**GOOD, "speakerAttribution": 0.8}, scenario="other", previous=previous))[0],
             "green", "Runs compare only with the same scenario")
         self.assertEqual(teams_update.verdict_for(
-            report(GOOD, app_log={"counts": {"teams.slowRead": 2}}))[0], "yellow")
+            report(GOOD, app_log={"counts": {"teams.refreshFailed": 1}}))[0], "yellow")
+
+    def test_only_long_or_frequent_slow_reads_warn(self):
+        def level(count, slowest, minutes=30):
+            return teams_update.verdict_for(report(GOOD, app_log={
+                "counts": {"teams.slowRead": count}, "slowestRead": slowest,
+                "minutes": minutes}))[0]
+        self.assertEqual(level(22, 1.8, minutes=23), "green",
+                         "A window switching full screen stalls reads")
+        self.assertEqual(level(1, 2.5), "yellow")
+        self.assertEqual(level(61, 1.0), "yellow")
 
     def test_every_scenario_counts(self):
         two = report(GOOD)

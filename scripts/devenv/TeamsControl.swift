@@ -231,10 +231,13 @@ func matches(_ window: AXUIElement, _ selector: String) throws -> Bool {
   }
 }
 
-/// The first element of one of `roles` whose title, description or text value matches.
-func element(_ roles: Set<String>, _ pattern: String) -> AXUIElement? {
+/// The first element of one of `roles` whose title, description or text value matches, in
+/// `searched` windows or all of them.
+func element(_ roles: Set<String>, _ pattern: String, in searched: [AXUIElement]? = nil)
+  -> AXUIElement?
+{
   let expression = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
-  for window in windows {
+  for window in searched ?? windows {
     var pending = [window]
     var visited = 0
     while let element = pending.popLast(), visited < 20_000 {
@@ -254,10 +257,13 @@ func element(_ roles: Set<String>, _ pattern: String) -> AXUIElement? {
   return nil
 }
 
-func waitFor(_ roles: Set<String>, _ pattern: String, seconds: Double = 10) throws -> AXUIElement {
+func waitFor(
+  _ roles: Set<String>, _ pattern: String, in searched: [AXUIElement]? = nil,
+  seconds: Double = 10
+) throws -> AXUIElement {
   let deadline = Date().addingTimeInterval(seconds)
   while Date() < deadline {
-    if let found = element(roles, pattern) { return found }
+    if let found = element(roles, pattern, in: searched) { return found }
     Thread.sleep(forTimeInterval: 0.5)
   }
   throw ControlError.missing(pattern)
@@ -274,37 +280,49 @@ enum ControlError: Error, CustomStringConvertible {
 
 /// Picks `language` (as Teams lists it, e.g. "Deutsch (Deutschland)") as Teams' app language
 /// in Settings > General and saves, which restarts Teams. Returns false when it is already set.
+/// Opens Teams' settings in the window with the app bar, not in a window a call left behind,
+/// and picks `language`.
 func changeLanguage(to language: String) throws -> Bool {
+  guard
+    let main = windows.first(where: {
+      element(controlRoles, "^(Activity|Aktivität)$", in: [$0]) != nil
+    })
+  else { throw ControlError.missing("^(Activity|Aktivität)$") }
+  let searched = [main]
   let comboBox: Set<String> = [kAXComboBoxRole as String]
   let appLanguage = "^(App language|App-Sprache)$"
-  if element(comboBox, appLanguage) == nil {
+  if element(comboBox, appLanguage, in: searched) == nil {
     app.activate()
+    AXUIElementPerformAction(main, kAXRaiseAction as CFString)
     AXUIElementPerformAction(
-      try waitFor(controlRoles, "^(Settings and more|Einstellungen und mehr)"),
+      try waitFor(controlRoles, "^(Settings and more|Einstellungen und mehr)", in: searched),
       kAXPressAction as CFString)
     AXUIElementPerformAction(
-      try waitFor([kAXMenuItemRole as String], "^(Settings|Einstellungen)$"),
+      try waitFor([kAXMenuItemRole as String], "^(Settings|Einstellungen)$", in: searched),
       kAXPressAction as CFString)
     AXUIElementPerformAction(
-      try waitFor([kAXRadioButtonRole as String], "^(General|Allgemein)$"),
+      try waitFor([kAXRadioButtonRole as String], "^(General|Allgemein)$", in: searched),
       kAXPressAction as CFString)
   }
-  let current = try waitFor(comboBox, appLanguage)
+  let current = try waitFor(comboBox, appLanguage, in: searched)
   if attribute(current, kAXValueAttribute) == language { return false }
   // While Teams follows the system language, the app language list is disabled.
   let followSystem = try waitFor(
-    [kAXCheckBoxRole as String], "^(Follow OS settings|Betriebssystemeinstellungen folgen)$")
+    [kAXCheckBoxRole as String], "^(Follow OS settings|Betriebssystemeinstellungen folgen)$",
+    in: searched)
   if (attribute(followSystem, kAXValueAttribute) as NSNumber?)?.boolValue == true {
     AXUIElementPerformAction(followSystem, kAXPressAction as CFString)
   }
   AXUIElementPerformAction(
-    try waitFor([kAXButtonRole as String], "^Open (App language|App-Sprache)$"),
+    try waitFor([kAXButtonRole as String], "^Open (App language|App-Sprache)$", in: searched),
     kAXPressAction as CFString)
   let escaped = NSRegularExpression.escapedPattern(for: language)
   AXUIElementPerformAction(
-    try waitFor([kAXStaticTextRole as String], "^\(escaped)$"), kAXPressAction as CFString)
+    try waitFor([kAXStaticTextRole as String], "^\(escaped)$", in: searched),
+    kAXPressAction as CFString)
   AXUIElementPerformAction(
-    try waitFor([kAXButtonRole as String], "^(Save and restart|Speichern und neu starten)$"),
+    try waitFor(
+      [kAXButtonRole as String], "^(Save and restart|Speichern und neu starten)$", in: searched),
     kAXPressAction as CFString)
   return true
 }
