@@ -5,6 +5,11 @@ import Foundation
 /// one `[hh:mm:ss] Label: text` line per turn.
 enum TranscriptDocument {
   static let fallbackLocalName = "Me"
+  /// The helper ends a segment at every diarizer turn, so naming can tell apart people the
+  /// diarizer heard as one voice. Consecutive segments with the same label, a pause shorter than
+  /// `joinedPause` and together shorter than `longestJoinedTurn` become one turn again.
+  static let joinedPause = 1.0
+  static let longestJoinedTurn = 60.0
 
   /// The name for everything the microphone recorded: the configured name, else the Teams
   /// display name, else the macOS full name.
@@ -120,6 +125,21 @@ enum TranscriptDocument {
             label: label, isLocalUser: identity == .localUser, identity: identity,
             source: segment.source, participant: participant))
       }
+    }
+    var turns: [(segment: TranscriptSegments.Segment, label: String)] = []
+    for (segment, label) in zip(result.segments, segmentLabels) {
+      if var last = turns.last, last.label == label, last.segment.source == segment.source,
+        segment.start - last.segment.end < joinedPause,
+        segment.end - last.segment.start < longestJoinedTurn
+      {
+        last.segment.end = max(last.segment.end, segment.end)
+        last.segment.text += " " + segment.text
+        turns[turns.count - 1] = last
+      } else {
+        turns.append((segment, label))
+      }
+    }
+    for (segment, label) in turns {
       let speaker = speakers.firstIndex { $0.label == label }!
       speakers[speaker].turns += 1
       speakers[speaker].seconds += max(0, segment.end - segment.start)
@@ -127,7 +147,7 @@ enum TranscriptDocument {
     for index in speakers.indices {
       speakers[index].seconds = (speakers[index].seconds * 10).rounded() / 10
     }
-    let segments = zip(result.segments, segmentLabels).map { segment, label in
+    let segments = turns.map { segment, label in
       MeetingSegment(
         start: MeetingRecord.seconds(segment.start), end: MeetingRecord.seconds(segment.end),
         speaker: label, text: segment.text)

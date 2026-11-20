@@ -94,7 +94,9 @@ final class TeamsWindowSource {
     let windows = known.map { entry in
       let id = TeamsWindowRegistry.shared.id(of: entry.element)
       let refresh = refresh(entry.element)
-      if let refresh, refresh != AXError.success.rawValue, reportedFailures.insert(id).inserted {
+      if let refresh, refresh != AXError.success.rawValue, Self.isOpen(entry.element),
+        reportedFailures.insert(id).inserted
+      {
         AppLog.event("teams.refreshFailed", "window=\(id); error=\(refresh)")
       }
       return TeamsWindow(element: entry.element, id: id, origin: entry.origin, refresh: refresh)

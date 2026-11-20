@@ -6,11 +6,16 @@ import Foundation
 /// two seconds after it ends, and the app reads the mark every 0.8 s, so each reading interval
 /// is moved earlier before it is compared with the transcript. A remote turn takes the name that
 /// covers much of it and clearly outweighs any other. When Teams framed several participants
-/// and none outweighs the others, a name whose indicator switched on for the turn wins over
-/// indicators still on, or back on after a moment, from earlier speech. A turn without such
+/// and none outweighs the others, a name whose indicator switched on as the turn began wins over
+/// indicators still on, or back on after a moment, from earlier speech; one that switches on
+/// later in the turn is someone talking over its speaker. A turn without such
 /// evidence takes the name that dominates its voice, the diarizer's cluster, across the
 /// meeting, unless only someone else's reading covers part of it. A frame that drops for a
 /// moment while nobody else is framed counts as one stretch.
+///
+/// A short turn is named by whose indicator switches on right after it begins, before any of
+/// the above: Teams frames a short answer too briefly for the moved interval to cover it, and
+/// the lecturer's frame that merely continues through it does not name it.
 ///
 /// Voice evidence then names turns these readings leave anonymous when Teams and the voice
 /// agree without contradiction, and replaces a reading only when the voice clearly contradicts
@@ -36,6 +41,12 @@ enum SpeakerNaming {
   /// The share of a turn another name's reading must cover, while the voice's name covers less,
   /// to keep the voice's name off it.
   static let contradiction = 0.2
+  /// A turn up to `shortTurn` seconds takes the one name whose indicator switched on within
+  /// `onsetWindow` seconds after the turn began, at least `onsetMargin` after it and after any
+  /// later turn, and no other indicator switched on near its start.
+  static let shortTurn = 2.5
+  static let onsetWindow = 2.0
+  static let onsetMargin = 0.3
 
   /// The name for each segment, or nil. `timeline` is on the segments' timeline; names in
   /// `excluded` (the local participant, whose voice is not in the Teams audio) are ignored.
@@ -95,6 +106,19 @@ enum SpeakerNaming {
       }
       return seconds
     }
+    let remoteStarts = segments.indices.filter { remote[$0] }.map { segments[$0].start }.sorted()
+    func onsetName(_ segment: TranscriptSegments.Segment) -> String? {
+      guard duration(segment) <= shortTurn else { return nil }
+      let switching = raw.indices.filter { index in
+        switchedOn[index] && raw[index].start >= segment.start - SpeakerFusion.onsetLead
+          && raw[index].start <= segment.start + onsetWindow
+      }
+      guard Set(switching.map { raw[$0].name }).count == 1, let onset = switching.first,
+        raw[onset].start >= segment.start + onsetMargin,
+        remoteStarts.last(where: { $0 <= raw[onset].start - onsetMargin }) == segment.start
+      else { return nil }
+      return raw[onset].name
+    }
     var voiceSeconds: [String: Double] = [:]
     var voiceCoverage: [String: [String: Double]] = [:]
     for (index, segment) in segments.enumerated() where remote[index] {
@@ -111,20 +135,26 @@ enum SpeakerNaming {
     }
     return segments.enumerated().map { index, segment in
       guard remote[index] else { return nil }
+      if let name = onsetName(segment) { return name }
       let ranked = coverage[index].sorted { $0.value > $1.value }
       let covering = ranked.filter { $0.value >= turnCoverage * duration(segment) }
       if let first = covering.first, ranked.count == 1 || first.value >= dominance * ranked[1].value
       {
         return first.key
       }
-      let fresh = covering.filter { name, _ in
+      func switched(_ name: String, before end: Double) -> Bool {
         intervals.indices.contains { interval in
           intervals[interval].name == name && switchedOn[interval]
             && intervals[interval].start >= segment.start - SpeakerFusion.onsetLead
-            && intervals[interval].start < segment.end
+            && intervals[interval].start < end
         }
       }
-      if fresh.count == 1, covering.count > 1 { return fresh[0].key }
+      let fresh = covering.filter { name, _ in switched(name, before: segment.end) }
+      if fresh.count == 1, covering.count > 1,
+        switched(fresh[0].key, before: segment.start + SpeakerFusion.alignedOnset)
+      {
+        return fresh[0].key
+      }
       guard let voiceName = voiceNames[segment.speaker] else { return nil }
       let threshold = contradiction * duration(segment)
       if let first = ranked.first, first.key != voiceName, first.value >= threshold,

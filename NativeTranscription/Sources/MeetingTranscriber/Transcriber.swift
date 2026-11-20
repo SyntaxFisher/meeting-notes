@@ -142,7 +142,14 @@ struct Transcriber {
           }
         }
       }
-      result.segments = merged(result.segments.sorted { $0.start < $1.start })
+      let spans = Dictionary(
+        tracks.map { ($0.source, SpeechPlan.TurnSpans($0.turns)) }, uniquingKeysWith: { $1 })
+      result.segments = merged(result.segments.sorted { $0.start < $1.start }) {
+        previous, next in
+        guard let spans = spans[next.source] else { return true }
+        return spans.index(at: (previous.start + previous.end) / 2, speaker: previous.speaker)
+          == spans.index(at: (next.start + next.end) / 2, speaker: next.speaker)
+      }
       guard !result.segments.isEmpty else {
         throw TranscriptionFailure(
           message: "No speech was recognized in the recording.", noSpeech: true)
@@ -236,14 +243,17 @@ struct Transcriber {
       }, windowStep: segmentation.windowDurationSeconds * segmentation.stepRatio)
   }
 
-  /// Consecutive segments of the same speaker with short pauses become one turn.
-  private static func merged(_ segments: [TranscriptSegments.Segment])
-    -> [TranscriptSegments.Segment]
-  {
+  /// Consecutive segments of the same speaker turn with short pauses become one segment, also
+  /// where a chunk boundary split them. `sameTurn` compares a segment with the one before it.
+  private static func merged(
+    _ segments: [TranscriptSegments.Segment],
+    sameTurn: (TranscriptSegments.Segment, TranscriptSegments.Segment) -> Bool
+  ) -> [TranscriptSegments.Segment] {
     var result: [TranscriptSegments.Segment] = []
-    for segment in segments {
+    for (index, segment) in segments.enumerated() {
       if var last = result.last, last.source == segment.source, last.speaker == segment.speaker,
-        segment.start - last.end < 1.0, segment.end - last.start < 60
+        segment.start - last.end < 1.0, segment.end - last.start < 60,
+        sameTurn(segments[index - 1], segment)
       {
         last.end = max(last.end, segment.end)
         last.text += " " + segment.text

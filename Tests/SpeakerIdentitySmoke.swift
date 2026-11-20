@@ -723,6 +723,31 @@ enum SpeakerIdentitySmoke {
       "An indicator that switched on wins over one that resumed: \(handoverNames)")
     precondition(
       SpeakerNaming.names(for: segments, timeline: SpeakingTimeline()).allSatisfy { $0 == nil })
+    // The lecturer's frame stays on through a student's one-word answer, which Teams frames for
+    // less than a second, and through his own short question just before it.
+    let answers = SpeakerNaming.names(
+      for: [
+        segment(0, 30, "S1"), segment(30.5, 31.5, "S1"), segment(32, 32.8, "S1"),
+        segment(33.2, 40, "S1"), segment(50, 51.2, "S2"), segment(60, 61, "S2"),
+      ],
+      timeline: SpeakingTimeline(intervals: [
+        .init(name: "Bernd", start: 1, end: 42), .init(name: "Luca", start: 32.5, end: 33.3),
+        .init(name: "Anna", start: 51.1, end: 51.9), .init(name: "Sam", start: 61.2, end: 63.5),
+        .init(name: "Kim", start: 60.8, end: 63),
+      ]))
+    let overlap = SpeakerNaming.names(
+      for: [segment(0, 30, "S1"), segment(70, 77, "S1")],
+      timeline: SpeakingTimeline(intervals: [
+        .init(name: "Bernd", start: 1, end: 74), .init(name: "Till", start: 74, end: 79),
+      ]))
+    precondition(
+      overlap == ["Bernd", "Bernd"],
+      "An indicator that switches on late in a turn is someone talking over its speaker: "
+        + "\(overlap)")
+    precondition(
+      answers == ["Bernd", "Bernd", "Luca", "Bernd", "Anna", nil],
+      "A short turn takes the indicator that switched on right after it began, unless two did: "
+        + "\(answers)")
 
     let start = Date(timeIntervalSince1970: 0)
     var roster = ParticipantRoster()
@@ -755,6 +780,28 @@ enum SpeakerIdentitySmoke {
     precondition(record.speakers[0].participant == "Anna Schmidt")
     precondition(record.speakers[2].identity == .unidentified)
     precondition(text.contains("[00:00:16] Anna Schmidt: Weiter geht's."))
+    var joinedRecord = MeetingRecord(
+      id: "19700101T000000Z", startedAt: start, status: .transcribing)
+    let joined = TranscriptDocument.compose(
+      TranscriptSegments(
+        mode: .separateTracks, duration: 20,
+        segments: [
+          .init(start: 0, end: 4, source: .teams, speaker: "S1", text: "Erstens."),
+          .init(start: 4.5, end: 8, source: .teams, speaker: "S1", text: "Zweitens."),
+          .init(start: 8.4, end: 9, source: .teams, speaker: "S1", text: "Frage?"),
+          .init(start: 9.5, end: 12, source: .teams, speaker: "S1", text: "Antwort."),
+        ], engine: "fixture engine"),
+      into: &joinedRecord, localName: "Jona", roster: roster,
+      speaking: SpeakingTimeline(intervals: [
+        shown("Anna Schmidt", 0, 8), .init(name: "Sam Carter", start: 8.9, end: 9.6),
+        .init(name: "Anna Schmidt", start: 10.5, end: 13.8),
+      ]), timeZone: TimeZone(secondsFromGMT: 0)!)
+    precondition(
+      joined.hasSuffix(
+        "[00:00:00] Anna Schmidt: Erstens. Zweitens.\n\n[00:00:08] Sam Carter: Frage?\n\n"
+          + "[00:00:09] Anna Schmidt: Antwort.\n"),
+      "Turns are named one by one and joined again where the name stays: \(joined)")
+    precondition(joinedRecord.speakers.first { $0.label == "Anna Schmidt" }?.turns == 2)
     precondition(text.contains("[00:00:27] Speaker 1: Who is this?"))
     precondition(text.contains("[00:00:41] Jona: Danke."))
     precondition(

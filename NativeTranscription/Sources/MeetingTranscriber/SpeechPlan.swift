@@ -37,6 +37,8 @@ enum SpeechPlan {
   static let minimumWordSeconds = 0.1
   /// Words further apart than this start a new segment.
   static let segmentPause = 1.0
+  /// Turns of one speaker closer than this count as one turn.
+  static let turnJoin = 0.1
   /// How long words inside another speaker's turn must last to leave their passage's speaker.
   static let overrideSeconds = 0.8
   /// How far before a turn's start and after its end a word still counts as inside it.
@@ -52,6 +54,34 @@ enum SpeechPlan {
     var start: Double
     var end: Double
     var speaker: String
+  }
+
+  /// Each speaker's turns, joined across pauses shorter than `turnJoin`. A segment never spans
+  /// two of them: the diarizer can give two people one voice, and Teams readings then still name
+  /// each turn on its own.
+  struct TurnSpans {
+    private var spans: [String: [Region]] = [:]
+
+    init(_ turns: [Turn]) {
+      for turn in turns.sorted(by: { $0.start < $1.start }) {
+        if let last = spans[turn.speaker]?.last, turn.start - last.end < turnJoin {
+          spans[turn.speaker]![spans[turn.speaker]!.count - 1].end = max(last.end, turn.end)
+        } else {
+          spans[turn.speaker, default: []].append(Region(start: turn.start, end: turn.end))
+        }
+      }
+    }
+
+    /// The speaker's span containing `time`, else the nearest one.
+    func index(at time: Double, speaker: String) -> Int? {
+      spans[speaker]?.indices.min { first, second in
+        distance(time, spans[speaker]![first]) < distance(time, spans[speaker]![second])
+      }
+    }
+
+    private func distance(_ time: Double, _ region: Region) -> Double {
+      max(0, region.start - time, time - region.end)
+    }
   }
 
   /// Detected speech remains transcribable even when no voice could be clustered.
@@ -306,7 +336,7 @@ enum SpeechPlan {
     return chunks
   }
 
-  /// Joins consecutive words of one speaker into segments. A stretch of at least
+  /// Joins consecutive words of one speaker turn into segments. A stretch of at least
   /// `overrideSeconds` inside another speaker's turn goes to that speaker: two people talking
   /// without a pause, so voice activity could not separate them. Under a policy that drops
   /// distant speech, words far from every turn are dropped.
@@ -348,14 +378,18 @@ enum SpeechPlan {
       }
       index = last + 1
     }
+    let spans = TurnSpans(turns)
     var segments: [Segment] = []
-    var previous: String?
+    var previous: (speaker: String, span: Int?)?
     for (word, speaker) in zip(words, speakers) {
       guard let speaker else {
         previous = nil
         continue
       }
-      if speaker == previous, var last = segments.last, word.start - last.end <= segmentPause {
+      let span = spans.index(at: (word.start + word.end) / 2, speaker: speaker)
+      if let previous, previous == (speaker, span), var last = segments.last,
+        word.start - last.end <= segmentPause
+      {
         last.end = max(last.end, word.end)
         last.text += word.text
         segments[segments.count - 1] = last
@@ -363,7 +397,7 @@ enum SpeechPlan {
         segments.append(
           Segment(start: word.start, end: word.end, speaker: speaker, text: word.text))
       }
-      previous = speaker
+      previous = (speaker, span)
     }
     return segments.compactMap {
       var segment = $0

@@ -193,6 +193,23 @@ enum SpeechPlanSmoke {
         Plan.Segment(start: 3.25, end: 4.25, speaker: "B", text: "Hallo, mache ich."),
       ], "Overlapping speech inside another speaker's new turn goes to them: \(segments)")
 
+    // The diarizer heard a student's interjection as the lecturer's voice: it is still a turn of
+    // its own, which Teams readings can name.
+    let lecture = Plan.segments(
+      words: [
+        word(0.25, " Ja,", "L"), word(0.75, " Luca?", "L"), word(1.5, " Null.", "L"),
+        word(2.1, " Genau.", "L"), word(2.5, " Gut.", "L"),
+      ],
+      turns: [
+        Plan.Turn(start: 0, end: 1.1, speaker: "L"),
+        Plan.Turn(start: 1.4, end: 1.8, speaker: "L"),
+        Plan.Turn(start: 2.05, end: 2.3, speaker: "L"),
+        Plan.Turn(start: 2.35, end: 2.8, speaker: "L"),
+      ], policy: .speakers)
+    precondition(
+      lecture.map(\.text) == ["Ja, Luca?", "Null.", "Genau. Gut."],
+      "A segment never spans two turns of one voice, but a short pause stays inside: \(lecture)")
+
     let short = Plan.segments(
       words: [word(1, " Ja", "A"), word(4.5, " genau", "A")], turns: turns, policy: .speakers)
     precondition(short.count == 2 && short.allSatisfy { $0.speaker == "A" })
