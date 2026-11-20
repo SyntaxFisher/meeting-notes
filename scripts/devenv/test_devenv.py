@@ -3,6 +3,7 @@ import array
 import math
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -72,25 +73,71 @@ class LivePlaybackTests(unittest.TestCase):
 
         page = Page()
         calls = []
-        with patch.object(devenv, "teams_control",
-                               side_effect=lambda *args, **_: calls.append(args)), \
+        screen = {"fullscreen": False, "desktop": "first"}
+
+        def control(*args, **_):
+            calls.append(args)
+            if args == ("fullscreen", "--meeting"):
+                screen.update(fullscreen=True, desktop="meeting")
+            elif args == ("raise", "--main", "--all-desktops"):
+                screen["desktop"] = "first"
+            elif args == ("fullscreen", ".", "off", "--all-desktops"):
+                screen["fullscreen"] = False
+            # macOS lists only the current desktop's windows.
+            listed = {"--main": screen["desktop"] == "first",
+                      "--meeting": screen["desktop"] == "meeting" or not screen["fullscreen"]}
+            return subprocess.CompletedProcess(args, int(args[0] == "has" and not listed[args[1]]))
+
+        with patch.object(devenv, "teams_control", side_effect=control), \
                 patch.object(devenv, "desktop_set_muted",
                                   side_effect=lambda muted: calls.append(("muted", muted))):
             devenv.run_action({"action": "raise-hand", "speaker": "kim"}, {"kim": page})
             devenv.run_action({"action": "raise-hand", "speaker": "kim"}, {"kim": page})
             devenv.run_action({"action": "teams-view", "view": "chat"}, {})
-            devenv.run_action({"action": "teams-view", "view": "meeting"}, {})
+            with patch.object(devenv.time, "sleep"):
+                devenv.run_action({"action": "teams-view", "view": "other-desktop"}, {})
+                devenv.run_action({"action": "teams-view", "view": "meeting"}, {})
             devenv.run_action({"action": "lower-hand", "speaker": "kim"}, {"kim": page})
             devenv.run_action({"action": "mute"}, {})
         self.assertEqual(page.button.clicks, 2, "Raising a raised hand changes nothing")
         self.assertEqual(page.button.pressed, "false")
-        self.assertEqual(calls[0], ("raise", "--main"))
-        self.assertEqual(calls[1], ("minimize", "--meeting", "off"))
-        self.assertEqual(calls[2], ("raise", "--meeting"))
-        self.assertEqual(calls[3], ("muted", True))
+        self.assertEqual([call for call in calls if call[0] != "has"], [
+            ("raise", "--main"),
+            ("fullscreen", "--meeting"), ("raise", "--main", "--all-desktops"),
+            ("fullscreen", ".", "off", "--all-desktops"),
+            ("minimize", "--meeting", "off"), ("raise", "--meeting"),
+            ("muted", True)])
         truth = {"events": [{"at": 1, "clip": "a.wav", "speaker": "kim"},
                             {"at": 2, "action": "raise-hand", "speaker": "kim"}]}
         self.assertEqual(devenv.guest_plan(truth, "kim"), [{"id": "a.wav", "at": 1}])
+
+    def test_a_guest_shares_and_stops_sharing_once(self):
+        class Buttons:
+            def __init__(self, page, label):
+                self.page, self.label = page, label
+
+            def count(self):
+                return int(self.page.sharing == (self.label == "stop"))
+
+            @property
+            def first(self):
+                return self
+
+            def click(self, timeout):
+                self.page.clicks += 1
+                self.page.sharing = self.label == "share"
+
+        class Page:
+            sharing, clicks = False, 0
+
+            def get_by_role(self, role, name):
+                return Buttons(self, "stop" if name.match("Stop sharing") else "share")
+
+        page = Page()
+        for action in ("share-screen", "share-screen", "stop-sharing", "stop-sharing"):
+            devenv.run_action({"action": action, "speaker": "lena"}, {"lena": page})
+        self.assertFalse(page.sharing)
+        self.assertEqual(page.clicks, 2, "Sharing twice or stopping twice changes nothing")
 
     def test_muted_speech_plays_but_is_absent_from_the_expected_recording(self):
         with tempfile.TemporaryDirectory() as temporary:

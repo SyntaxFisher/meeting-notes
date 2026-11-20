@@ -1,0 +1,104 @@
+{
+  "description": "A stand-up with the meeting window in full screen on a desktop of its own while the desktop works in Teams chat on the first desktop and minimizes the compact view Teams opens there. Teams lists neither the meeting window on the other desktop nor a minimized compact view, so names and the mute state come only from the meeting window the app remembered or finds by scanning: two guests alternate with one-word replies while the desktop asks a question, mutes, speaks while muted and unmutes again.",
+  "speakers": {
+    "me": {
+      "via": "mic",
+      "voice": "Flo (German (Germany))",
+      "lang": "de"
+    },
+    "anna": {
+      "via": "guest",
+      "display": "Anna Berger",
+      "voice": "Anna",
+      "lang": "de"
+    },
+    "sam": {
+      "via": "guest",
+      "display": "Sam Keller",
+      "voice": "Rocko (German (Germany))",
+      "lang": "de"
+    }
+  },
+  "steps": [
+    {
+      "speaker": "sam",
+      "text": "Guten Morgen. Ich mache heute den Anfang, weil ich gleich noch einen Kundentermin habe."
+    },
+    {
+      "speaker": "anna",
+      "gap": 1.0,
+      "text": "Klar, leg los."
+    },
+    {
+      "action": "teams-view",
+      "view": "other-desktop",
+      "gap": 0.5
+    },
+    {
+      "action": "teams-view",
+      "view": "compact-minimized",
+      "gap": 15.0
+    },
+    {
+      "speaker": "sam",
+      "gap": 3.0,
+      "text": "Die neue Preisseite ist fertig gestaltet. Heute baue ich noch die Vergleichstabelle ein, dann kann sie ins Review."
+    },
+    {
+      "speaker": "anna",
+      "gap": 1.0,
+      "text": "Brauchst du dafür die aktuellen Preise aus dem Vertrieb?"
+    },
+    {
+      "speaker": "sam",
+      "gap": 1.0,
+      "text": "Ja."
+    },
+    {
+      "speaker": "anna",
+      "gap": 1.0,
+      "text": "Die schicke ich dir gleich nach dem Termin. Bei mir geht es weiter mit dem Umzug der Newsletter Liste."
+    },
+    {
+      "speaker": "me",
+      "gap": 0.8,
+      "text": "Ist der Umzug bis Freitag realistisch?"
+    },
+    {
+      "speaker": "anna",
+      "gap": 1.0,
+      "text": "Wenn der Export heute klappt, auf jeden Fall."
+    },
+    {
+      "action": "mute"
+    },
+    {
+      "speaker": "me",
+      "gap": 0.8,
+      "text": "Das hier ist stummgeschaltet und gehört nicht ins Protokoll, Leuchtturm Pfefferminze."
+    },
+    {
+      "action": "unmute"
+    },
+    {
+      "speaker": "sam",
+      "gap": 1.0,
+      "text": "Okay."
+    },
+    {
+      "speaker": "anna",
+      "gap": 0.8,
+      "text": "Dann bin ich auch schon durch. Sam, viel Erfolg beim Kundentermin."
+    },
+    {
+      "action": "teams-view",
+      "view": "meeting",
+      "gap": 0.5
+    },
+    {
+      "speaker": "sam",
+      "gap": 12.0,
+      "text": "Danke, bis morgen zusammen."
+    }
+  ]
+}

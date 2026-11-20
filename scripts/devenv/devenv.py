@@ -196,12 +196,15 @@ def render(scenario):
     return directory, truth
 
 
-# Scenario actions: the desktop's mute; a guest's raised hand (`speaker` names the guest); and
-# what happens to the meeting window (`view`): "chat" brings Teams' main window over it, as when
-# someone works in Teams chat during a call, "covered" puts another app's window over the whole
-# screen for `seconds`, "minimized" minimizes it, "compact-minimized" minimizes the compact view
-# Teams opens meanwhile, and "meeting" restores the meeting window and brings it back.
-ACTIONS = ("mute", "unmute", "raise-hand", "lower-hand", "teams-view")
+# Scenario actions: the desktop's mute; a guest's raised hand and screen sharing (`speaker` names
+# the guest); and what happens to the meeting window (`view`): "chat" brings Teams' main window
+# over it, as when someone works in Teams chat during a call, "covered" puts another app's window
+# over the whole screen for `seconds`, "minimized" minimizes it, "compact-minimized" minimizes
+# the compact view Teams opens meanwhile, "other-desktop" puts it in full screen on a desktop of
+# its own and returns to Teams' main window on the first desktop, and "meeting" brings the
+# meeting window back.
+ACTIONS = ("mute", "unmute", "raise-hand", "lower-hand", "share-screen", "stop-sharing",
+           "teams-view")
 
 
 def synthesize(step, voice, rate, output, scenario_path):
@@ -683,7 +686,21 @@ def guest_set_hand(page, raised):
         button.click(timeout=5000)
 
 
+def guest_set_sharing(page, sharing):
+    """Starts or stops the guest's screen sharing, which captures guest-screen.js's slide."""
+    stop = page.get_by_role("button", name=re.compile(r"^(Stop sharing|Freigabe beenden)", re.I))
+    if (stop.count() > 0) == sharing:
+        return
+    if sharing:
+        page.get_by_role("button", name=re.compile(r"^(Share|Teilen)$", re.I)).first.click(
+            timeout=5000)
+    else:
+        stop.first.click(timeout=5000)
+
+
 COVERS = []
+# Set while the meeting window is in full screen and the desktop works on the first desktop.
+ON_OTHER_DESKTOP = []
 
 
 def desktop_view(view, seconds=None):
@@ -702,13 +719,54 @@ def desktop_view(view, seconds=None):
             time.sleep(0.5)
     elif view == "minimized":
         teams_control("minimize", "--meeting", check=True)
+    elif view == "other-desktop":
+        move_meeting_to_other_desktop()
     else:
         while COVERS:
             cover = COVERS.pop()
             cover.terminate()
             cover.wait()
+        leave_other_desktop()
         teams_control("minimize", "--meeting", "off")
         teams_control("raise", "--meeting", check=True)
+
+
+def has_window(selector):
+    """Whether macOS lists a matching Teams window, which it does only on the current desktop."""
+    return teams_control("has", selector).returncode == 0
+
+
+def wait_until(condition, seconds):
+    deadline = time.monotonic() + seconds
+    while not condition():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.3)
+    return True
+
+
+def move_meeting_to_other_desktop():
+    """Puts the meeting window in full screen and goes back to Teams' main window."""
+    teams_control("fullscreen", "--meeting", check=True)
+    ON_OTHER_DESKTOP.append(True)
+    # macOS slides to the meeting's new desktop unless Teams is not frontmost; raising the main
+    # window, found on the first desktop although macOS does not list it, moves back there.
+    wait_until(lambda: not has_window("--main"), 8)
+    time.sleep(1)
+    teams_control("raise", "--main", "--all-desktops", check=True)
+    if not wait_until(lambda: has_window("--main"), 5):
+        fail("Could not return to the desktop with Teams' main window.")
+
+
+def leave_other_desktop():
+    """Brings a meeting window that "other-desktop" put in full screen back to the first desktop."""
+    if not ON_OTHER_DESKTOP:
+        return
+    ON_OTHER_DESKTOP.clear()
+    teams_control("fullscreen", ".", "off", "--all-desktops")
+    # Back on the first desktop, macOS lists the meeting window next to the main window again.
+    wait_until(lambda: has_window("--main") and has_window("--meeting"), 8)
+    time.sleep(0.5)
 
 
 def guest_plan(truth, key):
@@ -723,6 +781,8 @@ def run_action(event, pages):
         desktop_set_muted(action == "mute")
     elif action in ("raise-hand", "lower-hand"):
         guest_set_hand(pages[event["speaker"]], action == "raise-hand")
+    elif action in ("share-screen", "stop-sharing"):
+        guest_set_sharing(pages[event["speaker"]], action == "share-screen")
     elif action == "teams-view":
         desktop_view(event["view"], event.get("seconds"))
 
@@ -767,6 +827,8 @@ def guest_browser(playwright, args):
             try:
                 browser.close()
             finally:
+                # A failed run must not leave the next one on another desktop.
+                leave_other_desktop()
                 if args.leave and not args.no_desktop:
                     if teams_control("find", r"^(Leave|Verlassen)$", "--meeting").returncode == 0:
                         desktop_leave()
@@ -833,6 +895,7 @@ def meeting(args):
             context = browser.new_context(
                 permissions=["microphone", "camera"], viewport={"width": 1280, "height": 800})
             context.add_init_script(path=str(HERE / "guest-audio.js"))
+            context.add_init_script(path=str(HERE / "guest-screen.js"))
             page = context.new_page()
             print(f"Joining guest {speaker.get('display', key)}…", flush=True)
             start_guest(page, url, speaker.get("display", key))
@@ -1048,6 +1111,44 @@ def app_error_since(started):
     return f"Meeting Notes reported an error: {error}" if error else None
 
 
+# Teams' app language as its settings list it, and the label of its Activity button in it.
+TEAMS_LANGUAGES = {"en": ("English (United States)", "Activity"),
+                   "de": ("Deutsch (Deutschland)", "Aktivität")}
+
+
+def teams_language(args):
+    """Switches Teams' app language, which restarts Teams, and waits until it is back."""
+    name, activity = TEAMS_LANGUAGES[args.language]
+
+    def activate():
+        run("osascript", "-e", 'tell application id "com.microsoft.teams2" to activate',
+            quiet=True, check=False)
+
+    if not teams_running():
+        run("open", "-a", TEAMS)
+        time.sleep(5)
+    activate()
+    for _ in range(45):
+        if teams_control("find", r"^(Activity|Aktivität)$").returncode == 0:
+            break
+        time.sleep(2)
+    if teams_control("find", rf"^{activity}$").returncode == 0:
+        print(f"Teams already uses {name}.")
+        return
+    if teams_control("find", r"^(Leave|Verlassen)$", "--meeting").returncode == 0:
+        fail("Teams is in a meeting; leave it before switching its language.")
+    teams_control("language", name, check=True)
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        time.sleep(3)
+        if teams_running():
+            activate()
+            if teams_control("find", rf"^{activity}$").returncode == 0:
+                print(f"Teams restarted in {name}.")
+                return
+    fail(f"Teams did not come back in {name}.")
+
+
 def config_command(args):
     if args.url:
         save_config({"meetingUrl": args.url})
@@ -1097,12 +1198,15 @@ def main():
                               "leaves and rejoins between rounds (needs --leave)")
     command.add_argument("--rejoin-delay", default=8,
                          help="seconds between leaving and rejoining with --repeat")
+    command = commands.add_parser("teams-language",
+                                  help="switch Teams' app language (restarts Teams)")
+    command.add_argument("language", choices=sorted(TEAMS_LANGUAGES))
     command = commands.add_parser("config", help="show or save local settings")
     command.add_argument("--url", help="default Teams meeting link")
     args = parser.parse_args()
     handlers = {"setup": setup, "audio": audio, "render": render_command, "offline": offline,
                 "score": score_command, "meeting": meeting, "config": config_command,
-                "replay": replay}
+                "replay": replay, "teams-language": teams_language}
     handlers[args.command](args)
 
 

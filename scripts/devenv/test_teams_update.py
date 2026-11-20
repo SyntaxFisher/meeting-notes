@@ -1,5 +1,9 @@
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
+import devenv
 import teams_update
 
 
@@ -68,6 +72,43 @@ class TeamsUpdateTests(unittest.TestCase):
         self.assertTrue(reasons[0].startswith("red: hidden:"))
         self.assertIn("## hidden", teams_update.summary_markdown(
             {**two, "verdict": level, "reasons": reasons, "meeting_notes": "dev"}))
+
+    def test_the_suite_plays_existing_scenarios_in_known_languages(self):
+        self.assertEqual(teams_update.split_run("hidden-meeting"), ("hidden-meeting", "en"))
+        self.assertEqual(teams_update.split_run("hidden-meeting@de"), ("hidden-meeting", "de"))
+        for run in teams_update.SUITE:
+            scenario, language = teams_update.split_run(run)
+            self.assertTrue((devenv.SCENARIOS / f"{scenario}.json").is_file(), run)
+            self.assertIn(language, devenv.TEAMS_LANGUAGES, run)
+        self.assertTrue(any(run.endswith("@de") for run in teams_update.SUITE))
+
+    def test_the_check_runs_the_suite_before_it_starts_the_agent(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.multiple(teams_update, STATE_DIR=Path(directory),
+                                    STATE_FILE=Path(directory) / "state.json",
+                                    LOCK_FILE=Path(directory) / "busy.lock",
+                                    archive_installed_build=lambda: None,
+                                    latest_release=lambda: {"version": "2.0"},
+                                    app_version=lambda app: "1.0"), \
+                mock.patch.object(teams_update, "prepare",
+                                  side_effect=lambda work: calls.append("prepare") or "- done"), \
+                mock.patch.object(teams_update, "start_agent_task",
+                                  side_effect=lambda work, prepared: calls.append(prepared)
+                                  or True):
+            teams_update.command_check(trigger=True)
+            teams_update.command_check(trigger=True)
+            self.assertEqual(teams_update.load_state()["triggered"]["version"], "2.0")
+        self.assertEqual(calls, ["prepare", "- done"], "A started agent is not started again")
+
+    def test_a_busy_lock_defers_the_check(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.multiple(teams_update, STATE_DIR=Path(directory),
+                                    LOCK_FILE=Path(directory) / "busy.lock"):
+            with teams_update.exclusive():
+                with self.assertRaises(RuntimeError):
+                    with teams_update.exclusive():
+                        pass
 
 
 if __name__ == "__main__":

@@ -1,0 +1,93 @@
+{
+  "description": "A guest presents slides: she shares her screen and talks for long stretches while the host and the desktop ask short questions, then stops sharing and the meeting goes on in the gallery. While someone shares, Teams shows the shared content instead of the presenter's tile, so the presenter's turns carry her name only through the shared content's label, and a short question from someone else must take that speaker's name, not the presenter's.",
+  "speakers": {
+    "me": {
+      "via": "mic",
+      "voice": "Flo (German (Germany))",
+      "lang": "de"
+    },
+    "lena": {
+      "via": "guest",
+      "display": "Lena Vogt",
+      "voice": "Anna",
+      "lang": "de"
+    },
+    "jonas": {
+      "via": "guest",
+      "display": "Jonas Brandt",
+      "voice": "Rocko (German (Germany))",
+      "lang": "de"
+    }
+  },
+  "steps": [
+    {
+      "speaker": "jonas",
+      "text": "Hallo zusammen. Lena stellt uns heute die Ergebnisse der Nutzerbefragung vor. Lena, magst du deinen Bildschirm teilen?"
+    },
+    {
+      "action": "share-screen",
+      "speaker": "lena",
+      "gap": 0.8
+    },
+    {
+      "speaker": "lena",
+      "gap": 2.0,
+      "text": "Gern. Ihr solltet jetzt die erste Folie sehen. Wir haben im Oktober knapp dreihundert Kundinnen und Kunden befragt, online und telefonisch."
+    },
+    {
+      "speaker": "lena",
+      "gap": 0.6,
+      "text": "Die wichtigste Erkenntnis vorweg: Die Zufriedenheit mit dem Kundenportal ist deutlich gestiegen, vor allem bei der Suche und bei den Rechnungen."
+    },
+    {
+      "speaker": "jonas",
+      "gap": 1.0,
+      "text": "Wie viele haben denn telefonisch teilgenommen?"
+    },
+    {
+      "speaker": "lena",
+      "gap": 1.0,
+      "text": "Ungefähr ein Drittel. Auf der nächsten Folie seht ihr die Verteilung nach Altersgruppen, die älteren Kunden haben fast alle am Telefon geantwortet."
+    },
+    {
+      "speaker": "me",
+      "gap": 0.9,
+      "text": "Gab es Unterschiede bei der Zufriedenheit zwischen den beiden Gruppen?"
+    },
+    {
+      "speaker": "lena",
+      "gap": 1.0,
+      "text": "Kaum. Die Telefongruppe bewertet die Wartezeiten an der Hotline etwas schlechter, sonst liegen beide Gruppen sehr nah beieinander."
+    },
+    {
+      "speaker": "lena",
+      "gap": 0.6,
+      "text": "Zum Schluss die Wünsche: Am häufigsten genannt wurden eine App fürs Handy und eine bessere Übersicht über laufende Verträge."
+    },
+    {
+      "speaker": "jonas",
+      "gap": 1.0,
+      "text": "Danke."
+    },
+    {
+      "action": "stop-sharing",
+      "speaker": "lena",
+      "gap": 0.6
+    },
+    {
+      "speaker": "jonas",
+      "gap": 1.5,
+      "text": "Dann sammeln wir die Wünsche fürs nächste Quartal. Die App ist sicher das größte Thema."
+    },
+    {
+      "speaker": "lena",
+      "gap": 1.0,
+      "text": "Ich schicke euch die Folien nachher, dann könnt ihr die Zahlen in Ruhe anschauen."
+    },
+    {
+      "speaker": "me",
+      "gap": 0.9,
+      "text": "Super, danke Lena. Bis morgen."
+    }
+  ]
+}

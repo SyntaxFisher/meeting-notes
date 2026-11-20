@@ -6,20 +6,25 @@ app. Everything it keeps lives under STATE_DIR, outside the repository: archived
 downloads and reports.
 
     check [--trigger]      compare the newest production Teams release with the installed one;
-                           with --trigger, start the agent task in a new T3 thread
+                           with --trigger and work pending, install the release, run the
+                           regression suite and start the agent task in a new T3 thread to
+                           review the results
     install [--build V]    download, verify and install the newest release, or install build V,
                            archived or downloaded, to check that Meeting Notes still works
                            with it
     verify [--scenario S]  build Meeting Notes from this checkout and record scored live
                            meetings through the local Teams test environment, one per
-                           scenario (repeat --scenario; default: standup-de-en and
-                           hidden-meeting)
+                           scenario (repeat --scenario; default: the regression suite, SUITE);
+                           a scenario ending in "@de" is played in German Teams
     status                 print the state as JSON
     install-agent          run `check --trigger` every hour from launchd
 
 `verify` needs the test environment of docs/development.md: Teams signed in with the test
 account, a saved meeting link and the virtual audio devices. Set `localSignIdentity` in the
 devenv config to a stable signing identity, so rebuilds keep the app's privacy permissions.
+launchd jobs lack the Accessibility permission that driving Teams needs; set `launcher` in the
+devenv config to a program that has it and runs its arguments, and install-agent starts the
+check through it.
 
 The agent task's instructions are specific to the maintainer's machine and live in TASK_FILE,
 outside the repository.
@@ -28,6 +33,8 @@ from __future__ import annotations
 
 import argparse
 import calendar
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 import plistlib
@@ -67,6 +74,7 @@ SKIPPED_PACKAGES = ["com.microsoft.autoupdate"]
 STATE_DIR = Path.home() / "Library/Application Support/meeting-notes-dev"
 STATE_FILE = STATE_DIR / "state.json"
 TASK_FILE = STATE_DIR / "agent-task.md"
+LOCK_FILE = STATE_DIR / "busy.lock"
 BUILDS_DIR = STATE_DIR / "teams-builds"
 DOWNLOADS_DIR = STATE_DIR / "downloads"
 REPORTS_DIR = STATE_DIR / "reports"
@@ -75,9 +83,19 @@ LAUNCH_AGENTS = Path.home() / "Library/LaunchAgents"
 CHECK_LABEL = "dev.meeting-notes.teams-update-check"
 KEEP_BUILDS = 3
 RETRIGGER_AFTER_SECONDS = 12 * 3600
-# A multilingual stand-up with the meeting window in view, and a stand-up followed with every
-# Teams window minimized, which Teams stops drawing.
-DEFAULT_SCENARIOS = ["standup-de-en", "hidden-meeting"]
+# The live regression suite: everything Teams has broken or could break in the app's readings.
+# "@de" plays a scenario in German Teams, whose labels the app reads separately.
+SUITE = [
+    "standup-de-en",              # meeting window in view, multilingual, a muted aside
+    "hidden-meeting",             # meeting window and compact view minimized, mute changes
+    "raised-hand-lecture",        # a raised hand's frame, a covered window, Teams chat in front
+    "lecture-interjections",      # short answers Teams frames late or never
+    "screen-share-presentation",  # a guest presents; Teams shows her content, not her tile
+    "other-desktop",              # meeting window in full screen on a desktop of its own
+    "hidden-meeting@de",
+    "raised-hand-lecture@de",
+    "screen-share-presentation@de",
+]
 
 # A live meeting fails outright when recording does not start or stop with the call; these
 # floors catch the Teams readings that degrade without failing it: participant names (named
@@ -156,12 +174,49 @@ def pending_work(state: dict, latest: dict | None, installed: str | None) -> dic
     return None
 
 
-def start_agent_task(work: dict) -> bool:
+@contextmanager
+def exclusive():
+    """Keeps installs and suite runs from overlapping, e.g. the hourly check and an agent."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with LOCK_FILE.open("w") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("another teams_update.py install or verify is running") from None
+        yield
+
+
+def prepare(work: dict) -> str:
+    """Installs and verifies the pending build; returns what was done, for the agent."""
+    lines = []
+    if work["action"] == "install":
+        try:
+            install_latest()
+            subprocess.run(["/usr/bin/open", "-g", str(TEAMS)], check=True)
+            lines.append(f"- Installed Teams {work['version']} (was {work['installed']}).")
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            lines.append(f"- Installing Teams {work['version']} failed: {error}")
+            return "\n".join(lines)
+    try:
+        result = run_suite(SUITE)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        lines.append(f"- The regression suite could not run: {error}")
+        return "\n".join(lines)
+    lines.append(f"- Ran the regression suite on Teams {app_version(TEAMS)}: verdict "
+                 f"{result['verdict']}; report in {result['report']} (summary.md, report.json "
+                 "and one log per scenario).")
+    lines += [f"  - {reason}" for reason in result["reasons"]]
+    return "\n".join(lines)
+
+
+def start_agent_task(work: dict, prepared: str) -> bool:
     try:
         task = TASK_FILE.read_text()
     except OSError:
         log(f"no agent task at {TASK_FILE}")
         return False
+    task += ("\n## Already done by the update check\n\n"
+             f"Pending was: {work['action']} Teams {work['version']}.\n{prepared}\n")
     t3 = shutil.which("t3") or str(Path.home() / ".local/bin/t3")
     result = subprocess.run(
         [t3, "thread", "start", "--title", f"Teams {work['version']}: compatibility check",
@@ -190,10 +245,20 @@ def command_check(trigger: bool) -> int:
                   and time.time() - triggered.get("at", 0) < RETRIGGER_AFTER_SECONDS)
         if recent:
             log(f"agent already started for {work['version']}")
-        elif start_agent_task(work):
-            state["triggered"] = {"version": work["version"], "action": work["action"],
-                                  "at": time.time()}
-            log(f"started the agent task: {work['action']} {work['version']}")
+        else:
+            save_state(state)
+            log(f"preparing {work['action']} {work['version']} for the agent")
+            try:
+                with exclusive():
+                    prepared = prepare(work)
+            except RuntimeError as error:
+                log(f"not now: {error}")
+                return 0
+            state = load_state()
+            if start_agent_task(work, prepared):
+                state["triggered"] = {"version": work["version"], "action": work["action"],
+                                      "at": time.time()}
+                log(f"started the agent task: {work['action']} {work['version']}")
     save_state(state)
     print(json.dumps({"pending": work, "latest": latest and latest["version"],
                       "installed": installed}))
@@ -448,6 +513,21 @@ def restart_app() -> None:
     raise RuntimeError(f"Meeting Notes is not ready to record: {status}")
 
 
+def split_run(run: str) -> tuple[str, str]:
+    """A suite entry's scenario and Teams language: "hidden-meeting@de" is German Teams."""
+    scenario, _, language = run.partition("@")
+    return scenario, language or "en"
+
+
+def set_teams_language(language: str, output: Path) -> None:
+    with output.open("a") as handle:
+        result = subprocess.run([sys.executable, str(DEVENV), "teams-language", language],
+                                cwd=REPO_ROOT, stdout=handle, stderr=subprocess.STDOUT,
+                                timeout=300)
+    if result.returncode != 0:
+        raise RuntimeError(f"Teams did not switch to language {language}; see {output}")
+
+
 def newest_report(scenario: str, since: float) -> dict | None:
     reports = [path for path in (WORK / "scenarios" / scenario).glob("live-*.report.json")
                if path.stat().st_mtime >= since]
@@ -572,7 +652,7 @@ def summary_markdown(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def command_verify(scenarios: list[str]) -> int:
+def run_suite(runs: list[str]) -> dict:
     version = app_version(TEAMS)
     if version is None:
         raise RuntimeError(f"{TEAMS} is not installed")
@@ -591,15 +671,17 @@ def command_verify(scenarios: list[str]) -> int:
         build_app(out)
         log("starting Meeting Notes and Teams")
         restart_app()
-        for scenario in scenarios:
+        for name in runs:
+            scenario, language = split_run(name)
             ensure_teams_signed_in()
-            log(f"live meeting: {scenario}")
+            set_teams_language(language, out / "teams-language.log")
+            log(f"live meeting: {name}")
             run_started = time.time()
-            run = {"scenario": scenario, "meeting_exit": None, "score": None}
+            run = {"scenario": name, "meeting_exit": None, "score": None}
             report["runs"].append(run)
             run["meeting_exit"] = run_logged(
                 [sys.executable, str(DEVENV), "meeting", scenario, "--leave", "--score"],
-                out / f"{scenario}.log")
+                out / f"{name}.log")
             run["score"] = newest_report(scenario, run_started)
             meeting = (run["score"] or {}).get("meeting")
             if meeting and (RECONSTRUCTION / meeting).is_dir():
@@ -609,6 +691,11 @@ def command_verify(scenarios: list[str]) -> int:
     finally:
         subprocess.run([sys.executable, str(DEVENV), "audio", "off"], cwd=REPO_ROOT,
                        capture_output=True)
+        if any(split_run(name)[1] != "en" for name in runs):
+            try:
+                set_teams_language("en", out / "teams-language.log")
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                report.setdefault("error", str(error))
     report["app_log"] = app_log_since(started)
     previous = previous_report(version)
     if previous:
@@ -620,9 +707,7 @@ def command_verify(scenarios: list[str]) -> int:
     state["verified"] = {"version": version, "verdict": report["verdict"], "at": time.time(),
                          "meeting_notes": report["meeting_notes"], "report": str(out)}
     save_state(state)
-    print(json.dumps({"verdict": report["verdict"], "reasons": report["reasons"],
-                      "report": str(out)}, indent=2))
-    return 0
+    return {"verdict": report["verdict"], "reasons": report["reasons"], "report": str(out)}
 
 
 # MARK: launchd
@@ -633,9 +718,13 @@ def launchctl(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def command_install_agent() -> None:
+    launcher = devenv_config().get("launcher")
     configuration = {
         "Label": CHECK_LABEL,
-        "ProgramArguments": [sys.executable, str(Path(__file__).resolve()), "check", "--trigger"],
+        "ProgramArguments": ([launcher] if launcher else [])
+        + [sys.executable, str(Path(__file__).resolve()), "check", "--trigger"],
+        # The suite builds the app and plays audio with tools from the installing shell's PATH.
+        "EnvironmentVariables": {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
         "StartInterval": 3600,
         "RunAtLoad": True,
         "WorkingDirectory": str(REPO_ROOT),
@@ -668,8 +757,8 @@ def main() -> int:
                          help="reinstall this archived Teams build instead")
     verify = sub.add_parser("verify", help="record and score live meetings with this checkout")
     verify.add_argument("--scenario", action="append", dest="scenarios",
-                        help="devenv scenario to play; repeat for several "
-                             f"(default {', '.join(DEFAULT_SCENARIOS)})")
+                        help="devenv scenario to play, with @de for German Teams; repeat for "
+                             f"several (default {', '.join(SUITE)})")
     sub.add_parser("status", help="print the state as JSON")
     sub.add_parser("install-agent", help="run `check --trigger` every hour from launchd")
     args = parser.parse_args()
@@ -677,9 +766,13 @@ def main() -> int:
         if args.command == "check":
             return command_check(args.trigger)
         if args.command == "install":
-            return command_install(args.build)
+            with exclusive():
+                return command_install(args.build)
         if args.command == "verify":
-            return command_verify(args.scenarios or DEFAULT_SCENARIOS)
+            with exclusive():
+                result = run_suite(args.scenarios or SUITE)
+            print(json.dumps(result, indent=2))
+            return 0
         if args.command == "status":
             state = load_state()
             state["archived"] = [version for version, _ in archived_builds()]

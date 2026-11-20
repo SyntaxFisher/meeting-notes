@@ -13,11 +13,19 @@
 //                                 over the meeting, as when someone works in Teams chat during
 //                                 a call. <window> is --meeting (the meeting window, not its
 //                                 compact view), --compact, --main or a title regex.
+//   teams-control has <window>    Exit 0 if a Teams window on this desktop matches <window>.
+//   Add --all-desktops to include Teams windows on other desktops, which macOS does not list;
+//   raising one of them moves to its desktop.
 //   teams-control minimize <window> [off]
 //                                 Minimize (or restore) the first matching Teams window.
 //   teams-control cover <seconds> Show an opaque window of this tool over the whole screen, as a
 //                                 maximized app covering Teams; Teams stops updating covered
 //                                 windows and opens its compact view.
+//   teams-control fullscreen <window> [off]
+//                                 Put the first matching Teams window in full screen, on a
+//                                 desktop of its own, or every matching one back.
+//   teams-control language <name> Set Teams' app language to <name> as Teams lists it, e.g.
+//                                 "Deutsch (Deutschland)"; Teams restarts when it changes.
 //   teams-control slider <regex> [value]
 //                                 Print or set the value of a matching slider (e.g. speaker volume).
 //   teams-control status-menu <bundle-id> [regex]
@@ -72,7 +80,7 @@ func buttons(in window: AXUIElement) -> [(AXUIElement, [String])] {
 }
 
 let usage =
-  "Usage: teams-control buttons | windows | speaking | raise <window> | minimize <window> [off] | cover <seconds> | find|press <regex> [--meeting] | slider <regex> [value] | status-menu <bundle-id> [regex] [--stale]\n"
+  "Usage: teams-control buttons | windows | speaking | has <window> | raise <window> | minimize <window> [off] | fullscreen <window> [off] | cover <seconds> | find|press <regex> [--meeting] | language <name> | slider <regex> [value] | status-menu <bundle-id> [regex] [--stale] [--all-desktops]\n"
 if CommandLine.arguments.contains("--help") {
   print(usage, terminator: "")
   exit(0)
@@ -82,7 +90,10 @@ guard AXIsProcessTrusted() else {
   exit(3)
 }
 let refreshes = !CommandLine.arguments.contains("--stale")
-let arguments = CommandLine.arguments.dropFirst().filter { $0 != "--stale" }[...]
+let allDesktops = CommandLine.arguments.contains("--all-desktops")
+let arguments = CommandLine.arguments.dropFirst().filter {
+  $0 != "--stale" && $0 != "--all-desktops"
+}[...]
 
 if arguments.first == "cover", arguments.count == 2, let seconds = Double(arguments.last!) {
   let app = NSApplication.shared
@@ -150,7 +161,32 @@ let application = AXUIElementCreateApplication(app.processIdentifier)
 AXUIElementSetMessagingTimeout(application, 1)
 _ = AXUIElementSetAttributeValue(
   application, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
-let windows: [AXUIElement] = attribute(application, kAXWindowsAttribute) ?? []
+let listedWindows: [AXUIElement] = attribute(application, kAXWindowsAttribute) ?? []
+
+/// Teams' windows on every desktop: macOS lists only the current desktop's, so the others are
+/// found by their remote tokens, as the app does.
+func windowsOnAllDesktops() -> [AXUIElement] {
+  typealias CreateWithRemoteToken = @convention(c) (CFData) -> Unmanaged<AXUIElement>?
+  guard
+    let symbol = dlsym(
+      UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementCreateWithRemoteToken")
+  else { return listedWindows }
+  let create = unsafeBitCast(symbol, to: CreateWithRemoteToken.self)
+  var token = Data(count: 20)
+  token.replaceSubrange(0..<4, with: withUnsafeBytes(of: app.processIdentifier) { Data($0) })
+  token.replaceSubrange(8..<12, with: withUnsafeBytes(of: Int32(0x636f_636f)) { Data($0) })
+  var found = listedWindows
+  for number: UInt64 in 0..<20_000 {
+    token.replaceSubrange(12..<20, with: withUnsafeBytes(of: number) { Data($0) })
+    guard let element = create(token as CFData)?.takeRetainedValue(),
+      attribute(element, kAXRoleAttribute) == kAXWindowRole as String,
+      !found.contains(where: { CFEqual($0, element) })
+    else { continue }
+    found.append(element)
+  }
+  return found
+}
+let windows = allDesktops ? windowsOnAllDesktops() : listedWindows
 
 /// Scrolling a window's outermost web area into view, which it already is, makes Teams publish
 /// its current Accessibility tree.
@@ -193,6 +229,84 @@ func matches(_ window: AXUIElement, _ selector: String) throws -> Bool {
     _ = try NSRegularExpression(pattern: selector)
     return title(window, matches: selector)
   }
+}
+
+/// The first element of one of `roles` whose title, description or text value matches.
+func element(_ roles: Set<String>, _ pattern: String) -> AXUIElement? {
+  let expression = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+  for window in windows {
+    var pending = [window]
+    var visited = 0
+    while let element = pending.popLast(), visited < 20_000 {
+      visited += 1
+      if let role: String = attribute(element, kAXRoleAttribute), roles.contains(role) {
+        let labels = [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute]
+          .compactMap { attribute(element, $0) as String? }
+        if labels.contains(where: {
+          expression?.firstMatch(in: $0, range: NSRange($0.startIndex..., in: $0)) != nil
+        }) {
+          return element
+        }
+      }
+      pending.append(contentsOf: attribute(element, kAXChildrenAttribute) ?? [])
+    }
+  }
+  return nil
+}
+
+func waitFor(_ roles: Set<String>, _ pattern: String, seconds: Double = 10) throws -> AXUIElement {
+  let deadline = Date().addingTimeInterval(seconds)
+  while Date() < deadline {
+    if let found = element(roles, pattern) { return found }
+    Thread.sleep(forTimeInterval: 0.5)
+  }
+  throw ControlError.missing(pattern)
+}
+
+enum ControlError: Error, CustomStringConvertible {
+  case missing(String)
+  var description: String {
+    switch self {
+    case .missing(let pattern): "Teams shows nothing matching \(pattern)."
+    }
+  }
+}
+
+/// Picks `language` (as Teams lists it, e.g. "Deutsch (Deutschland)") as Teams' app language
+/// in Settings > General and saves, which restarts Teams. Returns false when it is already set.
+func changeLanguage(to language: String) throws -> Bool {
+  let comboBox: Set<String> = [kAXComboBoxRole as String]
+  let appLanguage = "^(App language|App-Sprache)$"
+  if element(comboBox, appLanguage) == nil {
+    app.activate()
+    AXUIElementPerformAction(
+      try waitFor(controlRoles, "^(Settings and more|Einstellungen und mehr)"),
+      kAXPressAction as CFString)
+    AXUIElementPerformAction(
+      try waitFor([kAXMenuItemRole as String], "^(Settings|Einstellungen)$"),
+      kAXPressAction as CFString)
+    AXUIElementPerformAction(
+      try waitFor([kAXRadioButtonRole as String], "^(General|Allgemein)$"),
+      kAXPressAction as CFString)
+  }
+  let current = try waitFor(comboBox, appLanguage)
+  if attribute(current, kAXValueAttribute) == language { return false }
+  // While Teams follows the system language, the app language list is disabled.
+  let followSystem = try waitFor(
+    [kAXCheckBoxRole as String], "^(Follow OS settings|Betriebssystemeinstellungen folgen)$")
+  if (attribute(followSystem, kAXValueAttribute) as NSNumber?)?.boolValue == true {
+    AXUIElementPerformAction(followSystem, kAXPressAction as CFString)
+  }
+  AXUIElementPerformAction(
+    try waitFor([kAXButtonRole as String], "^Open (App language|App-Sprache)$"),
+    kAXPressAction as CFString)
+  let escaped = NSRegularExpression.escapedPattern(for: language)
+  AXUIElementPerformAction(
+    try waitFor([kAXStaticTextRole as String], "^\(escaped)$"), kAXPressAction as CFString)
+  AXUIElementPerformAction(
+    try waitFor([kAXButtonRole as String], "^(Save and restart|Speichern und neu starten)$"),
+    kAXPressAction as CFString)
+  return true
 }
 
 switch arguments.first {
@@ -252,6 +366,8 @@ case "speaking":
     print("\(title.prefix(40)) main=\(main) labels=\(labels)")
     for (tile, count) in frames { print("  \(count) frame\(count == 1 ? "" : "s"): \(tile)") }
   }
+case "has" where arguments.count == 2:
+  exit(try windows.contains { try matches($0, arguments.last!) } ? 0 : 1)
 case "raise" where arguments.count == 2:
   let selector = arguments.last!
   for window in windows where try matches(window, selector) {
@@ -276,6 +392,32 @@ case "minimize" where (2...3).contains(arguments.count):
   }
   FileHandle.standardError.write(Data("No Teams window matches \(selector).\n".utf8))
   exit(1)
+case "language" where arguments.count == 2:
+  let wanted = arguments.last!
+  do {
+    let changed = try changeLanguage(to: wanted)
+    print(changed ? "Teams restarts in \(wanted)." : "Teams already uses \(wanted).")
+  } catch {
+    FileHandle.standardError.write(Data("\(error)\n".utf8))
+    exit(1)
+  }
+case "fullscreen" where (2...3).contains(arguments.count):
+  let selector = arguments[arguments.startIndex + 1]
+  let fullScreen = arguments.last != "off"
+  var changed = false
+  // "off" leaves full screen in every matching window, so `fullscreen . off` tidies up.
+  for window in windows where try matches(window, selector) {
+    let title: String = attribute(window, kAXTitleAttribute) ?? ""
+    AXUIElementSetAttributeValue(
+      window, "AXFullScreen" as CFString, (fullScreen ? kCFBooleanTrue : kCFBooleanFalse)!)
+    print("\(fullScreen ? "Full screen" : "Windowed"): \(title)")
+    changed = true
+    if fullScreen { break }
+  }
+  if !changed {
+    FileHandle.standardError.write(Data("No Teams window matches \(selector).\n".utf8))
+    exit(1)
+  }
 case "slider" where arguments.count >= 2:
   let pattern = try NSRegularExpression(
     pattern: arguments[arguments.startIndex + 1], options: .caseInsensitive)
