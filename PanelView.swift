@@ -446,11 +446,18 @@ private struct RecentMeetingRow: View {
         model.send(.showLibrary(id: meeting.id))
       } label: {
         HStack(alignment: .top, spacing: 10) {
-          Image(systemName: processing ? "text.bubble" : "doc.text")
-            .foregroundStyle(processing ? Color.orange : .secondary)
-            .frame(width: 16)
-            .padding(.top, 2)
-            .accessibilityHidden(true)
+          Group {
+            if processing {
+              Image(systemName: "text.bubble").foregroundStyle(.orange)
+            } else if meeting.source == .teams {
+              TeamsMark(size: 16) { Image(systemName: "doc.text").foregroundStyle(.secondary) }
+            } else {
+              Image(systemName: "doc.text").foregroundStyle(.secondary)
+            }
+          }
+          .frame(width: 16)
+          .padding(.top, 2)
+          .accessibilityHidden(true)
           VStack(alignment: .leading, spacing: 3) {
             Text(meeting.displayTitle)
               .lineLimit(1)

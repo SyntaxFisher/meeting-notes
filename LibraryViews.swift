@@ -135,18 +135,22 @@ struct MeetingRow: View {
   let record: MeetingRecord
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 2) {
-      Text(record.displayTitle)
-        .lineLimit(1)
-      HStack(spacing: 4) {
-        Text(record.startedAt, format: .dateTime.hour().minute())
-          .foregroundStyle(.secondary)
-        if record.status != .complete {
-          Text("·").foregroundStyle(.secondary)
-          StatusBadge(record: record)
+    HStack(spacing: 6) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(record.displayTitle)
+          .lineLimit(1)
+        HStack(spacing: 4) {
+          Text(record.startedAt, format: .dateTime.hour().minute())
+            .foregroundStyle(.secondary)
+          if record.status != .complete {
+            Text("·").foregroundStyle(.secondary)
+            StatusBadge(record: record)
+          }
         }
+        .font(.subheadline)
       }
-      .font(.subheadline)
+      Spacer(minLength: 0)
+      if record.source == .teams { TeamsMark(size: 16) }
     }
     .padding(.vertical, 2)
     .accessibilityElement(children: .ignore)
@@ -162,6 +166,7 @@ struct MeetingRow: View {
       parts.append(Format.spokenDuration(duration))
     }
     parts.append(StatusBadge.label(record))
+    if record.source == .teams { parts.append("Teams meeting") }
     return parts.joined(separator: ", ")
   }
 }

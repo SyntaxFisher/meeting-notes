@@ -157,7 +157,8 @@ private struct OnboardingView: View {
       SettingRow(
         title: "Auto-record Teams meetings",
         explanation:
-          "Starts and stops with your Teams meetings. Other apps can only be recorded manually."
+          "Starts and stops with your Teams meetings. Other apps can only be recorded manually.",
+        teams: true
       ) {
         Toggle(
           "Auto-record Teams meetings",
@@ -197,7 +198,7 @@ private struct OnboardingView: View {
         : "Recording works once all permissions are allowed."
     ) {
       fact(
-        "person.2.wave.2", "Records your Teams meetings",
+        "person.2.wave.2", teams: true, "Records your Teams meetings",
         model.autoRecord
           ? "Starts by itself when you join. Other apps record manually from the menu bar."
           : "Start a recording from the menu bar while you are in a Teams meeting.")
@@ -279,13 +280,18 @@ private struct OnboardingView: View {
     }
   }
 
-  private func fact(_ symbol: String, _ title: String, _ text: String) -> some View {
-    HStack(alignment: .top, spacing: 12) {
-      Image(systemName: symbol)
-        .font(.system(size: 16, weight: .medium))
-        .foregroundStyle(.tint)
-        .frame(width: 28)
-        .accessibilityHidden(true)
+  private func fact(
+    _ symbol: String, teams: Bool = false, _ title: String, _ text: String
+  ) -> some View {
+    let symbolImage = Image(systemName: symbol)
+      .font(.system(size: 16, weight: .medium))
+      .foregroundStyle(.tint)
+    return HStack(alignment: .top, spacing: 12) {
+      Group {
+        if teams { TeamsMark(size: 22) { symbolImage } } else { symbolImage }
+      }
+      .frame(width: 28)
+      .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 2) {
         Text(title).font(.headline)
         Text(text)

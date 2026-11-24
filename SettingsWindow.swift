@@ -151,12 +151,17 @@ private struct SettingsTabView: View {
 struct SettingRow<Control: View>: View {
   let title: String
   var explanation: String? = nil
+  /// Shows the Teams icon next to the title of a setting that only concerns Teams.
+  var teams = false
   @ViewBuilder let control: Control
 
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 12) {
       VStack(alignment: .leading, spacing: 2) {
-        Text(title)
+        HStack(spacing: 6) {
+          if teams { TeamsMark(size: 16) }
+          Text(title)
+        }
         if let explanation {
           Text(explanation)
             .font(.caption)
