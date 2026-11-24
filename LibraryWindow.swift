@@ -1,7 +1,6 @@
 import AppKit
 import Observation
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct TranscriptTurn: Identifiable, Equatable {
   let id: Int
@@ -29,6 +28,10 @@ enum LibraryEditor: Identifiable {
     case .speakers(let record): "speakers-\(record.id)"
     }
   }
+}
+
+enum MeetingAction {
+  case copyTranscript, editSpeakers, retry, exportDiagnostics, moveToTrash, discard
 }
 
 @MainActor
@@ -257,6 +260,17 @@ final class LibraryModel {
     return record
   }
 
+  func perform(_ action: MeetingAction, on record: MeetingRecord) {
+    switch action {
+    case .copyTranscript: copyTranscript(record)
+    case .editSpeakers: editSpeakers(record)
+    case .retry: retry(record)
+    case .exportDiagnostics: exportDiagnostics(record)
+    case .moveToTrash: pendingDeletion = record
+    case .discard: discard(record)
+    }
+  }
+
   func copyTranscript(_ record: MeetingRecord) {
     app.send(.copyText(TranscriptDocument.shareableText(record)))
   }
@@ -267,45 +281,14 @@ final class LibraryModel {
 
   func retry(_ record: MeetingRecord) { app.send(.meeting(.retry(id: record.id))) }
 
-  /// Asks where to save the meeting's diagnostics zip, writes it in the background and shows it
-  /// in the Finder.
   func exportDiagnostics(_ record: MeetingRecord) {
-    let panel = NSSavePanel()
-    panel.title = "Export Diagnostics"
-    panel.message =
-      "The zip file contains this meeting's transcript, participant names, Teams trace, logs "
-      + "and, if included, its audio. Share it only with people who may hear the meeting."
-    let audio = NSButton(checkboxWithTitle: "Include audio", target: nil, action: nil)
-    audio.state = .on
-    audio.toolTip =
-      "Replaying the transcription needs the audio. Without it, the zip is much smaller."
-    let split = NSButton(checkboxWithTitle: "Split into chunks", target: nil, action: nil)
-    let accessory = NSStackView(views: [audio, split])
-    accessory.edgeInsets = NSEdgeInsets(top: 8, left: 20, bottom: 8, right: 20)
-    panel.accessoryView = accessory
-    panel.nameFieldStringValue = DiagnosticsExport.fileName(for: record.id)
-    panel.allowedContentTypes = [.zip]
-    panel.directoryURL =
-      FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)
-      .first
-    NSApp.activate()
-    guard panel.runModal() == .OK, let destination = panel.url else { return }
-    let includesAudio = audio.state == .on
-    let splitsIntoParts = split.state == .on
-    showNotice("Exporting diagnostics…")
     let root = library.root
-    let id = record.id
     Task {
       do {
-        _ = try await Task.detached(priority: .userInitiated) {
-          var export = DiagnosticsExport(library: MeetingLibrary(root: root))
-          export.includesAudio = includesAudio
-          export.splitsIntoParts = splitsIntoParts
-          return try export.write(id, to: destination, replacing: true)
-        }.value
-        dismissNotice()
-        let parts = DiagnosticsExport.parts(of: destination)
-        NSWorkspace.shared.activateFileViewerSelecting(parts.isEmpty ? [destination] : parts)
+        let exported = try await DiagnosticsExport.exportWithSavePanel(record, root: root) {
+          showNotice("Exporting diagnostics…")
+        }
+        if exported { dismissNotice() }
       } catch {
         dismissNotice()
         errorMessage = "Could not export diagnostics: \(error.localizedDescription)"

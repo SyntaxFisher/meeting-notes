@@ -400,6 +400,9 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     case .showLibrary(let id):
       panel.close()
       libraryWindow.show(selecting: id)
+    case .meetingAction(let action, let id):
+      panel.close()
+      perform(action, onMeeting: id)
     case .setLaunchAtLogin(let enabled): setLaunchAtLogin(enabled)
     case .requestPermission(let permission): requestPermissions(only: permission)
     case .requestAllPermissions: requestPermissions(only: nil)
@@ -932,6 +935,41 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     lower.keyEquivalent = ""
     alert.addButton(withTitle: "Cancel").keyEquivalent = "\r"
     return await present(alert) == .alertFirstButtonReturn
+  }
+
+  private func perform(_ action: MeetingAction, onMeeting id: String) {
+    guard
+      let record = model.meetings.first(where: { $0.id == id })
+        ?? model.queue.first(where: { $0.id == id })?.record
+    else { return }
+    switch action {
+    case .copyTranscript: handle(.copyText(TranscriptDocument.shareableText(record)))
+    case .retry: run(.retry(id: id), source: .panel)
+    case .discard: run(.discard(id: id), source: .panel)
+    case .exportDiagnostics:
+      Task {
+        do {
+          try await DiagnosticsExport.exportWithSavePanel(record, root: model.meetingsRoot)
+        } catch {
+          report("Diagnostics were not exported", error.localizedDescription)
+        }
+      }
+    case .moveToTrash:
+      Task {
+        let alert = NSAlert()
+        alert.messageText = record.trashQuestion
+        alert.informativeText = MeetingRecord.trashExplanation
+        let trash = alert.addButton(withTitle: "Move to Trash")
+        trash.hasDestructiveAction = true
+        trash.keyEquivalent = ""
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\r"
+        guard await present(alert) == .alertFirstButtonReturn else { return }
+        run(.delete(id: id), source: .panel)
+      }
+    case .editSpeakers:
+      libraryWindow.show(selecting: id)
+      libraryWindow.model.editSpeakers(record)
+    }
   }
 
   /// Shows an alert or panel as a sheet on the Settings window when it is open.

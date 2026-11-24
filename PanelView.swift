@@ -510,6 +510,13 @@ private struct RecentMeetingRow: View {
         .fill(.primary.opacity(hovering ? 0.07 : 0))
     )
     .onHover { hovering = $0 }
+    .contextMenu {
+      MeetingActions(
+        record: meeting, canRetry: model.retryable.contains(meeting.id), editsSpeakers: false
+      ) {
+        model.send(.meetingAction($0, id: meeting.id))
+      }
+    }
     .accessibilityElement(children: .contain)
   }
 

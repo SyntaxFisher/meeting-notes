@@ -57,7 +57,7 @@ struct LibraryView: View {
       }
     }
     .confirmationDialog(
-      "Move “\(model.pendingDeletion?.displayTitle ?? "")” to the Trash?",
+      model.pendingDeletion?.trashQuestion ?? "",
       isPresented: Binding(
         get: { model.pendingDeletion != nil }, set: { if !$0 { model.pendingDeletion = nil } }),
       titleVisibility: .visible, presenting: model.pendingDeletion
@@ -65,9 +65,7 @@ struct LibraryView: View {
       Button("Move to Trash", role: .destructive) { model.delete(record) }
       Button("Cancel", role: .cancel) {}
     } message: { _ in
-      Text(
-        "Its audio, transcript, record and any other files starting with its id are moved to the Trash."
-      )
+      Text(MeetingRecord.trashExplanation)
     }
     .alert(
       "Meeting Notes",
@@ -125,7 +123,9 @@ struct MeetingSidebar: View {
     }
     .contextMenu(forSelectionType: String.self) { ids in
       if let id = ids.first, let record = model.records.first(where: { $0.id == id }) {
-        MeetingActions(model: model, record: record)
+        MeetingActions(record: record, canRetry: model.canRetry(record)) {
+          model.perform($0, on: record)
+        }
       }
     }
   }
@@ -213,26 +213,38 @@ struct StatusBadge: View {
   }
 }
 
+extension MeetingRecord {
+  var trashQuestion: String { "Move “\(displayTitle)” to the Trash?" }
+  static let trashExplanation =
+    "Its audio, transcript, record and any other files starting with its id are moved to the Trash."
+}
+
+/// A meeting's context menu, shared by the Library and the panel's Last Meetings, which leaves
+/// out speaker editing.
 struct MeetingActions: View {
-  let model: LibraryModel
   let record: MeetingRecord
+  let canRetry: Bool
+  var editsSpeakers = true
+  let perform: (MeetingAction) -> Void
 
   var body: some View {
     if record.status == .complete {
-      Button("Copy Transcript") { model.copyTranscript(record) }
-      Button("Edit Speakers…") { model.editSpeakers(record) }
+      Button("Copy Transcript") { perform(.copyTranscript) }
+      if editsSpeakers {
+        Button("Edit Speakers…") { perform(.editSpeakers) }
+      }
     }
     if record.status.needsAttention {
-      Button("Retry Transcription") { model.retry(record) }
-        .disabled(!model.canRetry(record))
+      Button("Retry Transcription") { perform(.retry) }
+        .disabled(!canRetry)
     }
     Divider()
-    Button("Export Diagnostics…") { model.exportDiagnostics(record) }
+    Button("Export Diagnostics…") { perform(.exportDiagnostics) }
     Divider()
     if record.status == .complete {
-      Button("Move to Trash…", role: .destructive) { model.pendingDeletion = record }
+      Button("Move to Trash…", role: .destructive) { perform(.moveToTrash) }
     } else {
-      Button("Discard", role: .destructive) { model.discard(record) }
+      Button("Discard", role: .destructive) { perform(.discard) }
         .disabled(!(record.status.needsAttention || record.status == .queued))
     }
   }

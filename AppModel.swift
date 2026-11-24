@@ -15,6 +15,8 @@ enum AppCommand {
   case setRecordingLimit(bytes: Int64, done: () -> Void)
   case dismissProblem
   case showLibrary(id: String?)
+  /// A context-menu action on a meeting in the panel. Only speaker editing opens the Library.
+  case meetingAction(MeetingAction, id: String)
   case setLaunchAtLogin(Bool)
   case requestPermission(MeetingPermission)
   case requestAllPermissions
