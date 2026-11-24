@@ -164,7 +164,8 @@ _ = AXUIElementSetAttributeValue(
 let listedWindows: [AXUIElement] = attribute(application, kAXWindowsAttribute) ?? []
 
 /// Teams' windows on every desktop: macOS lists only the current desktop's, so the others are
-/// found by their remote tokens, as the app does.
+/// found by their remote tokens, as the app does. Windows Teams keeps without showing them are
+/// not standard windows and stay out, as in the app.
 func windowsOnAllDesktops() -> [AXUIElement] {
   typealias CreateWithRemoteToken = @convention(c) (CFData) -> Unmanaged<AXUIElement>?
   guard
@@ -180,6 +181,7 @@ func windowsOnAllDesktops() -> [AXUIElement] {
     token.replaceSubrange(12..<20, with: withUnsafeBytes(of: number) { Data($0) })
     guard let element = create(token as CFData)?.takeRetainedValue(),
       attribute(element, kAXRoleAttribute) == kAXWindowRole as String,
+      attribute(element, kAXSubroleAttribute) == kAXStandardWindowSubrole as String,
       !found.contains(where: { CFEqual($0, element) })
     else { continue }
     found.append(element)

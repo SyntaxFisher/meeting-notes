@@ -18,6 +18,8 @@ enum TeamsTraceSmoke {
     testSharingRegression()
     testReplayTiming()
     testOutgoingCall()
+    testHiddenWindow()
+    testMicrophoneRelease()
     testEverydayReplay()
     testFrozenMeetingWindowReplay()
     try testEmptySpeakerReplay(root.appendingPathComponent("empty-speakers"))
@@ -104,8 +106,8 @@ enum TeamsTraceSmoke {
     var full = TeamsMeetingWindowTracker<Int>()
     var replayed = TeamsMeetingWindowTracker<Int>()
     precondition(
-      TeamsMuteClassifier.reading(mute, tracker: &full)
-        == TeamsMuteClassifier.reading(tracedMute, tracker: &replayed),
+      TeamsMuteClassifier.reading(mute, tracker: &full, at: 0)
+        == TeamsMuteClassifier.reading(tracedMute, tracker: &replayed, at: 0),
       "The traced mute input reads like the full one")
   }
 
@@ -354,9 +356,9 @@ enum TeamsTraceSmoke {
       frontmost: true, windows: [TeamsWindowInput(id: 1, title: "Chat | Called Dev", main: true)])
     var tracker = TeamsMeetingWindowTracker<Int>()
     func presence(_ input: TeamsMuteInput) -> TeamsMeetingPresence {
-      TeamsMuteClassifier.reading(input, tracker: &tracker).meetingPresence
+      TeamsMuteClassifier.reading(input, tracker: &tracker, at: 0).meetingPresence
     }
-    let ringing = TeamsMuteClassifier.reading(call(.pending), tracker: &tracker)
+    let ringing = TeamsMuteClassifier.reading(call(.pending), tracker: &tracker, at: 0)
     precondition(
       ringing.state == .unmuted && ringing.meetingPresence == .connecting,
       "A ringing call mirrors mute but is not yet a meeting to record: \(ringing)")
@@ -383,7 +385,7 @@ enum TeamsTraceSmoke {
           .utf8))
     var fresh = TeamsMeetingWindowTracker<Int>()
     precondition(
-      TeamsMuteClassifier.reading(legacy, tracker: &fresh).meetingPresence == .inMeeting,
+      TeamsMuteClassifier.reading(legacy, tracker: &fresh, at: 0).meetingPresence == .inMeeting,
       "Traced inputs without the clock read as a connected call")
     var ended = call(.running)
     precondition(presence(ended) == .inMeeting)
@@ -432,6 +434,173 @@ enum TeamsTraceSmoke {
           "unavailable(noMeeting)", "unmuted connecting", "unmuted",
         ],
       "Recording starts when the call connects: \(answered.replayed)")
+  }
+
+  /// Teams can keep a window it does not show whose Accessibility tree repeats the controls of
+  /// the call in progress, here as a reader that still remembered it traced it: with the
+  /// meeting window's controls during a call, with the compact view's as well while that is
+  /// open, and with none after the call. It must neither make the mute state ambiguous nor
+  /// keep a meeting that ended.
+  private static func testHiddenWindow() {
+    let controls = [["Verlassen"], ["Personen"], ["Mikrofon stummschalten"]]
+    let compactControls = [["Personen"], ["Mikrofon stummschalten"]]
+    func input(
+      meeting: Int? = nil, compactView: Bool = false, muted: Bool = false
+    ) -> TeamsMuteInput {
+      func labels(_ buttons: [[String]]) -> [[String]] {
+        muted
+          ? buttons.map { $0 == ["Mikrofon stummschalten"] ? ["Mikrofon wieder aktivieren"] : $0 }
+          : buttons
+      }
+      var windows = [
+        TeamsWindowInput(
+          id: 1, title: "Chat | Contoso | user@example.com", main: meeting == nil,
+          origin: .listed, refresh: 0, blank: false)
+      ]
+      var repeated: [[String]] = []
+      if let meeting {
+        windows.append(
+          TeamsWindowInput(
+            id: meeting, title: "Weekly | Contoso | user@example.com", minimized: compactView,
+            main: !compactView, origin: .listed, refresh: 0, buttons: labels(controls),
+            clock: .running, blank: false))
+        repeated += controls
+      }
+      if compactView {
+        windows.append(
+          TeamsWindowInput(
+            id: 14, title: "Kompakte Besprechungsansicht | Weekly", origin: .listed, refresh: 0,
+            buttons: labels(compactControls), blank: false))
+        repeated += compactControls
+      }
+      windows.append(
+        TeamsWindowInput(
+          id: 2, title: "Microsoft Teams", origin: .remembered, refresh: 0,
+          buttons: labels(repeated), clock: .running, blank: false))
+      return TeamsMuteInput(frontmost: !compactView, windows: windows)
+    }
+    func at(_ kind: String, _ time: Double, _ fields: [String: Any] = [:]) -> String {
+      line(["k": kind, "t": time, "w": 1000 + time].merging(fields) { $1 })
+    }
+    func readings(from start: Double, to end: Double, _ input: TeamsMuteInput) -> [String] {
+      [at("mute-input", start, encoded(input))]
+        + stride(from: start, to: end, by: 0.4).map { at("read", $0 + 0.001) }
+    }
+    var lines = [
+      at("session", 99, ["pid": 7, "config": ["autoRecordTeamsMeetings": true]]),
+      at("mute-input", 100, encoded(input())), at("read", 100.001),
+      at("auto-record", 100.01, ["canStart": true, "action": ""]),
+    ]
+    lines += readings(from: 110, to: 120, input(meeting: 6))
+    lines += readings(from: 120, to: 130, input(meeting: 6, compactView: true))
+    lines += readings(from: 130, to: 140, input(meeting: 6, compactView: true, muted: true))
+    lines += readings(from: 140, to: 144, input())
+    lines += readings(from: 144, to: 190, input(meeting: 17))
+    lines += readings(from: 190, to: 200, input())
+    let result = TeamsReplay.replay(Data(lines.joined(separator: "\n").utf8))
+    precondition(
+      result.replayed.states.map(\.value) == [
+        "unavailable(noMeeting)", "unmuted", "muted", "unavailable(noMeeting)", "unmuted",
+        "unavailable(noMeeting)",
+      ],
+      "The hidden window repeats the call's controls without changing the state: "
+        + "\(result.replayed.states)")
+    let grace = TeamsAutoRecordPolicy.leaveGracePeriod
+    precondition(
+      result.replayed.recordings.count == 2
+        && result.replayed.recordings.map({ $0.start.rounded() }) == [110, 144]
+        && zip(result.replayed.recordings, [140.0, 190.0]).allSatisfy {
+          ($0.end ?? .infinity) - $1 < grace + 0.5
+        },
+      "Each call's recording stops when the call ends: \(result.replayed.recordings)")
+
+    // On another desktop the meeting window is not listed either, and neither is a popover
+    // open in it.
+    var tracker = TeamsMeetingWindowTracker<Int>()
+    var elsewhere = input(meeting: 6)
+    elsewhere.windows.removeLast()
+    elsewhere.windows[1].origin = .remembered
+    precondition(
+      TeamsMuteClassifier.reading(elsewhere, tracker: &tracker, at: 0).state == .unmuted)
+    elsewhere.windows[1].buttons = []
+    precondition(
+      TeamsMuteClassifier.reading(elsewhere, tracker: &tracker, at: 1).meetingPresence
+        == .noMeeting, "An unlisted window that lost its controls is not in a meeting")
+  }
+
+  /// Teams holds the microphone for a whole call and lets go of it when the call ends. A
+  /// meeting window that lost its controls keeps its meeting only while Teams still holds the
+  /// microphone, so whatever Teams shows in the window after a call ends the meeting, and a
+  /// popover during the call, or a moment without audio input, does not.
+  private static func testMicrophoneRelease() {
+    let grace = TeamsMeetingWindowTracker<Int>.microphoneReleaseGrace
+    func input(_ buttons: [[String]], microphone: Bool?, listed: Bool = true) -> TeamsMuteInput {
+      TeamsMuteInput(
+        frontmost: true,
+        windows: [
+          TeamsWindowInput(
+            id: 1, title: "Weekly | Microsoft Teams", main: true,
+            origin: listed ? .listed : .remembered, refresh: 0, buttons: buttons, blank: false)
+        ], microphoneInUse: microphone)
+    }
+    let controls = [["Leave"], ["Mute mic"]]
+    let afterCall = [["Rate this call"]]
+    var tracker = TeamsMeetingWindowTracker<Int>()
+    func presence(_ input: TeamsMuteInput, at time: Double) -> TeamsMeetingPresence {
+      TeamsMuteClassifier.reading(input, tracker: &tracker, at: time).meetingPresence
+    }
+    precondition(presence(input(controls, microphone: true), at: 0) == .inMeeting)
+    precondition(
+      presence(input(afterCall, microphone: true), at: 10) == .inMeeting
+        && presence(input(afterCall, microphone: false), at: 11) == .inMeeting
+        && presence(input(afterCall, microphone: false), at: 11 + grace - 0.1) == .inMeeting,
+      "A window without controls keeps its meeting until Teams has let go of the microphone")
+    precondition(
+      presence(input(afterCall, microphone: false), at: 11 + grace) == .noMeeting
+        && presence(input(afterCall, microphone: true), at: 30) == .noMeeting,
+      "The call ended, also when Teams uses the microphone again before the next meeting")
+    precondition(
+      presence(input(controls, microphone: true), at: 40) == .inMeeting
+        && presence(input([], microphone: false), at: 50) == .inMeeting
+        && presence(input([], microphone: true), at: 52) == .inMeeting
+        && presence(input([], microphone: nil), at: 60) == .inMeeting
+        && presence(input([], microphone: true), at: 70) == .inMeeting,
+      "A popover hides the controls while Teams restarts its audio input")
+    precondition(
+      presence(input([], microphone: true, listed: false), at: 80) == .inMeeting,
+      "On another desktop the window keeps its meeting while Teams holds the microphone")
+
+    tracker = TeamsMeetingWindowTracker<Int>()
+    precondition(
+      presence(input(controls, microphone: false), at: 0) == .inMeeting
+        && presence(input(afterCall, microphone: false), at: 100) == .inMeeting
+        && presence(input(afterCall, microphone: nil), at: 200) == .inMeeting,
+      "Where Teams never held the microphone, its absence says nothing")
+    precondition(input(afterCall, microphone: false).traced.microphoneInUse == false)
+
+    // The app reads on while nothing changes; the replay ends the meeting at the same reading.
+    func at(_ kind: String, _ time: Double, _ fields: [String: Any] = [:]) -> String {
+      line(["k": kind, "t": time, "w": 1000 + time].merging(fields) { $1 })
+    }
+    func readings(from start: Double, to end: Double, _ input: TeamsMuteInput) -> [String] {
+      [at("mute-input", start, encoded(input.traced))]
+        + stride(from: start, to: end, by: 0.4).map { at("read", $0 + 0.001) }
+    }
+    var lines = [
+      at("session", 99, ["pid": 7, "config": ["autoRecordTeamsMeetings": true]]),
+      at("mute-input", 100, encoded(input(controls, microphone: true))), at("read", 100.001),
+      at("auto-record", 100.01, ["canStart": true, "action": "start"]),
+      at("recording", 100.2, ["event": "recording.started", "trigger": "automatic"]),
+    ]
+    lines += readings(from: 160, to: 161, input(afterCall, microphone: true))
+    lines += readings(from: 161, to: 180, input(afterCall, microphone: false))
+    let result = TeamsReplay.replay(Data(lines.joined(separator: "\n").utf8))
+    let end = result.replayed.recordings.first?.end ?? .infinity
+    precondition(
+      result.replayed.recordings.count == 1 && end >= 161 + grace
+        && end < 161 + grace + TeamsAutoRecordPolicy.leaveGracePeriod + 1,
+      "The recording stops once the microphone has been released for the grace period: "
+        + "\(result.replayed.recordings)")
   }
 
   /// Failed starts, user actions, slow readings, repeated sessions and recordings that continue

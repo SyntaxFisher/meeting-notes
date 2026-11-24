@@ -136,6 +136,23 @@ enum AudioHardwareInfo {
     }.sorted { $0.pid < $1.pid }
   }
 
+  /// Whether the app with this bundle ID or one of its helper processes records from an audio
+  /// input, nil when Core Audio does not list its processes.
+  static func recordsInput(bundleID: String) -> Bool? {
+    guard
+      let objects = try? objects(
+        AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList)
+    else { return nil }
+    return objects.contains { object in
+      guard let id = try? string(object, kAudioProcessPropertyBundleID),
+        id == bundleID || id.hasPrefix(bundleID + ".")
+      else { return false }
+      var recording: UInt32 = 0
+      return (try? read(object, kAudioProcessPropertyIsRunningInput, into: &recording)) != nil
+        && recording != 0
+    }
+  }
+
   /// The Core Audio process object of a process that has used Core Audio.
   static func processObject(pid: pid_t) throws -> AudioObjectID {
     var address = AudioObjectPropertyAddress(

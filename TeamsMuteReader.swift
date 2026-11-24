@@ -55,6 +55,9 @@ struct TeamsWindowSnapshot {
   /// main window while it is in front. Otherwise a meeting window behind other apps or
   /// minimized reports the mute state it last drew.
   var isCurrent = false
+  /// Whether Accessibility lists the window, so it is on the current desktop, where a popover
+  /// can be open in it.
+  var isListed = true
 }
 
 /// One Teams window as the mute reader read it, the input the classifier decides from. `id` is
@@ -119,6 +122,10 @@ struct TeamsMuteInput: Codable, Equatable {
   var frontmost = false
   var windows: [TeamsWindowInput] = []
   var failure: TeamsMuteState.Reason?
+  /// Whether Teams records from an audio input, nil when Core Audio did not say. Teams holds
+  /// the microphone for a whole call, also while muted in Teams, and lets go of it when the
+  /// call ends.
+  var microphoneInUse: Bool?
 
   /// The input with only the labels the classifier recognizes, so chat messages, file names
   /// and notifications shown in buttons and headings stay out of the trace. Reading the traced
@@ -166,12 +173,7 @@ enum TeamsMuteClassifier {
       $0.isCurrent && !$0.buttons.compactMap(classifyButton).isEmpty
     }
     let meetingWindows = current.isEmpty ? allMeetingWindows : current
-    var states: Set<TeamsMuteState> = []
-    for window in meetingWindows {
-      let windowStates = window.buttons.compactMap(classifyButton)
-      if windowStates.count > 1 { return .unavailable(.ambiguous) }
-      states.formUnion(windowStates)
-    }
+    let states = Set(meetingWindows.flatMap { $0.buttons.compactMap(classifyButton) })
     guard states.count == 1, let state = states.first else {
       return .unavailable(states.isEmpty ? .noControl : .ambiguous)
     }
@@ -194,16 +196,19 @@ enum TeamsMuteClassifier {
       meetingEnded: window.blank == true || window.buttons.contains(where: isMeetingEndControl),
       clock: window.clock,
       isCurrent: window.refresh == AXError.success.rawValue
-        || (!window.minimized && (isCompactView(window.title) || (frontmost && window.main))))
+        || (!window.minimized && (isCompactView(window.title) || (frontmost && window.main))),
+      isListed: window.origin == nil || window.origin == .listed)
   }
 
-  /// The reading of `input`, with `tracker` remembering meeting windows across readings.
-  static func reading(_ input: TeamsMuteInput, tracker: inout TeamsMeetingWindowTracker<Int>)
-    -> TeamsReading
-  {
+  /// The reading of `input` at `time`, seconds on any steady clock, with `tracker` remembering
+  /// meeting windows across readings.
+  static func reading(
+    _ input: TeamsMuteInput, tracker: inout TeamsMeetingWindowTracker<Int>, at time: TimeInterval
+  ) -> TeamsReading {
     if let failure = input.failure { return TeamsReading(state: .unavailable(failure)) }
     return tracker.observe(
-      input.windows.map { ($0.id, snapshot($0, frontmost: input.frontmost)) })
+      input.windows.map { ($0.id, snapshot($0, frontmost: input.frontmost)) },
+      microphoneInUse: input.microphoneInUse, at: time)
   }
 
   /// Whether the meeting windows show the call connected, still connecting, or neither. A
@@ -321,27 +326,54 @@ enum TeamsMuteClassifier {
 
 /// A Teams popover can hide every call control while its meeting window remains open.
 /// A closed window, a blank one or explicit post-call controls establish absence; missing
-/// controls do not.
+/// controls do not while the call can still be running. Teams holds the microphone for a whole
+/// call, so once it has let go of it for `microphoneReleaseGrace`, a window without controls
+/// is no longer in a call, whatever Teams shows in it after the call. Where Teams was not seen
+/// holding the microphone, only a window on the current desktop, where a popover can be open,
+/// keeps its meeting without controls.
 /// A call that showed it is connecting stays so until a window shows it connected or the
 /// meeting ends, since a compact view that replaces its window shows neither.
 struct TeamsMeetingWindowTracker<Window: Equatable> {
+  /// Teams restarts its audio input when devices change, so a short release ends nothing.
+  static var microphoneReleaseGrace: TimeInterval { 5 }
+
   private var knownWindows: [Window] = []
   private var connecting = false
+  private var heldMicrophone = false
+  private var microphoneReleasedAt: TimeInterval?
 
-  mutating func observe(_ windows: [(id: Window, snapshot: TeamsWindowSnapshot)]) -> TeamsReading {
+  mutating func observe(
+    _ windows: [(id: Window, snapshot: TeamsWindowSnapshot)], microphoneInUse: Bool? = nil,
+    at time: TimeInterval = 0
+  ) -> TeamsReading {
+    let snapshots = windows.map(\.snapshot)
+    var state = TeamsMuteClassifier.classify(snapshots)
+    let showsControls = state != .unavailable(.noMeeting)
+    if showsControls, microphoneInUse == true { heldMicrophone = true }
+    if showsControls || microphoneInUse != false {
+      microphoneReleasedAt = nil
+    } else if heldMicrophone, microphoneReleasedAt == nil {
+      microphoneReleasedAt = time
+    }
+    let callEnded =
+      microphoneReleasedAt.map { time - $0 >= Self.microphoneReleaseGrace } ?? false
     knownWindows.removeAll { known in
-      !windows.contains { $0.id == known && !$0.snapshot.meetingEnded }
+      guard let window = windows.first(where: { $0.id == known })?.snapshot,
+        !window.meetingEnded
+      else { return true }
+      if TeamsMuteClassifier.isMeetingWindow(window) { return false }
+      return heldMicrophone ? callEnded : !window.isListed
     }
     for window in windows where TeamsMuteClassifier.isMeetingWindow(window.snapshot) {
       if !knownWindows.contains(window.id) { knownWindows.append(window.id) }
     }
-    let snapshots = windows.map(\.snapshot)
-    var state = TeamsMuteClassifier.classify(snapshots)
     if state == .unavailable(.noMeeting), !knownWindows.isEmpty {
       state = .unavailable(.noControl)
     }
     if knownWindows.isEmpty {
       connecting = false
+      heldMicrophone = false
+      microphoneReleasedAt = nil
     } else if let connected = TeamsMuteClassifier.callConnected(snapshots) {
       connecting = !connected
     }
@@ -392,7 +424,8 @@ final class TeamsMuteReader {
   func read(_ windows: Result<TeamsWindowList, TeamsMuteState.Reason>) -> TeamsReading {
     let input = self.input(windows)
     TeamsTrace.shared.record("mute-input", value: input.traced)
-    let reading = TeamsMuteClassifier.reading(input, tracker: &tracker)
+    let reading = TeamsMuteClassifier.reading(
+      input, tracker: &tracker, at: ProcessInfo.processInfo.systemUptime)
     meetingWindowMissing = TeamsMuteClassifier.meetingWindowMissing(
       input.windows.map { TeamsMuteClassifier.snapshot($0, frontmost: input.frontmost) })
     TeamsTrace.shared.record(
@@ -413,7 +446,8 @@ final class TeamsMuteReader {
     }
     TeamsTrace.shared.record("teams", ["version": TeamsTrace.version(of: list.app) ?? ""])
     var input = TeamsMuteInput(
-      frontmost: attribute(list.application, kAXFrontmostAttribute) ?? false)
+      frontmost: attribute(list.application, kAXFrontmostAttribute) ?? false,
+      microphoneInUse: AudioHardwareInfo.recordsInput(bundleID: AudioProcessStatus.teamsBundleID))
     for window in list.windows {
       guard var scanned = scan(window.element) else {
         return TeamsMuteInput(failure: .accessibilityError)

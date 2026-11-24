@@ -4,17 +4,18 @@ import Foundation
 /// app recorded at the time: mute states, automatic recording starts and stops, and the
 /// speakers Teams showed.
 ///
-/// Automatic recording is simulated when the session's settings enable it: the policy sees
-/// every reading the app made (`read` lines; changed readings also carry their input) and every
-/// evaluation the app logged, in time order. Between them nothing is assumed: a reading the
-/// trace does not show is unknown. Speakers are observed at every participant reading
-/// (`participants-read`) with the last traced input; without such lines the replay gives no
-/// speaker timeline. Whether a start was possible comes from the app's logged evaluations and
-/// is unknown, so no start, before the first one. Automatic recordings start and stop as the
-/// replayed policy decides; manual recordings, stops the user asked for, failures and
-/// interruptions come from the trace, and a restart of the app, seen in a session line with
-/// another process, ends the replayed recording and starts detection afresh. Readings Teams
-/// never gave cannot be replayed, and the trace holds no audio.
+/// Automatic recording is simulated when the session's settings enable it: the detection and
+/// the policy see every reading the app made (`read` lines; changed readings also carry their
+/// input, unchanged ones repeat the last) and every evaluation the app logged, in time order.
+/// Between them nothing is assumed: a reading the trace does not show is unknown. Speakers are
+/// observed at every participant reading (`participants-read`) with the last traced input;
+/// without such lines the replay gives no speaker timeline. Whether a start was possible comes
+/// from the app's logged evaluations and is unknown, so no start, before the first one.
+/// Automatic recordings start and stop as the replayed policy decides; manual recordings, stops
+/// the user asked for, failures and interruptions come from the trace, and a restart of the
+/// app, seen in a session line with another process, ends the replayed recording and starts
+/// detection afresh. Readings Teams never gave cannot be replayed, and the trace holds no
+/// audio.
 enum TeamsReplay {
   struct Step: Codable, Equatable {
     var t: Double
@@ -61,6 +62,7 @@ enum TeamsReplay {
     var tracker = TeamsMeetingWindowTracker<Int>()
     var policy = TeamsAutoRecordPolicy()
     var presence: TeamsMeetingPresence?
+    var input: TeamsMuteInput?
     var autoRecord = true
     var canStart: Bool?
     var replayedState: String?
@@ -91,6 +93,18 @@ enum TeamsReplay {
       }
     }
 
+    func read(at time: Double) {
+      guard let input else { return }
+      let reading = TeamsMuteClassifier.reading(input, tracker: &tracker, at: time)
+      let description =
+        reading.connecting ? "\(reading.state.name) connecting" : reading.state.name
+      if description != replayedState {
+        result.replayed.states.append(Step(t: time, value: description))
+        replayedState = description
+      }
+      presence = reading.meetingPresence
+    }
+
     func end(at time: Double) {
       guard let index = open else { return }
       result.replayed.recordings[index].end = time
@@ -116,6 +130,7 @@ enum TeamsReplay {
           end(at: time)
           tracker = TeamsMeetingWindowTracker<Int>()
           policy = TeamsAutoRecordPolicy()
+          input = nil
         }
         process = pid ?? process
         if let enabled = (line["config"] as? [String: Any])?["autoRecordTeamsMeetings"] as? Bool {
@@ -123,16 +138,11 @@ enum TeamsReplay {
           autoRecord = enabled
         }
       case "mute-input":
-        guard let input = decode(TeamsMuteInput.self, line) else { continue }
-        let reading = TeamsMuteClassifier.reading(input, tracker: &tracker)
-        let description =
-          reading.connecting ? "\(reading.state.name) connecting" : reading.state.name
-        if description != replayedState {
-          result.replayed.states.append(Step(t: time, value: description))
-          replayedState = description
-        }
-        presence = reading.meetingPresence
+        guard let decoded = decode(TeamsMuteInput.self, line) else { continue }
+        input = decoded
+        read(at: time)
       case "read":
+        read(at: time)
         evaluate(at: time)
       case "mute":
         if var state = line["state"] as? String {

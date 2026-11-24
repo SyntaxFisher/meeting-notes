@@ -32,8 +32,8 @@ extension TeamsMuteState.Reason: Error {}
 /// window. Any Accessibility action on the window's web area makes Teams publish its current
 /// tree; scrolling the web area into view, which it already is, changes nothing on screen.
 /// Accessibility lists only windows on the current desktop, so windows seen before stay in the
-/// list until Teams closes them, and while Teams shows a compact meeting view without its
-/// meeting window, a throttled scan finds a meeting window no reading has seen.
+/// list until Teams closes or hides them, and while Teams shows a compact meeting view without
+/// its meeting window, a throttled scan finds a meeting window no reading has seen.
 ///
 /// Use from one queue only.
 final class TeamsWindowSource {
@@ -86,7 +86,7 @@ final class TeamsWindowSource {
       }
     }
     let unlisted = known.filter { entry in
-      !listed.contains { CFEqual($0, entry.element) } && Self.isOpen(entry.element)
+      !listed.contains { CFEqual($0, entry.element) } && Self.isOnAnotherDesktop(entry.element)
     }.map { (element: $0.element, origin: $0.origin == .scanned ? $0.origin : .remembered) }
     known = listed.map { ($0, TeamsWindowOrigin.listed) } + unlisted
     webAreas.removeAll { area in !known.contains { CFEqual($0.element, area.window) } }
@@ -109,6 +109,20 @@ final class TeamsWindowSource {
     var role: CFTypeRef?
     return AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &role)
       != .invalidUIElement
+  }
+
+  /// Whether an unlisted window is one Teams shows on another desktop. Teams also keeps windows
+  /// it does not show, such as the call window it prepares for the next call, and their
+  /// Accessibility trees can repeat the controls of the call in progress. A window that is
+  /// shown on some desktop is a standard window; a hidden one is not. A window Teams does not
+  /// answer for in time stays in the list.
+  private static func isOnAnotherDesktop(_ window: AXUIElement) -> Bool {
+    var subrole: CFTypeRef?
+    switch AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subrole) {
+    case .success: return subrole as? String == kAXStandardWindowSubrole as String
+    case .invalidUIElement: return false
+    default: return true
+    }
   }
 
   private func refresh(_ window: AXUIElement) -> Int32? {
