@@ -1137,7 +1137,12 @@ def teams_language(args):
         return
     if teams_control("find", r"^(Leave|Verlassen)$", "--meeting").returncode == 0:
         fail("Teams is in a meeting; leave it before switching its language.")
-    teams_control("language", name, check=True)
+    # Right after a meeting Teams can still be laying out its windows, and its settings then
+    # miss the language list.
+    for attempt in range(3):
+        if teams_control("language", name, check=attempt == 2).returncode == 0:
+            break
+        time.sleep(5)
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         time.sleep(3)
