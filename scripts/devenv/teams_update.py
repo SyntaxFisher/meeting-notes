@@ -15,7 +15,9 @@ downloads and reports.
     verify [--scenario S]  build Meeting Notes from this checkout and record scored live
                            meetings through the local Teams test environment, one per
                            scenario (repeat --scenario; default: the regression suite, SUITE);
-                           a scenario ending in "@de" is played in German Teams
+                           a scenario ending in "@de" is played in German Teams; the suite
+                           replaces the build's report and marks the build verified, single
+                           scenarios report under reruns/ beside it
     status                 print the state as JSON
     install-agent          run `check --trigger` every hour from launchd
 
@@ -681,7 +683,7 @@ def summary_markdown(report: dict) -> str:
             if key not in ("transcript", "meeting", "werByLanguage"):
                 lines.append(f"| {key} | {value} | {before.get(key, '')} |")
     lines += ["", "## Files", "",
-              "- build.log, " + ", ".join(f"{run['scenario']}.log" for run in report["runs"])
+              "- build.log, " + ", ".join(run["log"] for run in report["runs"])
               + ", report.json"]
     return "\n".join(lines) + "\n"
 
@@ -693,8 +695,13 @@ def run_suite(runs: list[str]) -> dict:
     if not devenv_config().get("meetingUrl"):
         raise RuntimeError("no meeting link; save one with `devenv.py config --url`")
     archive_installed_build()
+    # Only the whole suite replaces a build's report; re-checks of single scenarios go beside it.
+    full = runs == SUITE
     out = REPORTS_DIR / version
-    shutil.rmtree(out, ignore_errors=True)
+    if full:
+        shutil.rmtree(out, ignore_errors=True)
+    else:
+        out = out / "reruns" / time.strftime("%Y%m%dT%H%M%S")
     out.mkdir(parents=True)
     report = {"teams": version, "runs": [],
               "meeting_notes": git("describe", "--tags", "--always", "--dirty") or None,
@@ -711,11 +718,13 @@ def run_suite(runs: list[str]) -> dict:
             set_teams_language(language, out / "teams-language.log")
             log(f"live meeting: {name}")
             run_started = time.time()
-            run = {"scenario": name, "meeting_exit": None, "score": None}
+            repeat = sum(earlier["scenario"] == name for earlier in report["runs"])
+            run = {"scenario": name, "meeting_exit": None, "score": None,
+                   "log": f"{name}-{repeat + 1}.log" if repeat else f"{name}.log"}
             report["runs"].append(run)
             run["meeting_exit"] = run_logged(
                 [sys.executable, str(DEVENV), "meeting", scenario, "--leave", "--score"],
-                out / f"{name}.log")
+                out / run["log"])
             run["score"] = newest_report(scenario, run_started)
             meeting = (run["score"] or {}).get("meeting")
             if meeting and (RECONSTRUCTION / meeting).is_dir():
@@ -737,10 +746,12 @@ def run_suite(runs: list[str]) -> dict:
     report["verdict"], report["reasons"] = verdict_for(report)
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     (out / "summary.md").write_text(summary_markdown(report))
-    state = load_state()
-    state["verified"] = {"version": version, "verdict": report["verdict"], "at": time.time(),
-                         "meeting_notes": report["meeting_notes"], "report": str(out)}
-    save_state(state)
+    if full:
+        state = load_state()
+        state["verified"] = {"version": version, "verdict": report["verdict"],
+                             "at": time.time(), "meeting_notes": report["meeting_notes"],
+                             "report": str(out)}
+        save_state(state)
     return {"verdict": report["verdict"], "reasons": report["reasons"], "report": str(out)}
 
 
