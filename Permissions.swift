@@ -19,7 +19,7 @@ enum MeetingPermission: String {
     switch self {
     case .microphone: return "Records your voice."
     case .systemAudio: return "Records the other participants in Teams."
-    case .accessibility: return "Detects Teams meetings, titles and mute."
+    case .accessibility: return "Detects Teams meetings, speakers and mute."
     case .documents: return "Saves your recordings and transcripts."
     }
   }

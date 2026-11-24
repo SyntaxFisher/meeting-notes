@@ -61,6 +61,8 @@ extension Smoke {
     var inputs = PanelStatus.Inputs(permissions: granted)
     let ready = PanelStatus.make(inputs)
     precondition(ready == .ready(.manual))
+    precondition(ready.headline(now: start) == "Ready")
+    precondition(ready.detail == "Teams auto-record is off")
     precondition(ready.headerAction(canStart: true) == .start && ready.headerAccessory == nil)
     precondition(ready.headerAction(canStart: false) == nil, "A blocked header is not a button")
     inputs.startBlocked = "An update is being installed."
@@ -72,6 +74,7 @@ extension Smoke {
     inputs.startBlocked = nil
     inputs.autoRecord = true
     precondition(PanelStatus.make(inputs) == .ready(.autoRecord))
+    precondition(PanelStatus.make(inputs).detail == "Waiting for a Teams meeting")
     inputs.autoRecordPaused = true
     precondition(PanelStatus.make(inputs) == .ready(.autoRecordPaused))
     inputs.freshTranscript = queued

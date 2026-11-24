@@ -134,7 +134,8 @@ private struct OnboardingView: View {
       hasInstalledAgent: model.hasInstalledAgent)
     return page(
       title: "Set up Meeting Notes",
-      subtitle: "Allow these permissions. Everything stays on this Mac."
+      subtitle:
+        "Records and transcribes your Microsoft Teams meetings on this Mac. Allow these permissions to start."
     ) {
       ForEach(Array(MeetingPermission.setupOrder.enumerated()), id: \.element) {
         index, permission in
@@ -155,7 +156,8 @@ private struct OnboardingView: View {
     page(title: "Preferences", subtitle: "You can change these later in Settings.") {
       SettingRow(
         title: "Auto-record Teams meetings",
-        explanation: "Starts and stops with your Teams meetings."
+        explanation:
+          "Starts and stops with your Teams meetings. Other apps can only be recorded manually."
       ) {
         Toggle(
           "Auto-record Teams meetings",
@@ -195,10 +197,10 @@ private struct OnboardingView: View {
         : "Recording works once all permissions are allowed."
     ) {
       fact(
-        "person.2.wave.2", "Records your meetings",
+        "person.2.wave.2", "Records your Teams meetings",
         model.autoRecord
-          ? "Starts by itself when you join a Teams meeting."
-          : "Start a recording from the menu bar.")
+          ? "Starts by itself when you join. Other apps record manually from the menu bar."
+          : "Start a recording from the menu bar while you are in a Teams meeting.")
       fact(
         "text.bubble", "Transcribes on this Mac",
         "When the meeting ends. Nothing leaves this Mac.")

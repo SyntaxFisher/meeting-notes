@@ -290,7 +290,9 @@ enum PanelStatus: Equatable {
     case .loadingMeetings(updating: true):
       return "Converting meetings from an earlier version. This can take a few minutes."
     case .systemAudioBlocked: return "Allow it in Screen & System Audio Recording."
+    case .ready(.autoRecord): return "Waiting for a Teams meeting"
     case .ready(.autoRecordPaused): return "Auto-record resumes after this meeting."
+    case .ready(.manual): return "Teams auto-record is off"
     case .unavailable(let reason): return reason
     case .problem(let problem): return problem.reason
     default: return nil

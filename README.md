@@ -20,8 +20,21 @@ Recording and transcription run on your Mac. Connected agents receive the transc
 - **Nothing is lost silently.** A failed or interrupted recording stays visible until you retry or discard it, even after a crash. Discarded and deleted meetings go to the Trash.
 - **Optional extras** for people who want them: a Library window with search, playback from any timestamp and speaker renaming; a command-line tool; an event log, a `meetingnotes://` URL scheme and Shortcuts actions; a Settings window for recording, storage, agent preferences and updates.
 
+## Built for Microsoft Teams
+
+Meeting Notes reads Teams directly, so most of what it does only works there. Other apps can be recorded, but only by hand and without names.
+
+| | Microsoft Teams | Other apps (Zoom, Google Meet, ...) |
+| --- | --- | --- |
+| Recording | Starts and stops with the meeting | Manual start and stop |
+| Speaker names | From Teams | Speaker 1, Speaker 2, ... |
+| Meeting title and participants | From Teams | None |
+| Mute | Your microphone is left out while muted | Not detected |
+| Audio | Teams only, without notifications or music | Everything the Mac plays |
+
 ## Requirements
 
+- Microsoft Teams for Mac (the desktop app, not Teams in a browser).
 - An Apple silicon Mac running macOS 26 or later.
 - Documents, Microphone, System Audio Recording and Accessibility permissions.
 - Internet access for the first transcription, which downloads the models (about 600 MB). Afterwards transcription runs offline.
