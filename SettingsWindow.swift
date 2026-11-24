@@ -159,7 +159,7 @@ struct SettingRow<Control: View>: View {
     HStack(alignment: .firstTextBaseline, spacing: 12) {
       VStack(alignment: .leading, spacing: 2) {
         HStack(spacing: 6) {
-          if teams { TeamsMark(size: 16) }
+          if teams { TeamsMark(size: 18) }
           Text(title)
         }
         if let explanation {

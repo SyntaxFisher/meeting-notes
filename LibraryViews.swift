@@ -150,7 +150,7 @@ struct MeetingRow: View {
         .font(.subheadline)
       }
       Spacer(minLength: 0)
-      if record.source == .teams { TeamsMark(size: 16) }
+      if record.source == .teams { TeamsMark(size: 18) }
     }
     .padding(.vertical, 2)
     .accessibilityElement(children: .ignore)

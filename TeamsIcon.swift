@@ -16,12 +16,51 @@ enum TeamsIcon {
       let app = NSWorkspace.shared.urlForApplication(
         withBundleIdentifier: TeamsWindowSource.bundleIdentifier)
     else { return nil }
-    let image = variant(of: app, dark: dark) ?? NSWorkspace.shared.icon(forFile: app.path)
+    let points = NSRect(x: 0, y: 0, width: 64, height: 64)
+    var proposed = points
+    let icon =
+      variant(of: app, dark: dark)
+      ?? NSWorkspace.shared.icon(forFile: app.path).cgImage(
+        forProposedRect: &proposed, context: nil, hints: nil)
+    guard let icon else { return nil }
+    let image = NSImage(cgImage: trimmed(icon), size: points.size)
     cached[dark] = image
     return image
   }
 
-  private static func variant(of app: URL, dark: Bool) -> NSImage? {
+  /// App icons leave a transparent margin around the shape; without it the icon is as large
+  /// as the symbols it stands next to.
+  private static func trimmed(_ image: CGImage) -> CGImage {
+    let width = image.width
+    let height = image.height
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    guard
+      let context = CGContext(
+        data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return image }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    var minX = width
+    var maxX = -1
+    var minY = height
+    var maxY = -1
+    for y in 0..<height {
+      for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 127 {
+        minX = min(minX, x)
+        maxX = max(maxX, x)
+        minY = min(minY, y)
+        maxY = max(maxY, y)
+      }
+    }
+    guard maxX >= minX, maxY >= minY else { return image }
+    let side = max(maxX - minX, maxY - minY) + 1
+    let square = CGRect(
+      x: (minX + maxX + 1 - side) / 2, y: (minY + maxY + 1 - side) / 2, width: side, height: side)
+    return image.cropping(to: square) ?? image
+  }
+
+  private static func variant(of app: URL, dark: Bool) -> CGImage? {
     dlopen("/System/Library/PrivateFrameworks/IconServices.framework/IconServices", RTLD_LAZY)
     let create = NSSelectorFromString("initWithURL:")
     let prepare = NSSelectorFromString("prepareImagesForDescriptors:")
@@ -45,7 +84,7 @@ enum TeamsIcon {
     guard let rendered = icon.perform(render, with: descriptor)?.takeUnretainedValue(),
       CFGetTypeID(rendered) == CGImage.typeID
     else { return nil }
-    return NSImage(cgImage: unsafeDowncast(rendered, to: CGImage.self), size: points)
+    return unsafeDowncast(rendered, to: CGImage.self)
   }
 }
 

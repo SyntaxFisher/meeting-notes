@@ -288,7 +288,7 @@ private struct OnboardingView: View {
       .foregroundStyle(.tint)
     return HStack(alignment: .top, spacing: 12) {
       Group {
-        if teams { TeamsMark(size: 22) { symbolImage } } else { symbolImage }
+        if teams { TeamsMark(size: 24) { symbolImage } } else { symbolImage }
       }
       .frame(width: 28)
       .accessibilityHidden(true)
