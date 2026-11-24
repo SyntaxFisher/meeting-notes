@@ -33,7 +33,7 @@ The app chooses audio automatically when recording starts and keeps that source 
 
 The app, CLI, MCP and Shortcuts all use this automatic choice; there is no source selector or remembered source preference. App and device audio use the same System Audio Recording permission. The record's `source` and `meeting-notes status` show which source a recording uses. Capture opens the microphone before the system audio tap because a Bluetooth headset can change its playback format when its microphone opens. Device and format changes rebuild the audio engine with bounded retries, which can leave a short silent gap. If audio plays but no buffers reach the tap, the app restarts the tap twice and then stops the recording, keeping what was captured.
 
-**Mirror Teams mute** is on by default and can be toggled during a Teams recording. While Teams shows you as muted ("Unmute mic" or "Mikrofon wieder aktivieren"), your microphone is left out; when the state is unclear, the microphone is recorded. Mute mirroring, the Teams meeting title and participant roster apply only when recording Teams audio, selected automatically at recording start. Device-audio recordings do not inherit them. The Teams reads run on a background queue, so a slow Teams reply never delays the panel or your buttons.
+While Teams shows you as muted ("Unmute mic" or "Mikrofon wieder aktivieren"), your microphone is left out of the recording; when the state is unclear, the microphone is recorded. The panel and menu bar keep showing the recording itself, not the mute state. Mute mirroring, the Teams meeting title and participant roster apply only when recording Teams audio, selected automatically at recording start. Device-audio recordings do not inherit them. The Teams reads run on a background queue, so a slow Teams reply never delays the panel or your buttons.
 
 **Discard Recording** stops the recording and moves what was captured to the Trash.
 
@@ -82,7 +82,7 @@ Quiet system sounds mark the outcome of automatic and manual recordings: **Purr*
 
 Recording, storage and agent preferences live in `~/.config/meeting-notes/config.json`; their Settings controls edit that file, and edits made by you or an agent apply within two seconds. An invalid file is never overwritten: the last valid settings stay in effect, the app reports the problem, and settings cannot be changed in the window until the file is fixed. Unknown keys produce warnings. The [automation guide](automation.md#settings-configjson) lists every key. Launch at login is managed by macOS; automatic updates and window state use app preferences outside this file.
 
-- **General**: launch at login, auto-record, mirror Teams mute, and your name in transcripts.
+- **General**: launch at login, auto-record, sounds, and your name in transcripts.
 - **Agents**: connect Codex / ChatGPT or Claude Code; copy the MCP setup command; allow agents to name untitled meetings, add summaries or correct recognition errors when working with meetings. Naming and summaries are on by default; corrections are off. Explicitly requested changes remain available when these preferences are off.
 - **Permissions**: Documents, Microphone, System Audio Recording and Accessibility status, with controls to grant or manage access.
 - **Advanced**: open the fixed meetings folder, delete all meetings, choose whether to keep audio, set its storage limit, and copy the automation help command.

@@ -58,7 +58,7 @@ extension Smoke {
     }
     guard
       case .success = await commands.perform(
-        .updateSettings(SettingsChange(mirrorTeamsMute: false)), source: .socket)
+        .updateSettings(SettingsChange(playSounds: false)), source: .socket)
     else { preconditionFailure("Settings do not need the meetings folder") }
     let link = MeetingLink(meetingID: "20261105T110000Z")
     var navigationFinished = false

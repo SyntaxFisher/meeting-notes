@@ -170,7 +170,7 @@ final class MeetingEngine {
         }
       }
     }
-    if systemAudio == .teams, config().mirrorTeamsMute { teams.mirroredRecorder = recorder }
+    if systemAudio == .teams { teams.mirroredRecorder = recorder }
     do {
       try await recorder.start()
       if let startingCaptureFailure { throw startingCaptureFailure }

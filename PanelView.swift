@@ -5,7 +5,6 @@ extension StatusTone {
     switch self {
     case .neutral: return .secondary
     case .recording: return .red
-    case .muted: return .orange
     case .working: return .blue
     case .success: return .green
     case .warning: return .orange
@@ -145,7 +144,6 @@ private struct RecordControl: View {
   private func background(status: PanelStatus, clickable: Bool) -> Color {
     switch status.tone {
     case .recording: return .red.opacity(hoveringRow ? 0.16 : 0.1)
-    case .muted: return .orange.opacity(hoveringRow ? 0.16 : 0.1)
     default: return clickable && hoveringRow ? .primary.opacity(0.07) : .clear
     }
   }

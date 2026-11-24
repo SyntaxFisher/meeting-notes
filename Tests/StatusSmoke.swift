@@ -116,20 +116,17 @@ extension Smoke {
       TranscriptionProgress(stage: .saving), id: queued.id, title: "Standup", waiting: 0)
     precondition(finishing.headline(now: start) == "Finishing")
     inputs.recording = recording
-    inputs.mutedInTeams = true
-    let muted = PanelStatus.make(inputs)
-    precondition(muted == .recording(startedAt: start, title: "Weekly Sync", mutedInTeams: true))
-    precondition(muted.headline(now: start) == "Recording 0:00" && muted.tone == .muted)
-    precondition(muted.detail == "Muted in Teams" && muted.meetingTitle == "Weekly Sync")
-    precondition(muted.headerAction(canStart: false) == .stop)
-    precondition(muted.headerAccessory == .discardRecording)
-    precondition(HeaderAction.stop.title == "Stop and Transcribe")
-    inputs.mutedInTeams = false
     let live = PanelStatus.make(inputs)
+    precondition(live == .recording(startedAt: start, title: "Weekly Sync"))
+    precondition(live.headline(now: start) == "Recording 0:00" && live.tone == .recording)
+    precondition(live.symbol == "waveform" && live.meetingTitle == "Weekly Sync")
+    precondition(live.headerAction(canStart: false) == .stop)
+    precondition(live.headerAccessory == .discardRecording)
+    precondition(HeaderAction.stop.title == "Stop and Transcribe")
     precondition(live.headline(now: start.addingTimeInterval(754)) == "Recording 12:34")
     precondition(live.isRecording, "A recording wins over the queue and failures")
     precondition(PanelStatus.header(inputs) == live)
-    precondition(live.detail == nil, "An unmuted recording needs no second line")
+    precondition(live.detail == nil, "A recording needs no second line")
     inputs.recording = nil
     inputs.folderAccess = .checking
     inputs.folderName = "Documents"

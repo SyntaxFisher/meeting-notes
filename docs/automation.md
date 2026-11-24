@@ -26,7 +26,6 @@ Everything here is optional; Meeting Notes works without any of it. For coding a
   "agentsMayCorrectTranscripts" : false,
   "keepAudio" : true,
   "localSpeakerName" : null,
-  "mirrorTeamsMute" : true,
   "playSounds" : true,
   "retention" : {
     "audioBytes" : 10000000000
@@ -42,7 +41,6 @@ Everything here is optional; Meeting Notes works without any of it. For coding a
 | `agentsMayCorrectTranscripts` | `false` | Require correcting every confidently identified recognition error in the transcript passages read. |
 | `keepAudio` | `true` | Keep recordings after successful transcription. |
 | `playSounds` | `true` | Play recording, transcription and error sounds. |
-| `mirrorTeamsMute` | `true` | Exclude the microphone while Teams shows you as muted, only when recording Teams audio. |
 | `localSpeakerName` | `null` | Label for everything the microphone records. `null` uses your Teams display name once seen, otherwise your macOS name. No colons. |
 | `retention.audioBytes` | `10000000000` | Budget of the `audios` folder; the oldest recordings above it are deleted. |
 
@@ -51,8 +49,8 @@ Everything here is optional; Meeting Notes works without any of it. For coding a
   `get_status` reports recording, pending work and actionable problems.
   A change from the Settings window is applied on top of the file as it is at that moment, so
   edits an agent made a second earlier are kept.
-- Changes apply within two seconds of saving, including while recording: mute mirroring switches
-  immediately for Teams recordings, auto-record restarts its meeting detection. The audio budget
+- Changes apply within two seconds of saving, including while recording: auto-record restarts its
+  meeting detection. The audio budget
   applies right away; **Settings > Advanced** asks first when a lower limit deletes recordings. Transcripts are never removed automatically.
 - Missing keys use their defaults. Unknown keys are ignored but reported (as `config.loaded`
   warnings in `events.jsonl`), which catches typos such as

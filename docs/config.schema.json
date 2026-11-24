@@ -12,11 +12,6 @@
       "default": true,
       "description": "Record when a Teams meeting is joined and transcribe after leaving it."
     },
-    "mirrorTeamsMute": {
-      "type": "boolean",
-      "default": true,
-      "description": "Exclude the microphone while Teams shows you as muted, for recordings of Teams audio."
-    },
     "localSpeakerName": {
       "type": [
         "string",

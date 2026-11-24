@@ -628,11 +628,11 @@ struct LiveCard: View {
     GroupBox {
       VStack(alignment: .leading, spacing: 12) {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-          Image(systemName: model.app.mutedInTeams ? "mic.slash.fill" : "record.circle.fill")
-            .foregroundStyle(model.app.mutedInTeams ? .orange : .red)
-            .symbolEffect(.pulse, isActive: !model.app.mutedInTeams)
+          Image(systemName: "record.circle.fill")
+            .foregroundStyle(.red)
+            .symbolEffect(.pulse)
             .accessibilityHidden(true)
-          Text(model.app.mutedInTeams ? "Muted in Teams" : "Recording")
+          Text("Recording")
             .font(.title3.weight(.semibold))
           Spacer()
           TimelineView(.periodic(from: .now, by: 1)) { context in

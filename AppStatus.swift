@@ -107,7 +107,7 @@ enum ReadyContext: Equatable {
 }
 
 enum StatusTone: Equatable {
-  case neutral, recording, muted, working, success, warning, error
+  case neutral, recording, working, success, warning, error
 }
 
 /// What clicking the panel header does. The header is the record control: it starts and stops
@@ -173,7 +173,7 @@ enum PanelStatus: Equatable {
   /// Recording is impossible for another reason, such as an update being installed.
   case unavailable(reason: String)
   case starting
-  case recording(startedAt: Date, title: String?, mutedInTeams: Bool)
+  case recording(startedAt: Date, title: String?)
   case saving(id: String, title: String?)
   case transcribing(TranscriptionProgress, id: String, title: String?, waiting: Int)
   case attention(count: Int)
@@ -187,7 +187,6 @@ enum PanelStatus: Equatable {
     var systemAudioBlocked = false
     var starting = false
     var recording: MeetingRecord? = nil
-    var mutedInTeams = false
     var saving: MeetingRecord? = nil
     var transcribing: MeetingRecord? = nil
     var progress = TranscriptionProgress()
@@ -203,8 +202,7 @@ enum PanelStatus: Equatable {
 
   static func make(_ inputs: Inputs) -> PanelStatus {
     if let recording = inputs.recording {
-      return .recording(
-        startedAt: recording.startedAt, title: recording.title, mutedInTeams: inputs.mutedInTeams)
+      return .recording(startedAt: recording.startedAt, title: recording.title)
     }
     if inputs.starting { return .starting }
     switch inputs.folderAccess {
@@ -266,7 +264,7 @@ enum PanelStatus: Equatable {
     case .ready: return "Ready"
     case .unavailable: return "Recording unavailable"
     case .starting: return "Starting…"
-    case .recording(let startedAt, _, _):
+    case .recording(let startedAt, _):
       return "Recording \(Self.elapsed(now.timeIntervalSince(startedAt)))"
     case .saving: return "Processing"
     case .transcribing(let progress, _, _, _):
@@ -278,7 +276,7 @@ enum PanelStatus: Equatable {
   /// The meeting the header names: the recording or the meeting being processed.
   var meetingTitle: String? {
     switch self {
-    case .recording(_, let title, _), .saving(_, let title), .transcribing(_, _, let title, _):
+    case .recording(_, let title), .saving(_, let title), .transcribing(_, _, let title, _):
       return title ?? "Untitled meeting"
     default: return nil
     }
@@ -294,7 +292,6 @@ enum PanelStatus: Equatable {
     case .systemAudioBlocked: return "Allow it in Screen & System Audio Recording."
     case .ready(.autoRecordPaused): return "Auto-record resumes after this meeting."
     case .unavailable(let reason): return reason
-    case .recording(_, _, true): return "Muted in Teams"
     case .problem(let problem): return problem.reason
     default: return nil
     }
@@ -320,7 +317,7 @@ enum PanelStatus: Equatable {
     case .attention, .problem: return .error
     case .ready, .unavailable: return .neutral
     case .starting, .saving, .transcribing: return .working
-    case .recording(_, _, let muted): return muted ? .muted : .recording
+    case .recording: return .recording
     case .transcriptReady: return .success
     }
   }
@@ -334,7 +331,7 @@ enum PanelStatus: Equatable {
     case .ready: return "waveform"
     case .unavailable: return "pause.circle"
     case .starting, .saving: return "hourglass"
-    case .recording(_, _, let muted): return muted ? "mic.slash.fill" : "waveform"
+    case .recording: return "waveform"
     case .transcribing: return "text.bubble"
     case .transcriptReady: return "checkmark.circle.fill"
     }
@@ -371,7 +368,6 @@ enum PanelStatus: Equatable {
   /// A short phrase VoiceOver announces when the status kind changes.
   var announcement: String {
     switch self {
-    case .recording(_, _, true): return "Muted in Teams"
     case .recording: return "Recording started"
     default: return headline(now: Date())
     }
@@ -388,7 +384,7 @@ enum PanelStatus: Equatable {
     case .ready: return "ready"
     case .unavailable: return "unavailable"
     case .starting: return "starting"
-    case .recording(_, _, let muted): return muted ? "muted" : "recording"
+    case .recording: return "recording"
     case .saving: return "saving"
     case .transcribing: return "transcribing"
     case .transcriptReady: return "transcript-ready"

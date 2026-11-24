@@ -71,7 +71,6 @@ final class AppModel {
   var queue: [MeetingItem] = []
   var attention: [MeetingItem] = []
   var problem: AppProblem?
-  var mutedInTeams = false
   /// Every meeting, newest first, as last read from the meetings folder.
   var meetings: [MeetingRecord] = []
   var retryable: Set<String> = []
@@ -120,7 +119,6 @@ final class AppModel {
   @ObservationIgnored var send: (AppCommand) -> Void = { _ in }
 
   var autoRecord: Bool { config.autoRecordTeamsMeetings }
-  var mirrorMute: Bool { config.mirrorTeamsMute }
   var configWritable: Bool { configProblem == nil }
   var allPermissionsGranted: Bool { MeetingPermission.setupOrder.allSatisfy(granted) }
 

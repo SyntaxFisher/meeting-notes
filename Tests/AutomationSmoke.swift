@@ -35,7 +35,7 @@ extension Smoke {
   private static func testConfigParsing() throws {
     let empty = try parse("{}")
     precondition(empty.config == AppConfig() && empty.warnings.isEmpty)
-    precondition(empty.config.autoRecordTeamsMeetings && empty.config.mirrorTeamsMute)
+    precondition(empty.config.autoRecordTeamsMeetings)
     precondition(empty.config.keepAudio)
     precondition(empty.config.playSounds)
     var silent = AppConfig()
@@ -62,7 +62,7 @@ extension Smoke {
       {
         "$schema": "https://example.invalid/schema.json",
         "autoRecordTeamsMeetings": false,
-        "mirrorTeamsMute": false,
+        "playSounds": false,
         "agentsMayNameMeetings": false,
         "agentsMaySummarizeMeetings": false,
         "agentsMayCorrectTranscripts": true,
@@ -74,7 +74,7 @@ extension Smoke {
     precondition(!full.config.agentsMayNameMeetings && full.config.agentsMayCorrectTranscripts)
     precondition(!full.config.agentsMaySummarizeMeetings)
     precondition(full.config.localSpeakerName == "Jona B.")
-    precondition(!full.config.autoRecordTeamsMeetings && !full.config.mirrorTeamsMute)
+    precondition(!full.config.autoRecordTeamsMeetings && !full.config.playSounds)
     precondition(full.config.retention.audioBytes == 5000)
     let roundTrip = try AppConfig.parse(full.config.encoded())
     precondition(roundTrip.config == full.config && roundTrip.warnings.isEmpty)
@@ -92,8 +92,8 @@ extension Smoke {
     precondition(problems("{").first?.hasPrefix("config.json is not valid JSON") == true)
     precondition(problems("[]") == ["config.json must contain a JSON object"])
     precondition(
-      problems(#"{"autoRecordTeamsMeetings": 1, "mirrorTeamsMute": "yes"}"#) == [
-        "autoRecordTeamsMeetings must be true or false", "mirrorTeamsMute must be true or false",
+      problems(#"{"autoRecordTeamsMeetings": 1, "keepAudio": "yes"}"#) == [
+        "autoRecordTeamsMeetings must be true or false", "keepAudio must be true or false",
       ])
     let fixedFolder = try parse(#"{"meetingsRoot": "/tmp/elsewhere"}"#)
     precondition(fixedFolder.config.meetingsRootURL == AppConfig().meetingsRootURL)
@@ -135,11 +135,11 @@ extension Smoke {
     precondition(text.contains("\"localSpeakerName\" : null"), text)
 
     try store.update {
-      $0.mirrorTeamsMute = false
+      $0.playSounds = false
     }
-    precondition(!store.config.mirrorTeamsMute && changes.count == 1)
+    precondition(!store.config.playSounds && changes.count == 1)
     let written = try onDisk()
-    precondition(!written.mirrorTeamsMute)
+    precondition(!written.playSounds)
 
     // Writing into the existing file, as `cp` or `echo >` do.
     let handle = try FileHandle(forWritingTo: file)
@@ -150,15 +150,15 @@ extension Smoke {
     precondition(
       store.status
         == .invalid("retention.audioBytes must be a whole number from 1 to 9223372036854775807"))
-    precondition(!store.isWritable && !store.config.mirrorTeamsMute && changes.count == 1)
+    precondition(!store.isWritable && !store.config.playSounds && changes.count == 1)
     do {
-      try store.update { $0.mirrorTeamsMute = true }
+      try store.update { $0.playSounds = true }
       preconditionFailure("A broken config.json must not be overwritten from the UI")
     } catch {
       precondition(error.localizedDescription.contains("retention.audioBytes"))
     }
     do {
-      try AppConfig.edit(file) { $0.mirrorTeamsMute = true }
+      try AppConfig.edit(file) { $0.playSounds = true }
       preconditionFailure("The command line must not overwrite a broken config.json either")
     } catch {}
     let untouched = String(decoding: try Data(contentsOf: file), as: UTF8.self)
@@ -172,10 +172,10 @@ extension Smoke {
     precondition(store.status == .valid(warnings: []) && changes.count == 3)
     // An agent edits the file; the next change from the UI keeps that edit.
     try AppConfig.edit(file) { $0.localSpeakerName = "Agent Name" }
-    try store.update { $0.mirrorTeamsMute = false }
-    precondition(store.config.localSpeakerName == "Agent Name" && !store.config.mirrorTeamsMute)
+    try store.update { $0.playSounds = false }
+    precondition(store.config.localSpeakerName == "Agent Name" && !store.config.playSounds)
     let edited = try onDisk()
-    precondition(!edited.mirrorTeamsMute && edited.localSpeakerName == "Agent Name")
+    precondition(!edited.playSounds && edited.localSpeakerName == "Agent Name")
   }
 
   private static func testEventLog(root: URL) throws {

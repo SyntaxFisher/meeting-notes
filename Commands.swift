@@ -40,7 +40,6 @@ enum MeetingCommand: Equatable {
 
 struct SettingsChange: Equatable, Sendable {
   var autoRecordTeamsMeetings: Bool?
-  var mirrorTeamsMute: Bool?
   var playSounds: Bool?
   var agentsMayNameMeetings: Bool?
   /// `.some(nil)` restores the default name.
@@ -58,7 +57,6 @@ struct SettingsChange: Equatable, Sendable {
 
   func apply(to config: inout AppConfig) {
     if let value = autoRecordTeamsMeetings { config.autoRecordTeamsMeetings = value }
-    if let value = mirrorTeamsMute { config.mirrorTeamsMute = value }
     if let value = playSounds { config.playSounds = value }
     if let value = agentsMayNameMeetings { config.agentsMayNameMeetings = value }
     if let value = localSpeakerName { config.localSpeakerName = value }
@@ -402,7 +400,6 @@ final class CommandCenter {
     case "set_settings":
       var change = SettingsChange()
       change.autoRecordTeamsMeetings = arguments["auto_record_teams_meetings"]?.boolValue
-      change.mirrorTeamsMute = arguments["mirror_teams_mute"]?.boolValue
       change.playSounds = arguments["play_sounds"]?.boolValue
       change.agentsMayNameMeetings = arguments["agents_may_name_meetings"]?.boolValue
       if let name = arguments["local_speaker_name"] {

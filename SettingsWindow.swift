@@ -197,16 +197,6 @@ private struct GeneralSettings: View {
           .labelsHidden()
         }
         SettingRow(
-          title: "Mirror Teams mute",
-          explanation: "Leaves your microphone out while you are muted."
-        ) {
-          Toggle(
-            "Mirror Teams mute",
-            isOn: setting(model.mirrorMute) { SettingsChange(mirrorTeamsMute: $0) }
-          )
-          .labelsHidden()
-        }
-        SettingRow(
           title: "Sounds",
           explanation: "Play sounds for recording, transcription and errors."
         ) {

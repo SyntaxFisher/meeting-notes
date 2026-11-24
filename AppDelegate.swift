@@ -801,15 +801,6 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
       changed.append("playSounds")
       sounds.isEnabled = new.playSounds
     }
-    if old.mirrorTeamsMute != new.mirrorTeamsMute {
-      changed.append("mirrorTeamsMute")
-      if new.mirrorTeamsMute, engine.recordingRecord?.source == .teams {
-        teamsMonitor.mirroredRecorder = engine.active?.recorder
-      } else {
-        teamsMonitor.mirroredRecorder = nil
-        engine.active?.recorder.setMicrophoneMuted(false)
-      }
-    }
     if old.autoRecordTeamsMeetings != new.autoRecordTeamsMeetings {
       changed.append("autoRecordTeamsMeetings")
       AppLog.event("autoRecord.toggled", new.autoRecordTeamsMeetings ? "on" : "off")
@@ -1044,7 +1035,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
         "pid": Int(ProcessInfo.processInfo.processIdentifier),
         "config": [
           "autoRecordTeamsMeetings": config.autoRecordTeamsMeetings,
-          "mirrorTeamsMute": config.mirrorTeamsMute, "keepAudio": config.keepAudio,
+          "keepAudio": config.keepAudio,
           "localSpeakerName": config.localSpeakerName != nil,
         ],
       ])
@@ -1118,8 +1109,6 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     guard let engine, let libraryStore else { return }
     let snapshot = libraryStore.snapshot
     let meetings = snapshot.meetings
-    let mirroring = engine.active != nil && teamsMonitor.mirroredRecorder != nil
-    let muted = mirroring && teamsMonitor.currentState == .muted
     let attention = snapshot.needingAttention.map {
       MeetingItem(record: $0, canRetry: snapshot.retryable.contains($0.id))
     }
@@ -1147,7 +1136,7 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
       folderAccess: libraryStore.access,
       folderName: PanelStatus.folderName(of: libraryStore.root),
       systemAudioBlocked: captureRetry.systemAudioDenied,
-      starting: engine.isStarting, recording: engine.recordingRecord, mutedInTeams: muted,
+      starting: engine.isStarting, recording: engine.recordingRecord,
       saving: engine.saving.first ?? engine.stopping, transcribing: transcribing,
       progress: model.progress,
       waiting: max(0, engine.queue.count - 1) + engine.saving.count,
@@ -1166,7 +1155,6 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     model.queue = queue
     model.attention = Array(attention)
     model.problem = visibleProblem
-    model.mutedInTeams = muted
     model.folderAccess = libraryStore.access
     if model.meetings != meetings { model.meetings = meetings }
     if model.retryable != snapshot.retryable { model.retryable = snapshot.retryable }
@@ -1217,7 +1205,6 @@ final class MeetingAppDelegate: NSObject, NSApplicationDelegate {
     case .warning: button.image = permissionWarningImage
     case .error: button.image = errorImage
     case .recording: button.image = Self.symbolImage("waveform", .systemRed)
-    case .muted: button.image = Self.symbolImage("mic.slash.fill", .systemRed)
     case .working: button.image = Self.symbolImage("waveform", .systemOrange)
     case .success: button.image = Self.symbolImage("waveform", .labelColor)
     case .neutral: button.image = Self.symbolImage("waveform", .labelColor)

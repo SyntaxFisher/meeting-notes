@@ -4,7 +4,6 @@ import Foundation
 /// keys use their defaults; a file that fails validation is rejected as a whole.
 struct AppConfig: Equatable, Sendable {
   var autoRecordTeamsMeetings = true
-  var mirrorTeamsMute = true
   var playSounds = true
   var agentsMayNameMeetings = true
   var agentsMaySummarizeMeetings = true
@@ -52,7 +51,6 @@ struct AppConfig: Equatable, Sendable {
     var config = AppConfig()
     reader.allow(root, keys: Self.topLevelKeys, at: "")
     reader.bool(root, "autoRecordTeamsMeetings") { config.autoRecordTeamsMeetings = $0 }
-    reader.bool(root, "mirrorTeamsMute") { config.mirrorTeamsMute = $0 }
     reader.bool(root, "playSounds") { config.playSounds = $0 }
     reader.bool(root, "keepAudio") { config.keepAudio = $0 }
     reader.bool(root, "agentsMayNameMeetings") { config.agentsMayNameMeetings = $0 }
@@ -83,7 +81,6 @@ struct AppConfig: Equatable, Sendable {
     let object: [String: Any] = [
       "$schema": Self.schemaURL,
       "autoRecordTeamsMeetings": autoRecordTeamsMeetings,
-      "mirrorTeamsMute": mirrorTeamsMute,
       "playSounds": playSounds,
       "agentsMayNameMeetings": agentsMayNameMeetings,
       "agentsMaySummarizeMeetings": agentsMaySummarizeMeetings,
@@ -104,7 +101,7 @@ struct AppConfig: Equatable, Sendable {
     "https://raw.githubusercontent.com/SyntaxFisher/meeting-notes/main/docs/config.schema.json"
 
   private static let topLevelKeys: Set<String> = [
-    "$schema", "autoRecordTeamsMeetings", "mirrorTeamsMute", "localSpeakerName",
+    "$schema", "autoRecordTeamsMeetings", "localSpeakerName",
     "retention", "agentsMayNameMeetings", "agentsMaySummarizeMeetings",
     "agentsMayCorrectTranscripts", "keepAudio", "playSounds",
   ]
